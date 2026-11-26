@@ -332,6 +332,17 @@ def prototypes(n):
     return out
 
 
+def first_call_keeps_no_reference(counted):
+    # the first ctypes call compiled checks ctypes' layouts with objects of
+    # its own (pctypes.c:ctypes_probe), which mustn't outlive it. A
+    # function made here is first known as the call runs; the class
+    # counted is an argument, so compiled code holds none of its own.
+    f = ctypes.CFUNCTYPE(c_int, c_int, c_int)(lambda a, b: a * b)
+    before = sys.getrefcount(counted)
+    f(1, 2)
+    return sys.getrefcount(counted) - before
+
+
 CASES = [
     ('typed_ints', [(12,)], {}),
     ('untyped_ints', [(12,)], {}),
@@ -351,4 +362,5 @@ CASES = [
     ('big_computed_ints', [(8,)], {}),
     ('prototypes', [(6,)], {}),
     ('byref_objects', [(6,)], {}),
+    ('first_call_keeps_no_reference', '[(c_int,), (c_double,)]', {}),
 ]

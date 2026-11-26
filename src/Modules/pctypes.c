@@ -219,6 +219,11 @@ probe_prototypes(PyObject *ctypes, PyObject *c_int, PyObject *c_dbl)
                                   Py_TYPE(p)->tp_basicsize, a, c_dbl);
     }
     Py_XDECREF(a);
+    /* a class is in cycles of its own: cleared as the collector would
+       clear it, it dies here, not at the next collection, so c_int and
+       c_double are held no longer than the probe runs */
+    if (p != NULL && Py_TYPE(p)->tp_clear != NULL)
+        Py_TYPE(p)->tp_clear(p);
     Py_XDECREF(p);
     Py_XDECREF(d);
     Py_XDECREF(base);
