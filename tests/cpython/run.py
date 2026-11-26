@@ -3,7 +3,8 @@ status and names of the failing tests must match. Every test_* module of the
 interpreter's test package runs except BANNED, and every test except SKIPPED.
 
 The modules, and the tests in each, run in an order a seed chooses, new each
-run unless --seed gives it; a module's plain and LeJIT runs share its order.
+run unless --seed gives it; the seed also sets each module's hash seed. A
+module's plain and LeJIT runs share its order and its hash seed.
 
     python3.X tests/cpython/run.py [-j N] [--seed N] [module ...]
 """
@@ -306,6 +307,10 @@ SKIPPED = {
     'asserts that one epoll poll returns within 10 ms of wall time, which a '
     'busy machine can miss whatever runs the test':
         'test.test_epoll.TestEPoll.test_unregister_closed',
+    "passes only after TestGeometricMean.test_basics has seeded random: "
+    'on unseeded data 3.14 gives a pstdev that is not exactly '
+    'sqrt(pvariance) about one run in five, plain as well as with LeJIT':
+        'test.test_statistics.TestPStdev.test_compare_to_variance',
 }
 
 # Modules that never run at the same time as each other: test_perf_profiler
@@ -416,10 +421,12 @@ def run(mode, name, seed):
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
         skip = [t for ts in SKIPPED.values() for t in ts.split()]
+        env = dict(os.environ)
+        env.setdefault('PYTHONHASHSEED', str(int(rank(seed, name), 16) % (1 << 32)))
         p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT,
                               str(seed)] + skip,
                              stdout=subprocess.PIPE, stderr=errf,
-                             stdin=subprocess.DEVNULL, cwd=cwd,
+                             stdin=subprocess.DEVNULL, cwd=cwd, env=env,
                              preexec_fn=limit_memory, start_new_session=True)
         try:
             out, _ = p.communicate(timeout=TIMEOUT)
