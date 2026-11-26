@@ -225,6 +225,8 @@ le_instr(le_code_t c, int pos)
                 in.op = UNARY_POSITIVE;
             else if (in.arg == INTRINSIC_LIST_TO_TUPLE)
                 in.op = LIST_TO_TUPLE;
+            else if (in.arg == INTRINSIC_ASYNC_GEN_WRAP)
+                in.op = ASYNC_GEN_WRAP;
             break;
 #endif
         /* LeJIT holds its own reference to what a borrowed load loads */
@@ -583,6 +585,10 @@ le_op_flags(int op)
         case END_SEND:
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
 #endif
+        /* an async generator's yield wraps its value, which tells asend()
+           it from what an await in the body yields */
+        case ASYNC_GEN_WRAP:
+            return LE_OPF_COMPILED;
         /* async with, in a coroutine's body */
         case BEFORE_ASYNC_WITH:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;

@@ -31,6 +31,7 @@
 #include "bytecode.h"
 #include "vcompiler.h"
 #include "codemanager.h"
+#include "Python/pycompiler.h"
 
 typedef struct {
     int flags;
@@ -960,7 +961,7 @@ DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
 #if LE_RESUMES_COROUTINES
-    return (co->co_flags & CO_COROUTINE) &&
+    return (co->co_flags & (CO_COROUTINE | CO_ASYNC_GENERATOR)) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
     (void)co;
@@ -969,7 +970,16 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 #endif
 }
 
-/* whether the body of 'co', a plain generator or a coroutine, can run
+/* whether an async generator's body can run compiled: as a coroutine's,
+   where its yields can wrap their values */
+static int
+async_gens_compiled(void)
+{
+    return LE_RESUMES_COROUTINES_COMPILED && psyco_async_gen_wrapper != NULL;
+}
+
+/* whether the body of 'co', a plain generator, a coroutine or an async
+   generator, can run
    compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
    GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
    compiled only as SEND's loop), and, where handlers have
@@ -987,7 +997,8 @@ body_compilable(PyCodeObject *co, le_code_t *c)
     int kind =
         co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
     if (kind != CO_GENERATOR &&
-        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED))
+        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED) &&
+        (kind != CO_ASYNC_GENERATOR || !async_gens_compiled()))
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */
@@ -1010,7 +1021,7 @@ body_compilable(PyCodeObject *co, le_code_t *c)
     }
     if (LE_HAS_EXCEPTION_TABLE)
         return 1;
-    if (kind == CO_COROUTINE)
+    if (kind != CO_GENERATOR)
         return handler_yields_kept(co, *c);
     return !yields_in_handler(co, *c);
 }

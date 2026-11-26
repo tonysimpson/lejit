@@ -84,6 +84,9 @@
 #define GENEXPR_SUM_COMPLEX 11 /* acc the complex sum's state */
 #define GENEXPR_SUM_GENERIC 12 /* plain +, for good */
 #define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)
+/* the code whose body may run compiled on its own frame, with the slots
+   above (psyco_generator_mode) */
+#define LE_BODY_FLAGS (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)
 #define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + le_code_nlocalsplus(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
 #define GENEXPR_SLOT_COMP(co) (GENEXPR_SLOT_MODE(co) + 2)
