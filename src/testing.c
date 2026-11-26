@@ -162,6 +162,15 @@ le_stats(PyObject *self, PyObject *unused)
         Py_XDECREF(t);
     }
     if (d != NULL) {
+        /* sweeps run, the code objects whose compiled code they released,
+           and its bytes (codemanager.c) */
+        PyObject *t = Py_BuildValue("(lll)", le_stat_sweeps[0],
+                                    le_stat_sweeps[1], le_stat_sweeps[2]);
+        if (t == NULL || PyDict_SetItemString(d, "sweeps", t) < 0)
+            Py_CLEAR(d);
+        Py_XDECREF(t);
+    }
+    if (d != NULL) {
         /* promotion groups made and freed (codemanager.h, le_group_t) */
         PyObject *t = Py_BuildValue("(ll)", psyco_stat_groups_made,
                                     psyco_stat_groups_freed);

@@ -171,6 +171,8 @@ EXTERNVAR long psyco_stat_owner_scans;
 EXTERNVAR long psyco_stat_owners_collected;
 EXTERNVAR long psyco_stat_groups_made;
 EXTERNVAR long psyco_stat_groups_freed;
+/* sweeps run, the code objects whose code they released, its bytes */
+EXTERNVAR long le_stat_sweeps[3];
 #endif
 EXTERNVAR long le_owners_counted;
 

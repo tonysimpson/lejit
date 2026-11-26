@@ -336,11 +336,17 @@ gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
 }
 
 #if LE_RESUMES_GENERATORS_DIRECTLY
+static size_t
+direct_size(PyCodeObject *co)
+{
+    return offsetof(le_gen_direct_t, entries) +
+           (le_code(co).size / LE_UNIT + 2) * sizeof(code_t *);
+}
+
 DEFINEFN le_gen_direct_t *
 le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x)
 {
     PyObject *mergepoints;
-    int n;
     if (x->direct != NULL)
         return x->direct;
     if (x->nresumes < 0 || !(co->co_flags & (CO_GENERATOR | CO_COROUTINE)) ||
@@ -350,10 +356,15 @@ le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x)
     if (mergepoints == Py_None ||
         !(psyco_mp_flags(mergepoints) & MP_FLAGS_RESUMABLE))
         return NULL;
-    n = le_code(co).size / LE_UNIT + 2;
-    x->direct = PyMem_Calloc(
-        1, offsetof(le_gen_direct_t, entries) + n * sizeof(code_t *));
+    x->direct = PyMem_Calloc(1, direct_size(co));
     return x->direct;
+}
+
+DEFINEFN void
+le_gen_direct_clear(PyCodeObject *co, le_code_extra_t *x)
+{
+    if (x->direct != NULL)
+        memset(x->direct, 0, direct_size(co));
 }
 
 /* the entry 'codebuf' resumes 'f' with, into its code's table of direct
@@ -402,6 +413,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
         PyErr_Clear(); /* out of memory */
         return NULL;
     }
+    x->cold = 0;
     p = resume_point(x, co, le_frame_lasti(f));
     if (p == NULL || !le_frame_iterators_real(f, nstack))
         return NULL;
@@ -507,6 +519,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
         PyErr_Clear(); /* out of memory */
         return NULL;
     }
+    x->cold = 0;
     p = resume_point(x, co, le_frame_lasti(f));
     if (p == NULL)
         return NULL;
@@ -620,8 +633,10 @@ le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
                 x->entry_builtins = builtins;
             }
             if (entry_point != Py_None && x->entry_globals == globals &&
-                x->entry_builtins == builtins)
+                x->entry_builtins == builtins) {
+                x->cold = 0;
                 return entry_point;
+            }
         }
     }
     return NULL;

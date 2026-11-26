@@ -1390,10 +1390,11 @@ psyco_record(le_addrmap_t *map, void *key)
    main interpreter and never during a compile; its cost per record stays
    the same and dead records are at most about half the live. It also runs
    at a full collection (gc.collect()) if a record was counted since the
-   last: a gc.callbacks entry, listed only once the program has imported
-   gc (as any program calling gc.collect() has), and only while there are
-   such records, acts on generation 2 only. Importing gc for it would run
-   importlib's Python code, which LeJIT compiles, in every program.
+   last: a gc.callbacks entry, listed once a record is counted after the
+   program has imported gc (as any program calling gc.collect() has), acts
+   on generation 2 only, where the sweep runs too. Importing gc for it
+   would run importlib's Python code, which LeJIT compiles, in every
+   program.
    A group (codemanager.h) is a node too, held by nothing; one of a dead
    code object dies with it. Otherwise it is alive if an alive group
    (of any code object) depends on it or is under it, if code that is no
@@ -1826,6 +1827,161 @@ owners_scan(void)
     pins_drop(&dropped);
 }
 
+/*** The sweep: compiled code not used lately is released ***/
+
+/* At every full collection, the compiled code of each code object that no
+   frame has entered through the hook (eval_hook.c:le_code_to_run,
+   le_gen_to_run) or was found running in for SWEEP_COLD sweeps is
+   released with everything its owner and groups hold, as if the code
+   object had died, unless code that stays may jump into it: code that
+   stays keeps the code of every code object it pins (compiled code holds
+   the code objects whose code it calls or inlines) and of every group it
+   depends on, so cold code objects that pin each other go together. The
+   next call compiles afresh. Code released SWEEP_RELEASES times stays. */
+#define SWEEP_COLD 4
+#define SWEEP_RELEASES 3
+
+#if ALL_CHECKS
+DEFINEVAR long le_stat_sweeps[3]; /* sweeps run, code released, its bytes */
+#endif
+
+static void
+sweep_running(PyCodeObject **cos, int ncos, code_t *at, void *unused)
+{
+    int k;
+    for (k = 0; k < ncos; k++) {
+        le_code_extra_t *x = le_code_extra_get(cos[k]);
+        if (x != NULL)
+            x->cold = 0;
+    }
+}
+
+/* 'x' stays; so does 'y', onto 'stack', if it was to go */
+static void
+sweep_keep_one(le_code_extra_t *y, le_code_extra_t **stack, size_t *n)
+{
+    if (y != NULL && y->swept) {
+        y->swept = 0;
+        stack[(*n)++] = y;
+    }
+}
+
+static void
+sweep_keep_pins(le_owner_t *o, le_code_extra_t **stack, size_t *n)
+{
+    size_t j;
+    for (j = 0; o->pins != NULL && j <= o->pinmask; j++)
+        if (o->pins[j] != NULL && PyCode_Check(o->pins[j]))
+            sweep_keep_one(le_code_extra_get((PyCodeObject *)o->pins[j]),
+                           stack, n);
+}
+
+static void
+sweep_keep(le_code_extra_t *x, le_code_extra_t **stack, size_t *n)
+{
+    le_group_t *g;
+    int i;
+    sweep_keep_pins(&x->owner, stack, n);
+    for (g = x->owner.groups; g != NULL; g = g->next) {
+        sweep_keep_pins(&g->owner, stack, n);
+        for (i = 0; i < g->ndeps; i++) {
+            le_owner_t *root = &g->deps[i]->owner;
+            while (root->parent != NULL) root = root->parent;
+            sweep_keep_one(
+                (le_code_extra_t *)((char *)root -
+                                    offsetof(le_code_extra_t, owner)),
+                stack, n);
+        }
+    }
+}
+
+static void
+sweep(void)
+{
+    le_code_extra_t *x, **cand;
+    PyObject **reports;
+    le_owner_t dropped;
+    size_t n = 0, ncand = 0, nstack = 0, i, k;
+    for (x = le_code_extras; x != NULL; x = x->next) {
+        if (x->cold < SWEEP_COLD)
+            x->cold++;
+        n++;
+    }
+    if (n == 0 || psyco_frames_running(sweep_running, NULL) < 0)
+        return;
+    LE_STAT(le_stat_sweeps[0]++);
+    /* the candidates, then a stack of those found to stay */
+    cand = PyMem_Malloc(2 * n * sizeof(*cand));
+    if (cand == NULL)
+        return;
+    for (x = le_code_extras; x != NULL; x = x->next) {
+        if (x->cold < SWEEP_COLD || x->owner.nbufs == 0 ||
+            x->entry_point == Py_None || x->releases >= SWEEP_RELEASES ||
+            x == le_gen_interpreted_x)
+            continue;
+        x->swept = 1;
+        cand[ncand++] = x;
+    }
+    if (ncand == 0) {
+        PyMem_Free(cand);
+        return;
+    }
+    for (x = le_code_extras; x != NULL; x = x->next)
+        if (!x->swept)
+            sweep_keep(x, cand + n, &nstack);
+    while (nstack > 0) sweep_keep(cand[n + --nstack], cand + n, &nstack);
+    for (i = k = 0; i < ncand; i++)
+        if (cand[i]->swept)
+            cand[k++] = cand[i];
+    ncand = k;
+    /* each one's report and entry point */
+    reports = ncand > 0 ? PyMem_Malloc(2 * ncand * sizeof(PyObject *)) : NULL;
+    if (reports == NULL) {
+        for (i = 0; i < ncand; i++) cand[i]->swept = 0;
+        PyMem_Free(cand);
+        return;
+    }
+    /* as owners_scan frees records: all are emptied before any is
+       released, so that code a dealloc runs compiles afresh, and every
+       report lives until all are released; their references are dropped
+       last */
+    for (i = 0; i < ncand; i++) {
+        le_code_extra_reset(cand[i], &reports[i], &reports[ncand + i]);
+        Py_XINCREF(reports[i]);
+    }
+    memset(&dropped, 0, sizeof(dropped));
+    for (i = 0; i < ncand; i++) {
+        le_owner_t *o = &cand[i]->owner;
+        LE_STAT(le_stat_sweeps[1]++);
+#if ALL_CHECKS
+        {
+            le_group_t *g;
+            int e;
+            for (e = 0; e < o->nextents; e++)
+                le_stat_sweeps[2] += o->extents[e].end - o->extents[e].start;
+            for (g = o->groups; g != NULL; g = g->next)
+                for (e = 0; e < g->owner.nextents; e++)
+                    le_stat_sweeps[2] +=
+                        g->owner.extents[e].end - g->owner.extents[e].start;
+        }
+#endif
+        while (o->groups != NULL) {
+            le_group_t *g = o->groups;
+            o->groups = g->next;
+            group_free(g, reports[i], o, false);
+        }
+        owner_free(o, reports[i], reports[ncand + i]);
+        pins_take(&dropped, o);
+        psyco_owner_untrack(cand[i]);
+        cand[i]->swept = 0;
+        cand[i]->releases++;
+    }
+    for (i = 0; i < ncand; i++) Py_XDECREF(reports[i]);
+    PyMem_Free(reports);
+    PyMem_Free(cand);
+    pins_drop(&dropped);
+}
+
 static int
 owners_pending(void *arg)
 {
@@ -1864,19 +2020,15 @@ owners_gc_callback(PyObject *self, PyObject *args)
     if (strcmp(phase, "start") == 0) {
         gen = PyDict_Check(info) ? PyDict_GetItemString(info, "generation")
                                  : NULL;
-        if (extras_since_scan > 0 && gen != NULL && PyLong_Check(gen) &&
-            PyLong_AsLong(gen) == 2 && psyco_owner == NULL &&
-            le_compile_depth == 0 && nopen == 0 &&
+        if (gen != NULL && PyLong_Check(gen) && PyLong_AsLong(gen) == 2 &&
+            psyco_owner == NULL && le_compile_depth == 0 && nopen == 0 &&
             psyco_compile_guard == NULL && !le_is_finalizing()) {
-            extras_since_scan = 0;
-            owners_scan();
+            if (extras_since_scan > 0) {
+                extras_since_scan = 0;
+                owners_scan();
+            }
+            sweep();
         }
-    }
-    else if (extras_since_scan == 0 && scan_listed_last()) {
-        /* the last one, so that removing it skips no other callback */
-        Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
-        if (PyList_SetSlice(gc_callbacks, n - 1, n, NULL) < 0)
-            PyErr_Clear();
     }
     Py_RETURN_NONE;
 }
