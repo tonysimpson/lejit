@@ -295,12 +295,13 @@ typedef enum {
    to a far jump to it within reach (codemanager.c:psyco_code_far_jump) */
 EXTERNFN code_t *
 psyco_code_far_jump(code_t *end, code_t *target);
-#define REL32(end, target)                                           \
-    ((dword_t)((FITS_IN_32BITS((code_t *)(target) - (code_t *)(end)) \
-                    ? (code_t *)(target)                             \
-                    : psyco_code_far_jump((code_t *)(end),           \
-                                          (code_t *)(target))) -     \
-               (code_t *)(end)))
+#define REL32(end, target)                                                 \
+    ((dword_t)le_reloc_jump(                                               \
+        (code_t *)(end),                                                   \
+        (FITS_IN_32BITS((code_t *)(target) - (code_t *)(end))              \
+             ? (code_t *)(target)                                          \
+             : psyco_code_far_jump((code_t *)(end), (code_t *)(target))) - \
+            (code_t *)(end)))
 /* jmp [rip]; the 8-byte target (x64/iprocessor.c:psyco_write_far_jump) */
 #define SIZE_OF_FAR_JUMP_ANYWHERE 14
 EXTERNFN code_t *
@@ -601,6 +602,7 @@ psyco_write_far_jump(code_t *code, code_t *target);
             WRITE_OPCODES(op_len, b1, b2, b3);                                \
             MODRM_ENCODING(mod, r, 5);                                        \
             WRITE_32BIT(rip_offset);                                          \
+            le_reloc_note(code - 4, LE_RELOC_DATA, 4 + (imm_len));            \
         }                                                                     \
         else {                                                                \
             MOV_R_I(REG_TRANSIENT_2, address);                                \
@@ -678,13 +680,14 @@ psyco_write_far_jump(code_t *code, code_t *target);
 /* RIP-relative: 'o' is from the end of the instruction, which is 7 bytes.
    It is evaluated before anything is written, so it may use 'code'. */
 /* @asm: lea {r}, [rip{o:d32}] */
-#define LEA_R_RIP(r, o)              \
-    do {                             \
-        long _rip_o = (o);           \
-        REX_ENCODING(true, r, 0, 0); \
-        WRITE_1(0x8D);               \
-        MODRM_ENCODING(0, r, 5);     \
-        WRITE_32BIT(_rip_o);         \
+#define LEA_R_RIP(r, o)                            \
+    do {                                           \
+        long _rip_o = (o);                         \
+        REX_ENCODING(true, r, 0, 0);               \
+        WRITE_1(0x8D);                             \
+        MODRM_ENCODING(0, r, 5);                   \
+        WRITE_32BIT(_rip_o);                       \
+        le_reloc_note(code - 4, LE_RELOC_DATA, 4); \
     } while (0)
 /* compares with the word at 'o' from the thread pointer */
 /* @asm: cmp {r}, qword ptr fs:[0{o:d32}] */
@@ -711,13 +714,14 @@ psyco_write_far_jump(code_t *code, code_t *target);
         WRITE_32BIT(_fs_o);          \
     } while (0)
 /* @asm: xor {r}, qword ptr [rip{o:d32}] */
-#define XOR_R_RIP(r, o)              \
-    do {                             \
-        long _rip_o = (o);           \
-        REX_ENCODING(true, r, 0, 0); \
-        WRITE_1(0x33);               \
-        MODRM_ENCODING(0, r, 5);     \
-        WRITE_32BIT(_rip_o);         \
+#define XOR_R_RIP(r, o)                            \
+    do {                                           \
+        long _rip_o = (o);                         \
+        REX_ENCODING(true, r, 0, 0);               \
+        WRITE_1(0x33);                             \
+        MODRM_ENCODING(0, r, 5);                   \
+        WRITE_32BIT(_rip_o);                       \
+        le_reloc_note(code - 4, LE_RELOC_DATA, 4); \
     } while (0)
 /* @asm: xor {r}, qword ptr [{rm}{o}] */
 #define XOR_R_O(r, rm, o) \
@@ -840,12 +844,13 @@ psyco_write_far_jump(code_t *code, code_t *target);
     OFFSET_ENCODING(false, false, 1, 0x83, 0, 0, 0x38, 0, 0, rm, o); \
     WRITE_8BIT(i)
 /* @asm: cmp dword ptr [rip{o:d32}], {i:i8} */
-#define CMP_I8_DRIP(i, o) \
-    do {                  \
-        WRITE_1(0x83);    \
-        WRITE_1(0x3D);    \
-        WRITE_32BIT(o);   \
-        WRITE_8BIT(i);    \
+#define CMP_I8_DRIP(i, o)                          \
+    do {                                           \
+        WRITE_1(0x83);                             \
+        WRITE_1(0x3D);                             \
+        WRITE_32BIT(o);                            \
+        WRITE_8BIT(i);                             \
+        le_reloc_note(code - 5, LE_RELOC_DATA, 5); \
     } while (0)
 /* cmp dword ptr [address], i: RIP-relative when in reach (7 bytes), else
    through REG_TRANSIENT_2 */
@@ -931,21 +936,25 @@ psyco_clobber_xmm(code_t *code);
         DIRECT_ENCODING(false, 1, 0xFF, 0, 0, 0xD0, 0, r); \
         CLOBBER_XMM_AFTER_CALL();                          \
     } while (0)
-#define CALL_I(i)                                       \
-    do {                                                \
-        long jump_amount;                               \
-        extra_assert(psyco_xmm_may_call(po));           \
-        le_trace_call((code_t *)(code), (code_t *)(i)); \
-        jump_amount = (long)(i) - ((long)code + 5);     \
-        if (FITS_IN_32BITS(jump_amount)) {              \
-            WRITE_1(0xE8);                              \
-            WRITE_32BIT(jump_amount);                   \
-            CLOBBER_XMM_AFTER_CALL();                   \
-        }                                               \
-        else {                                          \
-            MOV_R_I(REG_TRANSIENT_1, i);                \
-            CALL_R(REG_TRANSIENT_1);                    \
-        }                                               \
+#define CALL_I(i)                                          \
+    do {                                                   \
+        long jump_amount;                                  \
+        extra_assert(psyco_xmm_may_call(po));              \
+        le_trace_call((code_t *)(code), (code_t *)(i));    \
+        jump_amount = (long)(i) - ((long)code + 5);        \
+        if (FITS_IN_32BITS(jump_amount)) {                 \
+            WRITE_1(0xE8);                                 \
+            WRITE_32BIT(jump_amount);                      \
+            le_reloc_note(code - 4, LE_RELOC_JUMP, 4);     \
+            CLOBBER_XMM_AFTER_CALL();                      \
+        }                                                  \
+        else {                                             \
+            code_t *_call_mov = code;                      \
+            MOV_R_I(REG_TRANSIENT_1, i);                   \
+            if (code - _call_mov == 10)                    \
+                le_reloc_note(code - 8, LE_RELOC_WORD, 0); \
+            CALL_R(REG_TRANSIENT_1);                       \
+        }                                                  \
     } while (0)
 /* @asm: add qword ptr [{rm}], {i:i8} */
 #define ADD_A_I8(rm, i)                               \

@@ -289,9 +289,21 @@ le_untraced_end(void);
    compiled when compiled code first raises RecursionError) still makes C
    calls that check it, such as a dict lookup comparing keys, which would
    fail and change what it compiles. */
+#if ALL_CHECKS
+/* the relocations and code of the outermost compile (psyco.h) */
+EXTERNFN void
+psyco_code_move_begin(void);
+EXTERNVAR long psyco_stat_code_moved[3];
+EXTERNFN void
+psyco_code_move_made(void);
+#else
+#define psyco_code_move_begin() ((void)0)
+#define psyco_code_move_made() ((void)0)
+#endif
 static inline void
 le_outer_compile_begin(void)
 {
+    psyco_code_move_begin();
     le_untraced_begin();
 #if LE_HAS_PY_RECURSION_REMAINING
     PyThreadState_GET()->recursion_headroom++;
@@ -303,6 +315,7 @@ le_outer_compile_end(void)
 #if LE_HAS_PY_RECURSION_REMAINING
     PyThreadState_GET()->recursion_headroom--;
 #endif
+    psyco_code_move_made();
     le_untraced_end();
 }
 #if ALL_CHECKS || LE_CODESTATS

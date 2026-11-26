@@ -273,6 +273,13 @@ take_extent(size_t want, size_t need, code_t **end)
     return start;
 }
 
+#if ALL_CHECKS
+static void
+made_add(le_owner_t *o, code_t *start, code_t *end);
+#else
+#define made_add(o, start, end) ((void)0)
+#endif
+
 static void
 owner_add_extent(le_owner_t *o, code_t *start, code_t *end)
 {
@@ -281,6 +288,7 @@ owner_add_extent(le_owner_t *o, code_t *start, code_t *end)
         return; /* kept for good */
     if (o->nextents > 0 && o->extents[o->nextents - 1].end == start) {
         o->extents[o->nextents - 1].end = end;
+        made_add(o, start, end);
         return;
     }
     if (o->nextents == o->extentscap) {
@@ -295,6 +303,7 @@ owner_add_extent(le_owner_t *o, code_t *start, code_t *end)
     o->extents[o->nextents].start = start;
     o->extents[o->nextents].end = end;
     o->nextents++;
+    made_add(o, start, end);
 }
 
 #if ALL_CHECKS
@@ -398,6 +407,533 @@ psyco_code_take(size_t n)
     return start;
 }
 
+#if ALL_CHECKS
+/*** Moving the code a compile made ***/
+
+/* The pieces of owned code the outermost compile running made, with where
+   each went ('to', the same if it stayed), and the relocations noted
+   meanwhile (psyco.h). A piece moves by a multiple of 16 bytes, so that
+   its alignment stays, within its region, so that what it reached stays
+   in reach (moved_room). One with no room there, or whose RIP-relative
+   data would be out of reach, stays. The old copy is filled with INT 3, so
+   that a jump or call to it traps, and freed when the next compile ends. */
+/* bytes moved, bytes that stayed, relocations the owners keep */
+DEFINEVAR long psyco_stat_code_moved[3] = {0, 0, 0};
+typedef struct {
+    le_owner_t *owner; /* NULL: its owner died */
+    code_t *start, *end, *to;
+} made_t;
+static made_t *made = NULL;
+static int nmade = 0, madecap = 0;
+
+typedef struct {
+    code_t *at;
+    int kind, end;
+    long value; /* what was written, for JUMP and DATA */
+    long seq;
+} note_t;
+static note_t *notes = NULL;
+static long nnotes = 0, notescap = 0;
+
+struct le_reloc_s {
+    code_t *at;
+    signed char kind, end;
+};
+
+static void
+made_add(le_owner_t *o, code_t *start, code_t *end)
+{
+    if (le_compile_depth == 0 || start == end)
+        return;
+    if (nmade == madecap) {
+        int cap = madecap ? 2 * madecap : 16;
+        made_t *n = PyMem_Realloc(made, cap * sizeof(made_t));
+        if (n == NULL)
+            return; /* stays where it is */
+        made = n;
+        madecap = cap;
+    }
+    made[nmade].owner = o;
+    made[nmade].start = start;
+    made[nmade].end = end;
+    made[nmade].to = start;
+    nmade++;
+}
+
+static void
+made_forget(le_owner_t *o)
+{
+    int i;
+    for (i = 0; i < nmade; i++)
+        if (made[i].owner == o)
+            made[i].owner = NULL;
+}
+
+DEFINEFN void
+le_reloc_note(void *at, int kind, int end)
+{
+    note_t *n;
+    if (le_compile_depth == 0)
+        return;
+    if (nnotes == notescap) {
+        long cap = notescap ? 2 * notescap : 1024;
+        note_t *p = PyMem_Realloc(notes, cap * sizeof(note_t));
+        if (p == NULL)
+            OUT_OF_MEMORY();
+        notes = p;
+        notescap = cap;
+    }
+    n = &notes[nnotes];
+    n->at = (code_t *)at;
+    n->kind = kind;
+    n->end = end;
+    n->seq = nnotes++;
+    if (kind == LE_RELOC_WORD)
+        n->value = 0;
+    else {
+        dword_t v;
+        memcpy(&v, at, sizeof(v));
+        n->value = v;
+    }
+}
+
+DEFINEFN long
+le_reloc_jump(code_t *end, long value)
+{
+    if (le_compile_depth != 0) {
+        le_reloc_note(end - 4, LE_RELOC_JUMP, 4);
+        notes[nnotes - 1].value = (dword_t)value;
+    }
+    return value;
+}
+
+/* the piece holding 'p', once the pieces are sorted, or NULL */
+static made_t *
+made_find(code_t *p)
+{
+    int lo = 0, hi = nmade;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (made[mid].end <= p)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo < nmade && made[lo].start <= p && made[lo].owner != NULL)
+        return &made[lo];
+    return NULL;
+}
+
+static int
+made_cmp(const void *a, const void *b)
+{
+    const made_t *x = a, *y = b;
+    return x->start < y->start ? -1 : x->start > y->start;
+}
+
+static code_t *
+moved(code_t *p)
+{
+    made_t *m = made_find(p);
+    return m == NULL ? p : m->to + (p - m->start);
+}
+
+DEFINEFN code_t *
+psyco_code_moved(code_t *p)
+{
+    return le_compile_depth == 0 ? moved(p) : p;
+}
+
+/* Where moved code goes: the end of the last free extent of its region
+   with room, taken MOVED_ROOM at a time, away from where code is written
+   (take_extent takes the first). */
+#define MOVED_ROOM (1024 * 1024)
+static code_t *moved_next = NULL, *moved_end = NULL;
+
+static int
+region_of(code_t *p)
+{
+    int r;
+    for (r = 0; r < nregions; r++)
+        if (regions[r].start <= p && p < regions[r].end)
+            return r;
+    return -1;
+}
+
+/* the last free extent of region 'r' of at least 'n' bytes, or -1 */
+static int
+free_last(int r, size_t n)
+{
+    int f;
+    for (f = nfree; f--;)
+        if (free_ext[f].start >= regions[r].start &&
+            free_ext[f].end <= regions[r].end &&
+            (size_t)(free_ext[f].end - free_ext[f].start) >= n)
+            break;
+    return f;
+}
+
+/* room for 'size' bytes at the same offset from 16 as 'from', or 'from' */
+static code_t *
+moved_room(code_t *from, size_t size)
+{
+    int r = region_of(from), f;
+    code_t *d, *old_next = NULL, *old_end = NULL;
+    if (r < 0)
+        return from;
+    if (moved_next == NULL || region_of(moved_next) != r ||
+        (size_t)(moved_end - moved_next) < size + 16) {
+        size_t want = size + 16 > MOVED_ROOM ? size + 16 : MOVED_ROOM;
+        f = free_last(r, want);
+        if (f < 0)
+            f = free_last(r, size + 16);
+        if (f < 0)
+            return from;
+        old_next = moved_next;
+        old_end = moved_end;
+        moved_end = free_ext[f].end;
+        if ((size_t)(free_ext[f].end - free_ext[f].start) > want) {
+            free_ext[f].end -= want;
+            moved_next = free_ext[f].end;
+        }
+        else {
+            moved_next = free_ext[f].start;
+            memmove(free_ext + f, free_ext + f + 1,
+                    (nfree - f - 1) * sizeof(extent_t));
+            nfree--;
+        }
+        LE_UNPOISON(moved_next, moved_end - moved_next);
+        if (old_next != NULL && old_end > old_next)
+            free_insert(old_next, old_end);
+    }
+    d = moved_next + ((from - moved_next) & 15);
+    if (d > moved_next)
+        free_insert(moved_next, d);
+    moved_next = d + size;
+    return d;
+}
+
+/* old copies: those of the compile before are the first nold_freed */
+static extent_t *old = NULL;
+static int nold = 0, oldcap = 0, nold_freed = 0;
+
+static void
+old_add(code_t *start, code_t *end)
+{
+    if (nold == oldcap) {
+        int cap = oldcap ? 2 * oldcap : 64;
+        extent_t *n = PyMem_Realloc(old, cap * sizeof(extent_t));
+        if (n == NULL) {
+            free_insert(start, end);
+            return;
+        }
+        old = n;
+        oldcap = cap;
+    }
+    old[nold].start = start;
+    old[nold].end = end;
+    nold++;
+}
+
+static bool
+in_regions(code_t *p)
+{
+    int r;
+    for (r = 0; r < nregions; r++)
+        if (regions[r].start <= p && p < regions[r].end)
+            return true;
+    return false;
+}
+
+#define NOTE_SIZE(x) ((x)->kind == LE_RELOC_WORD ? 8 : 4)
+
+/* the new copies, sorted */
+static extent_t *copies = NULL;
+static int ncopies = 0, copiescap = 0;
+
+static int
+extent_cmp(const void *a, const void *b)
+{
+    const extent_t *x = a, *y = b;
+    return x->start < y->start ? -1 : x->start > y->start;
+}
+
+/* whether [p, p + 8) meets a new copy */
+static bool
+in_copies(code_t *p)
+{
+    int lo = 0, hi = ncopies;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (copies[mid].end <= p)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo < ncopies && copies[lo].start < p + 8;
+}
+
+static int
+note_cmp(const void *a, const void *b)
+{
+    const note_t *x = a, *y = b;
+    if (x->at != y->at)
+        return x->at < y->at ? -1 : 1;
+    return x->seq < y->seq ? -1 : x->seq > y->seq;
+}
+
+/* where the rel32 of note 'n' goes, the old place in 'at', and the far
+   jumps it goes through followed */
+static code_t *
+note_target(note_t *n)
+{
+    dword_t v;
+    code_t *t;
+    memcpy(&v, n->at, sizeof(v));
+    t = n->at + n->end + v;
+    if (n->kind == LE_RELOC_JUMP)
+        while (made_find(t) == NULL && in_regions(t) && t[0] == 0xFF &&
+               t[1] == 0x25 && *(dword_t *)(t + 2) == 0)
+            t = *(code_t **)(t + 6);
+    return t;
+}
+
+static void
+piece_stay(made_t *m)
+{
+    if (m->to != m->start) {
+        free_insert(m->to, m->to + (m->end - m->start));
+        m->to = m->start;
+    }
+}
+
+/* the extent of 'o' holding [start, end) is now at 'to' */
+static void
+owner_extent_moved(le_owner_t *o, code_t *start, code_t *end, code_t *to)
+{
+    int k;
+    for (k = 0; k < o->nextents; k++) {
+        code_t *xstart = o->extents[k].start, *xend = o->extents[k].end;
+        if (xstart <= start && end <= xend) {
+            int i = k;
+            if (xstart < start) {
+                o->extents[k].end = start;
+                i = o->nextents++;
+            }
+            o->extents[i].start = to;
+            o->extents[i].end = to + (end - start);
+            if (end < xend) {
+                o->extents[o->nextents].start = end;
+                o->extents[o->nextents++].end = xend;
+            }
+            return;
+        }
+    }
+    Py_FatalError("psyco: moved code not in its owner's extents");
+}
+
+static void
+owner_add_reloc(le_owner_t *o, code_t *at, int kind, int end)
+{
+    if (o->nrelocs == o->relocscap) {
+        int cap = o->relocscap ? 2 * o->relocscap : 16;
+        struct le_reloc_s *n =
+            PyMem_Realloc(o->relocs, cap * sizeof(struct le_reloc_s));
+        if (n == NULL)
+            return;
+        o->relocs = n;
+        o->relocscap = cap;
+    }
+    o->relocs[o->nrelocs].at = at;
+    o->relocs[o->nrelocs].kind = (signed char)kind;
+    o->relocs[o->nrelocs].end = (signed char)end;
+    o->nrelocs++;
+    psyco_stat_code_moved[2]++;
+}
+
+DEFINEFN void
+psyco_code_move_begin(void)
+{
+    nmade = 0;
+    nnotes = 0;
+}
+
+DEFINEFN void
+psyco_code_move_made(void)
+{
+    long i, j, n;
+    int k;
+    bool again;
+    /* the last note at each place; a jump or distance no longer as noted
+       was overwritten, and a place outside executable memory is a scratch
+       copy */
+    /* the pieces of owners still alive, which do not overlap */
+    for (k = j = 0; k < nmade; k++)
+        if (made[k].owner != NULL)
+            made[j++] = made[k];
+    nmade = (int)j;
+    qsort(made, nmade, sizeof(made_t), made_cmp);
+    for (k = 1; k < nmade; k++)
+        if (made[k - 1].end > made[k].start)
+            Py_FatalError("psyco: pieces of code made overlap");
+    qsort(notes, nnotes, sizeof(note_t), note_cmp);
+    for (i = j = 0; i < nnotes; i++) {
+        note_t *x = &notes[i];
+        made_t *m;
+        if (x->kind != LE_RELOC_WORD) {
+            dword_t v;
+            if (!in_regions(x->at))
+                continue;
+            memcpy(&v, x->at, sizeof(v));
+            if (v != (dword_t)x->value)
+                continue;
+        }
+        m = made_find(x->at);
+        if (m != NULL && x->at + NOTE_SIZE(x) > m->end)
+            continue;
+        /* of notes whose places overlap, the last written */
+        if (j > 0 && notes[j - 1].at + NOTE_SIZE(&notes[j - 1]) > x->at) {
+            if (notes[j - 1].seq > x->seq)
+                continue;
+            j--;
+        }
+        notes[j++] = *x;
+    }
+    n = j;
+    if (copiescap < nmade) {
+        extent_t *c = PyMem_Realloc(copies, nmade * sizeof(extent_t));
+        if (c == NULL)
+            nmade = 0; /* all stay */
+        else {
+            copies = c;
+            copiescap = nmade;
+        }
+    }
+    /* destinations */
+    for (k = 0; k < nmade; k++) {
+        made_t *m = &made[k];
+        size_t size = m->end - m->start;
+        if (m->owner != NULL)
+            m->to = moved_room(m->start, size);
+    }
+    /* each distance must still reach */
+    do {
+        again = false;
+        for (i = 0; i < n; i++) {
+            note_t *x = &notes[i];
+            code_t *t, *at;
+            if (x->kind != LE_RELOC_DATA)
+                continue;
+            t = note_target(x);
+            at = moved(x->at);
+            if (!FITS_IN_32BITS(moved(t) - (at + x->end))) {
+                made_t *a = made_find(x->at), *b = made_find(t);
+                if (a != NULL && a->to != a->start)
+                    piece_stay(a), again = true;
+                if (b != NULL && b->to != b->start)
+                    piece_stay(b), again = true;
+            }
+        }
+    } while (again);
+    /* room in the owners' extents: a piece may split one in three */
+    for (k = 0; k < nmade; k++) {
+        made_t *m = &made[k];
+        le_owner_t *o = m->owner;
+        int need = o == NULL ? 0 : o->nextents, l;
+        if (m->to == m->start)
+            continue;
+        for (l = 0; l < nmade; l++)
+            if (made[l].owner == o && made[l].to != made[l].start)
+                need += 2;
+        if (need > o->extentscap) {
+            int cap = need + (need >> 1);
+            void *p = PyMem_Realloc(o->extents, cap * sizeof(extent_t));
+            if (p == NULL) {
+                piece_stay(m);
+                continue;
+            }
+            o->extents = p;
+            o->extentscap = cap;
+        }
+    }
+    ncopies = 0;
+    for (k = 0; k < nmade; k++)
+        if (made[k].to != made[k].start) {
+            memcpy(made[k].to, made[k].start, made[k].end - made[k].start);
+            copies[ncopies].start = made[k].to;
+            copies[ncopies++].end = made[k].to + (made[k].end - made[k].start);
+        }
+    qsort(copies, ncopies, sizeof(extent_t), extent_cmp);
+    /* patched in the new copies, read from the old ones; a note in code
+       freed since, where a copy now is, is dropped */
+    for (i = 0; i < n; i++) {
+        note_t *x = &notes[i];
+        code_t *at = moved(x->at);
+        made_t *m = made_find(x->at);
+        if (m == NULL && in_copies(x->at))
+            continue;
+        if (x->kind == LE_RELOC_WORD) {
+            code_t *v, *w;
+            memcpy(&v, x->at, sizeof(v));
+            w = x->end ? moved(v - 1) + 1 : moved(v);
+            if (at != x->at || w != v)
+                memcpy(at, &w, sizeof(w));
+        }
+        else {
+            code_t *t = note_target(x), *to = moved(t), *j;
+            long d = to - (at + x->end);
+            dword_t v;
+            memcpy(&v, x->at, sizeof(v));
+            j = x->at + x->end + v;
+            if (x->kind == LE_RELOC_JUMP && to != t && j != t &&
+                made_find(j) == NULL && *(code_t **)(j + 6) == t &&
+                FITS_IN_32BITS(j - (at + x->end))) {
+                /* a far jump to code this compile made goes there now; any
+                   other jump to it was made by this compile too */
+                *(code_t **)(j + 6) = to;
+                if (amap_get(&far_jumps, t) == j &&
+                    amap_reserve(&far_jumps) >= 0) {
+                    amap_remove(&far_jumps, t);
+                    amap_put(&far_jumps, to, j);
+                }
+                t = to;
+                to = j;
+                d = j - (at + x->end);
+            }
+            if (!FITS_IN_32BITS(d)) {
+                if (x->kind == LE_RELOC_DATA)
+                    Py_FatalError("psyco: moved code out of reach");
+                d = psyco_code_far_jump(at + x->end, to) - (at + x->end);
+            }
+            if (at != x->at || to != t) {
+                v = (dword_t)d;
+                memcpy(at, &v, sizeof(v));
+            }
+        }
+        if (m != NULL)
+            owner_add_reloc(m->owner, at, x->kind, x->end);
+    }
+    for (k = 0; k < nmade; k++) {
+        made_t *m = &made[k];
+        if (m->to == m->start) {
+            if (m->owner != NULL)
+                psyco_stat_code_moved[1] += m->end - m->start;
+            continue;
+        }
+        LE_STAT(psyco_stat_code_moved[0] += m->end - m->start);
+        owner_extent_moved(m->owner, m->start, m->end, m->to);
+        memset(m->start, 0xCC, m->end - m->start); /* INT 3 */
+        old_add(m->start, m->end);
+    }
+    /* the old copies of the compile before are freed */
+    for (k = 0; k < nold_freed; k++) free_insert(old[k].start, old[k].end);
+    memmove(old, old + nold_freed, (nold - nold_freed) * sizeof(extent_t));
+    nold -= nold_freed;
+    nold_freed = nold;
+    nnotes = 0;
+}
+#endif
+
 /*** Owners ***/
 
 DEFINEVAR le_owner_t *psyco_owner = NULL;
@@ -487,6 +1023,10 @@ psyco_owner_alloc(size_t size)
 
 static void
 codebuf_unlist(CodeBufferObject *b);
+#if ALL_CHECKS
+static void
+made_forget(le_owner_t *o);
+#endif
 EXTERNFN void
 psyco_owner_release_records(le_owner_t *o); /* dispatcher.c */
 EXTERNFN bool
@@ -580,6 +1120,10 @@ owner_free(le_owner_t *o, PyObject *mergepoints, PyObject *entry_point)
         LE_STAT(psyco_stat_code_bytes_live -= e - s);
         free_insert(s, e);
     }
+#if ALL_CHECKS
+    made_forget(o);
+    PyMem_Free(dead.relocs);
+#endif
     PyMem_Free(dead.extents);
     PyMem_Free(dead.bufs);
     psyco_release_notes(dead.notes, dead.nnotes);
@@ -1887,6 +2431,7 @@ codebuf_new(PsycoObject *po, global_entries_t *ge, code_t *codestart,
     b->serial = psyco_next_serial++;
     b->ge = NULL;
     b->codestart = codestart;
+    LE_RELOC_SLOT(&b->codestart);
     /* in the journal before it is registered, so that running out of
        memory can't leave it registered */
     if (po != NULL && ge != NULL)

@@ -2582,9 +2582,11 @@ load_global_rearmed(PsycoObject *po, changed_global_t *cg, vinfo_t **result)
     sg->name = cg->name;
     sg->value = cg->value;
     sg->resume = cg->resume;
+    LE_RELOC_SLOT(&sg->resume);
     psyco_global_stale(po, cg->globals, cg->name, &sg->check, shape, offset,
                        stub);
     sg->varying = po->code;
+    LE_RELOC_SLOT(&sg->varying);
     return load_global_varying(po, cg->globals, cg->builtins, cg->name,
                                &sg->vg, result);
 }
@@ -2686,6 +2688,7 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
     po->pr.split_after_global = 1;
     if (cg != NULL) {
         cg->resume = po->code;
+        LE_RELOC_SLOT(&cg->resume);
         cg->name = name;
         psyco_owner_pin(name);
         cg->value = value;
