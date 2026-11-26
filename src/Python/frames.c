@@ -759,14 +759,16 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
 
 /* the catcher word (pycompiler.c:catcher_word) of the compiled frame of
    code 'co' whose own slot is 'slot', while it is in the call its slot
-   says (as slot_locals), if its frame has one; else NULL */
+   says (as slot_locals), if its frame has one; else NULL, as for a
+   generator's frame, which keeps its own locals */
 static PyObject **
 slot_word(stack_frame_info_t **slot, PyCodeObject *co)
 {
     long v = (long)*slot, regs[REG_TOTAL];
     struct locals_map_s *map;
     code_t *ip;
-    if (v == -1 || v == FINFO_RETURNING)
+    if (v == -1 || v == FINFO_RETURNING ||
+        (co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))
         return NULL;
     if ((v & 1) != 0) {
         map = psyco_note_map(v);
@@ -788,14 +790,11 @@ slot_word(stack_frame_info_t **slot, PyCodeObject *co)
    held past the call's end, keeps the call's locals as they end, as
    CPython's frame does: the call's catcher word holds it, where the frame
    has one that is free, and the call's end gives it the locals
-   (pycompiler.c:catcher_flush). A generator's frame keeps its own
-   locals. */
+   (pycompiler.c:catcher_flush). */
 static void
 stand_in_word(PyFrameObject *f, PyObject **word)
 {
-    if (word == NULL || *word != NULL ||
-        (le_pyframe_code(f)->co_flags &
-         (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))
+    if (word == NULL || *word != NULL)
         return;
     Py_INCREF(f);
     *word = (PyObject *)f;
