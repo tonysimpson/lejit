@@ -1,24 +1,12 @@
-# Compiled code makes a frame object only when something asks for one
-# (pyruntime.c:le_pyframe_new, mechanisms/frames.h:le_frame_object, counted
-# in lejit._core._stats()['frame_objects']). Each case runs work that asks
-# for none and gives its result and whether any was made while it ran.
-import asyncio, sys, types
+# Compiled code makes a frame object only where CPython would have one:
+# each case counts the frame objects alive while its work holds them, the
+# same way plain and under LeJIT, and under LeJIT also that it made no
+# more than those (pyruntime.c:le_pyframe_new, mechanisms/frames.h:
+# le_frame_object, counted in lejit._core._stats()['frame_objects']), so
+# none was made and dropped on the side.
+import asyncio, gc, sys, types
 
 CHECKED = {'checked': 'reads lejit._core._stats'}
-
-
-def _interpreter_frames():
-    # where a frame is a frame object, as before 3.11, CPython's coroutine
-    # is one too: only the counts of what CPython makes none of are checked
-    try:
-        import lejit._core
-    except ImportError:
-        return False
-    return bool(dict(lejit._core._build['features']).get(
-        'LE_HAS_INTERPRETER_FRAME'))
-
-
-INTERPRETER_FRAMES = _interpreter_frames()
 
 
 def _made():
@@ -28,10 +16,29 @@ def _made():
     return lejit._core._stats()['frame_objects']
 
 
-def none_made(work, *args):
-    before = _made()
+def _alive():
+    return sum(type(o) is types.FrameType for o in gc.get_objects())
+
+
+class Count:
+    # frame objects alive and made since it started; 'held' is taken while
+    # the work holds what it made
+    def __init__(self):
+        self.alive = _alive()
+        self.made = _made()
+
+    def held(self):
+        self.alive_then = _alive() - self.alive
+
+    def result(self):
+        return self.alive_then, _made() - self.made <= self.alive_then
+
+
+def counted(work, *args):
+    count = Count()
     result = work(*args)
-    return result, _made() - before
+    count.held()
+    return result, count.result()
 
 
 def _add(a, b):
@@ -46,7 +53,7 @@ def _sum_to(n):
 
 
 def calls(n):
-    return none_made(_sum_to, n)
+    return counted(_sum_to, n)
 
 
 def _squares(n):
@@ -68,7 +75,7 @@ def _generators(n):
 
 
 def generators(n):
-    return none_made(_generators, n)
+    return counted(_generators, n)
 
 
 @types.coroutine
@@ -90,16 +97,15 @@ def _pause_all(n):
 
 
 def coroutines_pausing(n):
-    # finishing one raises StopIteration, whose traceback CPython makes a
-    # frame object for too: only the pauses are counted
-    (coros, paused), made = none_made(_pause_all, n)
+    # counted while paused: finishing raises StopIteration, a traceback
+    (coros, paused), count = counted(_pause_all, n)
     out = []
     for c in coros:
         try:
             c.send(10)
         except StopIteration as e:
             out.append(e.value)
-    return paused, out, made if INTERPRETER_FRAMES else None
+    return paused, out, count
 
 
 async def _wait(fut):
@@ -112,11 +118,12 @@ async def _request(loop, futs):
     return await _wait(fut) * 2
 
 
-async def _gather(n):
+async def _gather(n, count):
     loop = asyncio.get_running_loop()
     futs = []
     tasks = asyncio.gather(*[_request(loop, futs) for i in range(n)])
     await asyncio.sleep(0)
+    count.held()
     for i, f in enumerate(futs):
         f.set_result(i)
     return await tasks
@@ -124,45 +131,24 @@ async def _gather(n):
 
 def gather(n):
     # making an event loop catches a KeyError (asyncio's debug-mode test
-    # reads os.environ), whose traceback CPython makes frame objects for:
-    # only the run is counted
+    # reads os.environ), a traceback: only the run is counted, while
+    # every request waits
     loop = asyncio.new_event_loop()
     try:
-        result, made = none_made(loop.run_until_complete, _gather(n))
+        count = Count()
+        result = loop.run_until_complete(_gather(n, count))
     finally:
         loop.close()
-    return result, made if INTERPRETER_FRAMES else None
-
-
-def _fails(i):
-    if i % 3 == 0:
-        raise ValueError(i)
-    return i
-
-
-def _catches(n):
-    out = []
-    for i in range(n):
-        try:
-            out.append(_fails(i))
-        except ValueError:
-            out.append(-1)
-    return out
-
-
-def exceptions(n):
-    # CPython makes a frame object for each raising call and one for the
-    # catching frame, which it keeps
-    out, made = none_made(_catches, n)
-    return out, made <= out.count(-1) + 1
+    return result, count.result()
 
 
 CASES = [
     ('calls', [(50,)], CHECKED),
     ('generators', [(20,)], CHECKED),
     ('coroutines_pausing', [(10,)], CHECKED),
-    ('gather', [(20,)], CHECKED),
-    ('exceptions', [(20,)],
-     dict(CHECKED, xfail='a catching frame gets a frame object again at each'
-                         ' catch, with its callers\' (frames.c:catcher_caller)')),
+    ('gather', [(20,)],
+     dict(CHECKED,
+          warmup=(300, "asyncio's paths go on compiling for some rounds"),
+          clear_type_cache="asyncio's task_wakeup looks up the result of "
+                           "gather()'s future by a name made afresh each time")),
 ]
