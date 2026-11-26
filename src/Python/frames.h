@@ -40,12 +40,6 @@ psyco_activation_returned(long *sp);
    inlined in it, if it is of code 'co' (borrowed), else NULL */
 EXTERNFN PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co);
-/* the frame object kept for the innermost compiled frame, made now if
-   none is, if it is a compiled callee of code 'co' at 'lasti': as
-   kept_frame makes it for a walk, so that the frame of a traceback entry
-   is the one Python gets for the call; a new reference, or NULL */
-EXTERNFN PyFrameObject *
-psyco_innermost_keep(PyCodeObject *co, PyObject *globals, int lasti);
 /* how many frame objects of inlined frames are kept: compiled code
    leaving an inlined frame that ran Python then calls
    psyco_inline_frame_left, which lets its own go */

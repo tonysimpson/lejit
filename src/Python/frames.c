@@ -1419,6 +1419,23 @@ psyco_inline_frame_left(void)
     return 0;
 }
 
+/* The traceback entries' frames catching callees hold on this thread
+   (psyco_frame_catch), by the callee's own slot, so that a walk keeps
+   one as its call's frame (keep_frame). An entry is live while its word
+   holds its frame; past CATCHERS_MAX, a frame is left out and a walk
+   makes another. */
+#define CATCHERS_MAX 32
+typedef struct {
+    stack_frame_info_t **own;
+    PyObject **word;
+    PyFrameObject *frame;
+} catcher_t;
+static _Thread_local catcher_t catchers[CATCHERS_MAX] LE_FAST_TLS;
+static _Thread_local int ncatchers LE_FAST_TLS;
+
+static PyFrameObject *
+catcher_take(stack_frame_info_t **own, PyCodeObject *co);
+
 /* the activation with key 'own' for the frame of code 'co' whose record
    is in 'slot', made if need be. A compiled callee's call's return address
    is at 'ret' (NULL: not found, and none is made); an inlined frame's has
@@ -1440,7 +1457,13 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     }
     if (!inlined && ret == NULL)
         return NULL;
-    f = psyco_build_pyframe(co, globals, PyThreadState_GET());
+    /* a traceback's frame stands for the call already: it is the one */
+    f = inlined || ncatchers == 0 ? NULL
+                                  : catcher_take(own, (PyCodeObject *)co);
+    if (f != NULL)
+        Py_INCREF(f);
+    else
+        f = psyco_build_pyframe(co, globals, PyThreadState_GET());
     le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
     /* running, as CPython's: frame.clear() refuses it */
     le_pyframe_set_executing(f, 1);
@@ -1777,22 +1800,6 @@ psyco_innermost_activation(PyCodeObject *co)
     if (acts_count == 0 || (a = act_at(slot, co)) == NULL || a->resumed)
         return NULL;
     return a->frame;
-}
-
-DEFINEFN
-PyFrameObject *
-psyco_innermost_keep(PyCodeObject *co, PyObject *globals, int lasti)
-{
-    PyFrameObject *real;
-    stack_frame_info_t **slot = innermost_slot(&real);
-    stack_frame_info_t *rec;
-    if (slot == NULL)
-        return NULL;
-    rec = *slot;
-    if ((((long)rec) & 1) != 0 || rec->nargs < 0 || rec->co != co ||
-        gen_frame_at(slot) != NULL)
-        return NULL;
-    return kept_frame((long)slot, (PyObject *)co, globals, lasti);
 }
 
 /* A frame object for a frame pvisitframes visits: a real frame, or a new
@@ -2213,11 +2220,51 @@ has_catcher_note(PyFrameObject *f)
 }
 
 static void
+catcher_add(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
+{
+    int i, n = 0;
+    for (i = 0; i < ncatchers; i++)
+        if (*catchers[i].word == (PyObject *)catchers[i].frame)
+            catchers[n++] = catchers[i];
+    ncatchers = n;
+    if (n < CATCHERS_MAX) {
+        catchers[n].own = own;
+        catchers[n].word = word;
+        catchers[n].frame = f;
+        ncatchers = n + 1;
+    }
+}
+
+static void
 clear_catcher_note(PyFrameObject *f)
 {
+    int i;
+    for (i = ncatchers; i-- > 0;)
+        if (catchers[i].frame == f) {
+            catchers[i] = catchers[--ncatchers];
+            break;
+        }
     if (has_catcher_note(f))
         le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] =
             le_pyframe_stack(f)[2] = NULL;
+}
+
+/* the frame of a traceback entry the catching callee of code 'co' with
+   own slot 'own' holds, taken out with its note, or NULL */
+static PyFrameObject *
+catcher_take(stack_frame_info_t **own, PyCodeObject *co)
+{
+    int i;
+    PyFrameObject *f;
+    for (i = ncatchers; i-- > 0;) {
+        f = catchers[i].frame;
+        if (catchers[i].own == own && *catchers[i].word == (PyObject *)f &&
+            !le_frame_is_executing(f) && le_pyframe_code(f) == co) {
+            clear_catcher_note(f);
+            return f;
+        }
+    }
+    return NULL;
 }
 
 /* the catching callee's own slot, if it runs on this thread and its word
@@ -2797,6 +2844,8 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
         le_pyframe_stack(f)[1] = (PyObject *)own;
         le_pyframe_stack(f)[2] = (PyObject *)word;
     }
+    if (!le_frame_is_executing(f) && le_frame_stack_empty(f))
+        catcher_add(f, word, own);
 }
 
 /* what holds a catcher's frame besides its word: a real or kept frame,
