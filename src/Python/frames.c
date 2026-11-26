@@ -3036,7 +3036,7 @@ static PyObject *msg_line, *msg_filename, *msg_lineno, *msg_module;
 /* the thread's innermost frame as sys._getframe sees it: its code,
    globals, current line (None if not known), and its frame object if it
    is a real frame */
-struct innermost_s {
+struct warning_frame_s {
     PyFrameObject *frame;
     PyCodeObject *code;
     PyObject *globals;
@@ -3044,9 +3044,9 @@ struct innermost_s {
 };
 
 static PyObject *
-visit_innermost(const visited_frame_t *v, void *data)
+visit_warning_frame(const visited_frame_t *v, void *data)
 {
-    struct innermost_s *in = (struct innermost_s *)data;
+    struct warning_frame_s *in = (struct warning_frame_s *)data;
     in->frame = v->frame;
     if (v->code == NULL) {
         in->code = le_frame_code(le_frame_of(v->frame));
@@ -3110,7 +3110,7 @@ names_fields_place(PyObject *msg, PyFrameObject *f)
 }
 
 static int
-correct_place(PyObject *msg, PyFrameObject *real, struct innermost_s *top)
+correct_place(PyObject *msg, PyFrameObject *real, struct warning_frame_s *top)
 {
     PyObject *real_mod = NULL, *top_mod = NULL, *line;
     PyObject *real_globals = le_frame_globals(le_frame_of(real));
@@ -3159,13 +3159,13 @@ le_showwarnmsg(PyObject *self, PyObject *msg)
     /* the thread's own innermost frame, as C inside CPython may read it */
     le_frame_t *f = le_frame_current(PyThreadState_GET());
     PyFrameObject *real = NULL;
-    struct innermost_s top = {NULL, NULL, NULL, NULL};
+    struct warning_frame_s top = {NULL, NULL, NULL, NULL};
     (void)self;
     while (f != NULL && !le_frame_complete(f)) f = le_frame_back(f);
     if (f != NULL && (real = le_frame_object(f)) == NULL)
         return PyErr_Occurred() ? NULL : PyErr_NoMemory();
     if (real != NULL)
-        pvisitframes(visit_innermost, &top);
+        pvisitframes(visit_warning_frame, &top);
     if (top.code != NULL) {
         int err = top.line == NULL ? -1 : correct_place(msg, real, &top);
         Py_XDECREF(top.line);
