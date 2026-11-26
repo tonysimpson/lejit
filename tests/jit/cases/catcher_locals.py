@@ -420,6 +420,72 @@ def callee_cleared(n):
     return cleared(n), cleared(n)
 
 
+def names(tb):
+    return [f.f_code.co_name for f, _ in traceback.walk_tb(tb)]
+
+
+# A bare raise of an exception a caller caught: its traceback starts at
+# the caller's frame, and the handler that catches it again doesn't take
+# that frame for its own later entries
+def handle_error(n):                  # handlers: compiled, not inlined
+    x = 'handler'
+    try:
+        raise
+    except ValueError as e:
+        again = names(e.__traceback__), shown(e.__traceback__.tb_frame.f_locals)
+    try:
+        raise
+    except KeyError:
+        pass
+    except ValueError:
+        unmatched = names(sys.exc_info()[2])
+    try:
+        [][n]
+    except IndexError as e:
+        x = 'later'
+        new = names(e.__traceback__), shown(e.__traceback__.tb_frame.f_locals)
+    return again, unmatched, new
+
+
+def handled_elsewhere(n):
+    x = 'caller'
+    try:
+        raiser(n)
+    except ValueError:
+        return handle_error(n)
+
+
+def callee_handled_elsewhere(n):
+    return handled_elsewhere(n), handled_elsewhere(n)
+
+
+def handled_through_c(n):             # the handler runs on its own frame
+    x = 'caller'
+    try:
+        raiser(n)
+    except ValueError:
+        return list(map(handle_error, [n]))[0]
+
+
+def callee_handled_through_c(n):
+    return handled_through_c(n), handled_through_c(n)
+
+
+# a bare raise with no exception handled: its RuntimeError is the frame's own
+def no_active_exception(n):
+    x = n
+    try:
+        raise
+    except RuntimeError as e:
+        tb = e.__traceback__
+    x = n * 10
+    return names(tb), shown(tb.tb_frame.f_locals)
+
+
+def callee_no_active_exception(n):
+    return no_active_exception(n), no_active_exception(n + 1)
+
+
 CASES = [
     ('plain', [(2,)], {}),
     ('callee_plain', [(2,)], {}),
@@ -459,4 +525,10 @@ CASES = [
     ('callee_deleted_after_inlined_call', [(2,)], {}),
     ('cleared', [(2,)], {}),
     ('callee_cleared', [(2,)], {}),
+    ('handled_elsewhere', [(2,)], {}),
+    ('callee_handled_elsewhere', [(2,)], {}),
+    ('handled_through_c', [(2,)], {}),
+    ('callee_handled_through_c', [(2,)], {}),
+    ('no_active_exception', [(2,)], {}),
+    ('callee_no_active_exception', [(2,)], {}),
 ]
