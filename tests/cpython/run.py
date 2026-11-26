@@ -254,10 +254,11 @@ SKIPPED = {
         'test.test_poplib.TestPOP3_SSLClass.* '
         'test.test_poplib.TestPOP3_TLSClass.* '
         'test.test_poplib.TestPOP3Class.test_stls*',
-    'binds a port find_unused_port chose, and skips itself when another '
-    'process took it first':
+    'binds a port find_unused_port chose, and fails or skips itself when '
+    'another process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress '
-        'test.test_ftplib.*.test_source_address*',
+        'test.test_ftplib.*.test_source_address* '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl',
     'skips itself on a sporadic ENOTCONN, so the plain and LeJIT runs can '
     'skip different counts':
         'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF '
