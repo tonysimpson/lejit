@@ -339,6 +339,7 @@ rip_near(code_t *at, void *addr)
             le_trace_call((code_t *)code, _glue);        \
             WRITE_1(0xE8);                               \
             WRITE_32BIT((long)_glue - ((long)code + 4)); \
+            le_reloc_note(code - 4, LE_RELOC_JUMP, 4);   \
         }                                                \
         else {                                           \
             MOV_R_I(REG_TRANSIENT_1, (long)_glue);       \
@@ -1288,6 +1289,8 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
                                   tags[1], true);
         patch->end = code;
         patch->fresh = NULL;
+        LE_RELOC_SLOT(&patch->start);
+        LE_RELOC_SLOT_END(&patch->end);
     }
     else if (entry != NULL) {
         code_t *js[2];
@@ -1306,6 +1309,9 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
         MOV_R_I(REG_X64_RAX, (long)value);
         CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1, offset + sizeof(PyObject *));
         entry->at_value = (dword_t *)code - 1;
+        LE_RELOC_SLOT(&entry->at_shape);
+        LE_RELOC_SLOT(&entry->at_key);
+        LE_RELOC_SLOT(&entry->at_value);
         for (i = 0; i < 2; i++) {
             extra_assert(code - (js[i] + 2) < 128);
             js[i][1] = (code_t)(code - (js[i] + 2));
@@ -1360,6 +1366,7 @@ psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
         if (FITS_IN_32BITS(fresh - patch->end) &&
             FITS_IN_32BITS(fresh - patch->start)) {
             patch->fresh = fresh;
+            LE_RELOC_SLOT(&patch->fresh);
             code = fresh + GLOBAL_ABSENT_CODE_MAX - SIZE_OF_FAR_JUMP;
             le_trace_begin_simple_code(code);
             JUMP_TO(patch->end);
@@ -1433,6 +1440,8 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
     check->at_key = (dword_t *)code - 1;
     FAR_COND_JUMP_TO(stub, CC_NE);
     check->at_value = NULL;
+    LE_RELOC_SLOT(&check->at_shape);
+    LE_RELOC_SLOT(&check->at_key);
     END_CODE
 }
 
@@ -1499,6 +1508,9 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     WRITE_2(0x70 | CC_NE, 0);
     MOV_R_O32(rg, REG_TRANSIENT_1, offset + sizeof(PyObject *));
     entry->at_value = (dword_t *)code - 1;
+    LE_RELOC_SLOT(&entry->at_shape);
+    LE_RELOC_SLOT(&entry->at_key);
+    LE_RELOC_SLOT(&entry->at_value);
 #if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
     /* a proxy is the miss's to replace with its module */
     MOV_R_I(REG_X64_RAX, (long)&PyLazyImport_Type);

@@ -369,8 +369,10 @@ direct_entry_put(le_code_extra_t *x, le_frame_t *f, CodeBufferObject *codebuf)
         t->builtins = le_frame_builtins(f);
     }
     if (t->globals == le_frame_globals(f) &&
-        t->builtins == le_frame_builtins(f))
+        t->builtins == le_frame_builtins(f)) {
         t->entries[le_gen_direct_index(f)] = codebuf->codestart;
+        LE_RELOC_SLOT(&t->entries[le_gen_direct_index(f)]);
+    }
 }
 #else
 #define direct_entry_put(x, f, codebuf) ((void)0)

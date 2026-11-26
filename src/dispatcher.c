@@ -999,6 +999,7 @@ do_respawn(respawn_t *rs, long value)
     r = do_respawn_body(rs);
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_RESPAWN);
+    r = psyco_code_moved(r);
 #if LE_CODESTATS
     if (psyco_cs_load_respawn) { /* a load guard's failure branch */
         psyco_cs_load[4] += le_now_ns() - t0;
@@ -1219,6 +1220,8 @@ stub_pool_reserve(size_t n)
         *(le_owner_t **)chunk = psyco_owner;
         o->stub_pool = chunk + sizeof(le_owner_t *);
         o->stub_pool_end = chunk + size;
+        LE_RELOC_SLOT_END(&o->stub_pool);
+        LE_RELOC_SLOT_END(&o->stub_pool_end);
     }
     return o->stub_pool;
 }
@@ -1346,6 +1349,9 @@ psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
             jmp = (int32_t)((code_t *)write_jmp - record);
             memcpy(record + offsetof(pooled_respawn_t, jmp), &jmp,
                    sizeof(jmp));
+            le_reloc_note(record + offsetof(pooled_respawn_t, jmp),
+                          LE_RELOC_DATA,
+                          -(int)offsetof(pooled_respawn_t, jmp));
             return record;
         }
 
@@ -1364,6 +1370,7 @@ psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
         psyco_resolved_cc(po,
                           INVERT_CC(jmpcondition)); /* no jump => cond false */
         rs->write_jmp = conditional_jump_to(po, stub, jmpcondition);
+        LE_RELOC_SLOT_END(&rs->write_jmp);
         return closure;
     }
     else {
@@ -2916,6 +2923,9 @@ PSY_INLINE
             prevbuf->next = buf->next;
             buf->next = fs->local_chained_list;
             fs->local_chained_list = buf;
+            LE_RELOC_SLOT(&prevbuf->next);
+            LE_RELOC_SLOT(&buf->next);
+            LE_RELOC_SLOT(&fs->local_chained_list);
             return (code_t *)(buf + 1);
         }
         prevbuf = buf;
@@ -3019,6 +3029,7 @@ do_promotion_internal(rt_promotion_t *fs, long key, long flags)
     psyco_guard_pop(&g);
 done:
     LE_COMPILE_END(LE_ENTER_PROMOTION);
+    r = psyco_code_moved(r);
 #if LE_CODESTATS
     psyco_cs_promo_end();
 #endif
@@ -3073,6 +3084,8 @@ do_promotion_internal_body(rt_promotion_t *fs, long key, source_known_t *sk)
         buf->next = fs->local_chained_list;
         buf->key = key;
         fs->local_chained_list = buf;
+        LE_RELOC_SLOT(&buf->next);
+        LE_RELOC_SLOT(&fs->local_chained_list);
     }
 
     return result;
@@ -3095,6 +3108,7 @@ detected_megamorphic_pyobj_site(rt_promotion_t *fs, bool interpret)
     r = detected_megamorphic_body(fs, interpret);
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_PROMOTION);
+    r = psyco_code_moved(r);
 #if LE_CODESTATS
     psyco_cs_promo_end();
 #endif
@@ -3136,6 +3150,8 @@ detected_megamorphic_body(rt_promotion_t *fs, bool interpret)
         buf->next = fs->local_chained_list;
         buf->key = -1; /* use (PyObject*)(-1) as a marker */
         fs->local_chained_list = buf;
+        LE_RELOC_SLOT(&buf->next);
+        LE_RELOC_SLOT(&fs->local_chained_list);
     }
 
     return result;
@@ -3183,6 +3199,7 @@ promotion_need_chain(rt_promotion_t *fs, int n)
 #endif
     }
     fs->chain = chain;
+    LE_RELOC_SLOT(&fs->chain);
     fs->chaincap = cap;
     promotion_chain_end(fs);
     /* overwrites the start of the site's own miss path */
@@ -3258,6 +3275,7 @@ promotion_cache_fallback(rt_promotion_t *fs, code_t *mega)
         rt_local_buf_t *buf;
         int i, n = 0;
         fs->fallback = mega;
+        LE_RELOC_SLOT(&fs->fallback);
         for (buf = fs->local_chained_list; buf != NULL; buf = buf->next)
             if (buf->key != -1) {
                 extra_assert(n < 1 + PROMOTION_CHAIN_MAX);
@@ -3471,6 +3489,7 @@ psyco_promotion_forget(void *site, long key)
     for (p = &fs->local_chained_list; *p != NULL; p = &(*p)->next)
         if ((*p)->key == key) {
             *p = (*p)->next;
+            LE_RELOC_SLOT(p);
             fs->forgotten++;
             promotion_cache_forget(fs, key);
             return;

@@ -807,7 +807,7 @@ do_resume_coding(coding_pause_t *cp, long value)
     r = do_resume_coding_body(cp);
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_PAUSE);
-    return r;
+    return psyco_code_moved(r);
 }
 
 static code_t *
@@ -875,6 +875,7 @@ psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
 
     /* write the jump to the stub */
     cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
+    LE_RELOC_SLOT_END(&cp->jump_to_fix);
     end = po->code;
     psyco_park(&cp->state, po, NULL);
     return end;

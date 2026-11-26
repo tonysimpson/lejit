@@ -786,6 +786,7 @@ run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
     psyco_xmm_forget(po);
     if (po->pr.pending_map != NULL) {
         po->pr.pending_map->retaddr = po->call_end;
+        LE_RELOC_SLOT_END(&po->pr.pending_map->retaddr);
         po->pr.pending_map = NULL;
     }
     vresult = run_time_result_check(po, flags);
@@ -910,6 +911,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
 
     CALL_I(codebuf->codestart);
     finfo->ret_addr = code;
+    LE_RELOC_SLOT_END(&finfo->ret_addr);
     /* psyco callees remove args :| */
     po->stack_depth = initial_stack_depth;
     RETURNED_FROM_SUBFUNCTION();
@@ -1029,6 +1031,7 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
         CALL_R(getreg(sentry));
     }
     finfo->ret_addr = code;
+    LE_RELOC_SLOT_END(&finfo->ret_addr);
     /* the callee removes its arguments */
     po->stack_depth = initial_stack_depth;
     RETURNED_FROM_SUBFUNCTION();
