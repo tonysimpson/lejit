@@ -807,7 +807,7 @@ do_resume_coding(coding_pause_t *cp, long value)
     r = do_resume_coding_body(cp);
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_PAUSE);
-    return r;
+    return psyco_code_moved(r);
 }
 
 static code_t *
@@ -875,6 +875,7 @@ psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
 
     /* write the jump to the stub */
     cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
+    LE_RELOC_SLOT_END(&cp->jump_to_fix);
     end = po->code;
     psyco_park(&cp->state, po, NULL);
     return end;
@@ -1150,6 +1151,12 @@ compile_join(PsycoObject *po, global_entries_t *ge, bool branch, bool first)
     XMM_SPILL();
     END_CODE
     cmp = ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
+    /* code that is no group's compiles its own block rather than keep a
+       group's alive by jumping into it */
+    if (cmp != NULL && psyco_owner_would_hold(cmp->matching)) {
+        psyco_stabilize(cmp);
+        cmp = NULL;
+    }
 
     if (cmp != NULL && cmp->diff == NullArray) {
         CodeBufferObject *oldcodebuf;

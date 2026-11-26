@@ -217,8 +217,7 @@ CASES = [
     ('class_closure', [(5,)], {}),
     ('classes_die', [(20,)], {}),
     ('classes_die_after_cutoff', "[(make_and_load, 20), (make_and_store, 20)]",
-     {'xfail': "make is inlined into this loop, and some classes promoted "
-               "in an inlined body stay held by the loop's code"}),
+     {}),
     ('no_build_class', [(0,)], {}),
     ('del_cell', [(3,)], {}),
     ('del_cell_unbound', [(3,)], {}),

@@ -206,6 +206,7 @@ ipromotion_finish(PsycoObject *po, vinfo_t *fix, void *do_promotion,
     END_CODE
 #if PROMOTION_FAST_COMMON_CASE
     fs->jump_if_equal_code = start_jump;
+    LE_RELOC_SLOT(&fs->jump_if_equal_code);
     fs->chain = NULL;
     fs->reg = getreg(fix->source);
     fs->ncached = 0;

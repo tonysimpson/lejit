@@ -110,6 +110,16 @@ le_stats(PyObject *self, PyObject *unused)
     }
 #endif
     if (d != NULL) {
+        /* code moved after its compile, code that stayed, and relocations
+           kept (codemanager.c:psyco_code_move_made) */
+        PyObject *t =
+            Py_BuildValue("(lll)", psyco_stat_code_moved[0],
+                          psyco_stat_code_moved[1], psyco_stat_code_moved[2]);
+        if (t == NULL || PyDict_SetItemString(d, "code_moved", t) < 0)
+            Py_CLEAR(d);
+        Py_XDECREF(t);
+    }
+    if (d != NULL) {
         /* call-site notes' map indices made, and free for reuse (codegen.c) */
         PyObject *t = Py_BuildValue("(ll)", le_notes_made, le_notes_free);
         if (t == NULL || PyDict_SetItemString(d, "call_notes", t) < 0)

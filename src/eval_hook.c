@@ -33,6 +33,10 @@ le_eval_breaker_address(void); /* pyruntime.c */
 static PyObject *frame_done;
 #endif
 
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+DEFINEVAR PyObject *le_ex_callee = NULL;
+#endif
+
 static PyObject *
 LeCode_Run(PyObject *codebuf, le_frame_t *f)
 {
@@ -47,7 +51,15 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     PyThreadState *tstate = PyThreadState_GET();
 
     /* ceval counts the depth on entering every frame */
-    if (le_recursion_enter(tstate))
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+    if (le_ex_callee != NULL && le_ex_callee == LE_FRAME_FUNCOBJ(f)) {
+        le_ex_callee = NULL;
+        if (le_recursion_enter_untested(tstate))
+            return le_frame_finish(tstate, f, NULL, frame_done);
+    }
+    else
+#endif
+        if (le_recursion_enter(tstate))
         return le_frame_finish(tstate, f, NULL, frame_done);
     psyco_frame_start_register(&fr, f, &finfo);
     /* as ceval: the frame is the current one while its code runs, so that
@@ -357,8 +369,10 @@ direct_entry_put(le_code_extra_t *x, le_frame_t *f, CodeBufferObject *codebuf)
         t->builtins = le_frame_builtins(f);
     }
     if (t->globals == le_frame_globals(f) &&
-        t->builtins == le_frame_builtins(f))
+        t->builtins == le_frame_builtins(f)) {
         t->entries[le_gen_direct_index(f)] = codebuf->codestart;
+        LE_RELOC_SLOT(&t->entries[le_gen_direct_index(f)]);
+    }
 }
 #else
 #define direct_entry_put(x, f, codebuf) ((void)0)
@@ -877,8 +891,14 @@ LeFunc_Eval(PyThreadState *tstate, le_frame_t *frame, int throwflag)
     else if (psyco_frame_called_from_callee(le_frame_current(tstate)))
         result = eval_from_callee(tstate, frame, throwflag);
 #endif
-    else
+    else {
         result = original_eval_frame(tstate, frame, throwflag);
+#if LE_HAS_EVAL_FRAME_POPS
+        /* ceval has popped the frame, giving one that outlives it its
+           caller's frame object */
+        psyco_frame_back_stands(le_frame_current(tstate));
+#endif
+    }
 #if !LE_HAS_EVAL_FRAME_POPS
     /* where the frame is popped by now, LeCode_Run did this before */
     if (le_frame_outlives(frame) != NULL)
@@ -903,9 +923,24 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
             return gen_ending_result;
         }
 #endif
+#if LE_HAS_INTERPRETER_FRAME
+        le_frame_t *back = le_frame_current(tstate);
+        PyObject *result = gen_may_resume(frame, throwflag, &x)
+                               ? LeGen_Eval(tstate, frame, x)
+                               : original_eval_frame(tstate, frame, throwflag);
+        /* a frame object that outlives its generator's ended run has its
+           caller's frame object as f_back (the first run, which makes the
+           generator, runs on the thread's frame) */
+        if (result == NULL || (le_frame_is_gen(frame) &&
+                               !LE_GEN_PAUSED(*le_frame_gen_state(frame))))
+            psyco_frame_back_stands(back);
+        return result;
+#else
+        /* gen_send_ex unlinks the frame's f_back after each run */
         if (gen_may_resume(frame, throwflag, &x))
             return LeGen_Eval(tstate, frame, x);
         return original_eval_frame(tstate, frame, throwflag);
+#endif
     }
     return LeFunc_Eval(tstate, frame, throwflag);
 }

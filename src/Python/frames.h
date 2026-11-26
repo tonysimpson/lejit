@@ -97,6 +97,14 @@ psyco_call_lasti(PyCodeObject *co, int pos);
 /* the frame 'f' has just run and outlives its call (le_frame_outlives) */
 EXTERNFN void
 psyco_frame_returned(le_frame_t *f);
+/* the real frame object 'f', if compiled code runs it, keeps the locals
+   its run ends with */
+EXTERNFN void
+psyco_frame_stands(PyFrameObject *f);
+/* the same for 'back', if it has a frame object something else holds too:
+   a frame that called from it may have outlived its call */
+EXTERNFN void
+psyco_frame_back_stands(le_frame_t *back);
 /* a frame whose caller is 'back' is called from a compiled callee or
    inlined frame of the real frame 'back' */
 EXTERNFN int
@@ -125,6 +133,9 @@ struct locals_map_s {
     int nvalues;
     long below;
     long ret_below; /* a note's: where the frame keeps its return address */
+    /* the frame's catcher word (pycompiler.c:catcher_word) as an offset
+       from data, or -1 if it has none */
+    long word;
     long items[1];
 };
 
@@ -199,6 +210,7 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
 
 /* A real frame LeCode_Run runs: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs) */
+typedef struct frame_runtime_s *FrameRuntime_list_t;
 typedef struct frame_runtime_s {
     le_frame_t *frame; /* LeCode_Run's caller holds it */
     stack_frame_info_t ***psy_frames_start;
@@ -211,33 +223,31 @@ typedef struct frame_runtime_s {
     int resumed;
     int exposed;                   /* frames.c:expose */
     struct walked_calls_s *walked; /* frames.c:innermost_slot, or NULL */
-    struct frame_runtime_s *next;  /* the next outer one */
+    PyObject **word; /* the run's catcher word (frames.c:psyco_frame_stands),
+                        or NULL if not found yet */
+    struct frame_runtime_s *next; /* the next outer one */
+    /* the next run of any thread whose frame hashes alike (frames.c:
+       psyco_frame_start_get) */
+    struct frame_runtime_s *same_hash;
+    FrameRuntime_list_t *list; /* its thread's frame_runs */
 } FrameRuntime;
 
 #if LE_RESUMES_ON_FRAME
-/* A resumable generator's frame 'f' pausing at a yield (pycompiler.c), as
-   ceval's YIELD_VALUE leaves it: its f_lasti and stack depth; or, with
-   lasti -1, its run ending. The compiled code then stores in it the
-   'ntaken' locals listed, which the run holds. */
+/* The locals of a resumable generator's frame 'f' that its compiled run
+   holds, listed, at a pause or end (pycompiler.c:gen_take_written): what
+   Python wrote in them meanwhile (psyco_frame_write_locals) is taken out
+   of the frame, before the compiled code stores its own. */
 typedef struct {
-    int lasti, nstack;
     int ntaken;
     int taken[1];
-} le_gen_pause_t;
+} le_gen_taken_t;
 EXTERNFN void
-psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p);
+psyco_gen_take_written(le_frame_t *f, const le_gen_taken_t *t);
 #else
-/* A resumable generator's frame pausing at a yield (pycompiler.c), as
-   ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks.
-   Gives the frame of the run 'fr', where the compiled code then stores
-   its locals and stack items. */
-typedef struct {
-    int lasti, nstack;
-    int iblock;
-    PyTryBlock blocks[1];
-} le_gen_pause_t;
-EXTERNFN le_frame_t *
-psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
+/* The same for the frame of the run 'fr', all of whose locals the
+   compiled run holds */
+EXTERNFN void
+psyco_gen_take_written(FrameRuntime *fr);
 #endif
 EXTERNVAR PyObject *psyco_coro_suspended;
 EXTERNFN PyObject *

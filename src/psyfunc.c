@@ -1055,7 +1055,9 @@ pin_constants(vinfo_array_t *a)
 
 /* Compile a direct call's callee, as its own owner (codemanager.h). The
    caller's code jumps into it, so the caller holds the callee's code
-   object, which holds the compiled code. */
+   object, which holds the compiled code. Code for an argument that may die
+   soon (a class made per call) goes in a group of the callee's, which the
+   caller's code keeps while it lives. */
 static CodeBufferObject *
 compile_callee(PsycoObject *mypo, PyCodeObject *co)
 {
@@ -1065,10 +1067,12 @@ compile_callee(PsycoObject *mypo, PyCodeObject *co)
     psyco_owner_pin((PyObject *)co);
     {
         LE_OWNER_ENTER(callee);
+        psyco_owner_enter_groups(&mypo->vlocals);
         pin_constants(&mypo->vlocals);
         codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
         LE_OWNER_LEAVE();
     }
+    psyco_owner_depend(codebuf);
     return codebuf;
 }
 
@@ -1127,6 +1131,12 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     vinfo_t **frees = NULL;
     vinfo_t *freebuf[MAX_CALL_FREES];
     struct fncall_arg_s fncall;
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+    /* an f(*a, **kw) call: its frame is counted untested, here or where
+       the real call's frame is entered (le_ex_callee) */
+    bool untested = po->pr.ex_call;
+    po->pr.ex_call = 0;
+#endif
 
     /* a generator is run only by a consumer that knows it
        (psyco_call_genexpr): until then it is a pending generator, of a
@@ -1283,7 +1293,21 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
            deep recursion raises RecursionError instead of overflowing the C
            stack; psyco_call_psyco leaves it after the call.
            Emitted before the frame is built, so no argument source moves. */
-        if (!refused && entered && !inlining)
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+        /* the frame isn't entered through LeCode_Run, so no other frame
+           may take le_ex_callee's place. From an inlined frame, that
+           frame's level is tested first, as its entry was. */
+        if (untested && !refused && entered) {
+            vinfo_t *zero = psyco_vi_Zero();
+            entered = ex_callee_store(po, zero) &&
+                      (inlining || ((!po->pr.is_inlining ||
+                                     enter_recursive_levels(po, vts, 1)) &&
+                                    count_recursive_call(po, vts)));
+            vinfo_decref(zero, po);
+        }
+        else
+#endif
+            if (!refused && entered && !inlining)
             entered = psyco_enter_recursive_call(po, vts, LE_C_NONE);
         vinfo_decref(vts, po);
         if (refused || !entered) {

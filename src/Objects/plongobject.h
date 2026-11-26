@@ -24,9 +24,10 @@ _Static_assert(offsetof(PyLongObject, long_value.lv_tag) ==
 #endif
 #define LONG_ob_digit0 CPY_FIELD(PyLongObject, ob_digit, FIX_signed_size)
 #define iLONG_OB_DIGIT0 FIELD_INDEX(LONG_ob_digit0)
-/* virtual ints only: the value as a machine word; not a C field, so it is
-   never read from memory (a field read the virtual int doesn't have makes
-   psyco_internal_getfld compute it first) */
+/* the value as a machine word: a virtual int's, and a run-time int's once
+   read (plongobject.c:plong_medium_value) or kept from when it was virtual;
+   not a C field, so it is never read from memory (a field read the virtual
+   int doesn't have makes psyco_internal_getfld compute it first) */
 #define iLONG_VALUE FIELDS_TOTAL(LONG_ob_digit0)
 #define LONG_TOTAL (iLONG_VALUE + 1)
 

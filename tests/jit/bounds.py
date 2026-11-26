@@ -83,6 +83,23 @@ def counter_orders(n):
     counters8(list(range(10)) * n)
 
 
+# sympy's monomial_mul: two tuples unpacked and their items added. An int
+# that is zero must not take a path of its own, or every combination of
+# zero and non-zero items compiles the rest of the function again.
+def monomial_mul(A, B):
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9 = A
+    b0, b1, b2, b3, b4, b5, b6, b7, b8, b9 = B
+    return (a0 + b0, a1 + b1, a2 + b2, a3 + b3, a4 + b4, a5 + b5, a6 + b6,
+            a7 + b7, a8 + b8, a9 + b9)
+
+
+def zero_items(start):
+    # each item 0 or 1, from the bits of k
+    for k in range(start * 1000, start * 1000 + 1000):
+        monomial_mul(tuple(k >> i & 1 for i in range(10)),
+                     tuple(k >> i & 1 for i in range(10, 20)))
+
+
 CHECKS = [
     # name, function, warm-up arguments, then arguments that must add at
     # most 'allow' code buffers in total. New argument values may compile a
@@ -90,6 +107,7 @@ CHECKS = [
     ('popping back-edges', nqueens, [(6,), (7,)], [(8,), (9,), (10,)], 50),
     ('while/continue', while_continue, [(100,)], [(1000,), (10000,)], 50),
     ('merge-point cap', counter_orders, [], [(1,), (2,), (3,)], 150),
+    ('zero items', zero_items, [(0,)], [(1,), (2,), (3,)], 20),
 ]
 
 

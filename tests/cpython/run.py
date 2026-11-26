@@ -188,9 +188,6 @@ SKIPPED = {
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
         'test.test_sys_settrace.*.test_20_async_for_loop',
-    'a failed task the test drops is freed only by the gc, so its '
-    'exception handler runs late':
-        'test.test_asyncio.test_futures2.PyFutureTests.test_task_exc_handler_correct_context',
     'tracing that starts in a running frame (pdb.set_trace)':
         'test.test_sys_settrace.*.test_09_settrace_and_raise '
         'test.test_pdb.test_* '
@@ -258,6 +255,15 @@ SKIPPED = {
         'test.test_poplib.TestPOP3_SSLClass.* '
         'test.test_poplib.TestPOP3_TLSClass.* '
         'test.test_poplib.TestPOP3Class.test_stls*',
+    "plain CPython 3.14's own run in CI's container misses profile "
+    "events (testfunc's first call of helper) with the simulated timer, "
+    "so its counts and times differ; it doesn't fail outside CI":
+        'test.test_profile.ProfileTest.test_cprofile',
+    'counts on catching at least one signal while it flips between a '
+    'Python handler and SIG_IGN, which CPython says it may not (every one '
+    'can arrive under SIG_IGN); plain 3.8 misses them all too, and LeJIT '
+    'more often':
+        'test.test_signal.StressTest.test_stress_modifying_handlers',
     'binds a port find_unused_port chose, and fails or skips itself when '
     'another process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress '
