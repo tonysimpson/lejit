@@ -1527,6 +1527,33 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     return v;
 }
 
+#if !LE_HAS_LONG_VALUE
+DEFINEFN vinfo_t *
+psyco_long_size_times_digit(PsycoObject *po, vinfo_t *v, vinfo_t *size)
+{
+    vinfo_t *r;
+    reg_t rg, base;
+    BEGIN_CODE
+    NEED_CC();
+    COPY_IN_REG(size, rg);
+    if (is_runtime(v->source) && !RUNTIME_REG_IS_NONE(v))
+        base = RUNTIME_REG(v);
+    else {
+        base = REG_TRANSIENT_1;
+        LOAD_REG_FROM(v->source, base);
+    }
+    TEST_R_R(rg, rg);
+    BEGIN_SHORT_COND_JUMP(0, CC_E);
+    MOV_DR_O(REG_TRANSIENT_1, base, CPY_OFFSET(PyLongObject, ob_digit));
+    IMUL_R_R(rg, REG_TRANSIENT_1);
+    END_SHORT_JUMP(0);
+    END_CODE
+    r = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = r;
+    return r;
+}
+#endif
+
 #if LE_HAS_FRAME_STACKREFS
 _Static_assert(Py_TAG_REFCNT == 1 && offsetof(_PyStackRef, bits) == 0 &&
                    sizeof(_PyStackRef) == sizeof(long),

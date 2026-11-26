@@ -22,6 +22,7 @@
 #include "pboolobject.h"
 #include "pfloatobject.h"
 #include "ptupleobject.h"
+#include "../pycodegen.h"
 
 /* MEDIUM_VALUE(v) of an int that is one digit at run time, as a new
    reference in *pval. Returns 1; 0 if it isn't one digit (the caller falls
@@ -84,25 +85,9 @@ plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
     if (!runtime_condition_t(po, cc))
         return 0;
     if (is_runtime(size->source)) {
-        /* without a branch, which would compile the rest of the code once
-           more for each int that is zero: the digit's item when ob_size
-           is -1 or 1, item 0 (0) when it is 0, then times ob_size */
-        vinfo_t *one, *odd, *item;
-        one = vinfo_new(CompileTime_New(1));
-        odd = integer_and(po, size, one);
-        vinfo_decref(one, po);
-        if (odd == NULL)
-            return -1;
-        item = integer_mul_i(po, odd, LONG_DIGIT0_ITEM);
-        vinfo_decref(odd, po);
-        if (item == NULL)
-            return -1;
-        digit0 = psyco_get_field_array(po, v, LONG_size_then_digits, item);
-        vinfo_decref(item, po);
-        if (digit0 == NULL)
-            return -1;
-        *pval = integer_mul(po, size, digit0, false);
-        vinfo_decref(digit0, po);
+        /* a branch to a path of its own for zero would compile the rest of
+           the code once more for each int that can be zero */
+        *pval = psyco_long_size_times_digit(po, v, size);
         return *pval != NULL ? 1 : -1;
     }
     /* zero has no digit to read */
