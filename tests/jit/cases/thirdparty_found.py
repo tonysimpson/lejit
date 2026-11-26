@@ -3,7 +3,6 @@
 import builtins
 import gc
 import sys
-import sysconfig
 import traceback
 import tracemalloc
 import weakref
@@ -128,11 +127,6 @@ def class_module_from_callee():
     return _other['make_class']().__module__
 
 
-# type() finds the globals through PyEval_GetGlobals, which LeJIT replaces
-# at its entry; a build with link-time optimisation inlines it into type()
-LTO = '--with-lto' in (sysconfig.get_config_var('CONFIG_ARGS') or '')
-
-
 # trio's outcome.Error.unwrap: 'try: raise err  finally: del err', so that
 # the traceback's frame doesn't hold the exception in a cycle and it dies
 # by its count. The traceback's frame must see the del.
@@ -211,9 +205,7 @@ CASES = [
     ('megamorphic_call_in_try', "[()]", {}),
     ('shared_keys_equal_name', "[(), (), ()]", {}),
     ('same_genexpr_two_consumers', "[({1},), ([1],), ((2,),), ({3},)]", {}),
-    ('class_module_from_callee', "[()]",
-     {'xfail': "type() reads the nearest real frame's globals where it has "
-               "PyEval_GetGlobals inlined (mpmath test_pickle)"} if LTO else {}),
+    ('class_module_from_callee', "[()]", {}),
     ('deleted_after_raise', "[()]", {}),
     ('store_tracks_dict', "[([1],), (1,), ([2],), ((x for x in ()),)]", {}),
     ('store_cycle_collected', "[(), (), ()]", {}),

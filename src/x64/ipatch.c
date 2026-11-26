@@ -2,19 +2,19 @@
  * Replacing a C function at its entry (ipatch.h).
  *
  * The entry's first five bytes become 'jmp rel32' to a stub mapped within
- * 2 GB of it, which jumps on to the replacement. Five bytes, not a 14-byte
- * absolute jump, because compilers put a function's cold part elsewhere
- * and jump back into it from there, as near as 9 bytes from the entry
- * (PyFrame_GetBack, PyThreadState_GetFrame); and some functions are shorter
- * than 14 bytes. Nothing jumps into an entry's first five bytes.
+ * 2 GB of it, which goes on to the replacement through le_patch_call. Five
+ * bytes, not a 14-byte absolute jump, because compilers put a function's cold
+ * part elsewhere and jump back into it from there, as near as 9 bytes from the
+ * entry (PyFrame_GetBack, PyThreadState_GetFrame); and some functions are
+ * shorter than 14 bytes. Nothing jumps into an entry's first five bytes.
  *
  * The instructions those five bytes held are copied into the stub page in
  * front of a jump back to the first instruction after them, so the copy
  * runs the original. Only instructions found in function entries are known
  * here: each is moved as it is, with a RIP-relative displacement or rel32
  * target refitted to its new address (the page is near), and a short jump
- * widened to rel32. Anything else, and a branch into the bytes moved,
- * refuses the patch.
+ * widened to rel32. Anything else, a call, and a branch into the bytes
+ * moved refuse the patch.
  *
  * The entry's page is made writable for the write, and executable
  * throughout, since other threads may be running other code in it. The
@@ -30,11 +30,68 @@
 /* the moved code's largest size: five bytes of instructions of at most 15
    bytes each, a short jump among them made a 6-byte one, the jump back */
 #define MOVED_MAX (2 * 15 + 6 + 5)
-/* a stub: the jump to the replacement (jmp [rip+0] and its address), then
-   the original's moved first instructions after an endbr64, so that it can
-   be called indirectly where indirect branch tracking is on */
-#define STUB_JUMP 14
+/* a stub: push [rip+6] (the replacement's address), jmp [rip+8]
+   (le_patch_call's), those two addresses, then the original's moved first
+   instructions after an endbr64, so that it can be called indirectly where
+   indirect branch tracking is on */
+#define STUB_JUMP 28
 #define STUB_SIZE ((STUB_JUMP + 4 + MOVED_MAX + 15) & ~15)
+
+/* Calls the replacement whose address the stub pushed, keeping every
+   register but rax. Callers inside a library built with link-time
+   optimisation may know which call-clobbered registers the original leaves
+   alone and keep values in them across the call, where the replacement, an
+   ordinary C function, would change them. It is here rather than in the
+   stub so that unwinding finds it in a loaded object, with its frame
+   described: the stub is never a return address. */
+extern const char le_patch_call[] __attribute__((visibility("hidden")));
+__asm__(
+    ".text\n"
+    ".p2align 4\n"
+    ".globl le_patch_call\n"
+    ".hidden le_patch_call\n"
+    ".type le_patch_call, @function\n"
+    "le_patch_call:\n"
+    ".cfi_startproc\n"
+    ".cfi_def_cfa %rsp, 16\n" /* the replacement's address on top */
+    "endbr64\n"
+    "push %rbp\n"
+    ".cfi_def_cfa_offset 24\n"
+    ".cfi_offset %rbp, -24\n"
+    "mov %rsp, %rbp\n"
+    ".cfi_def_cfa_register %rbp\n"
+    "push %rdi\n push %rsi\n push %rdx\n push %rcx\n"
+    "push %r8\n push %r9\n push %r10\n push %r11\n"
+    "and $-16, %rsp\n"
+    "sub $256, %rsp\n"
+    "movdqu %xmm0, 0(%rsp)\n movdqu %xmm1, 16(%rsp)\n"
+    "movdqu %xmm2, 32(%rsp)\n movdqu %xmm3, 48(%rsp)\n"
+    "movdqu %xmm4, 64(%rsp)\n movdqu %xmm5, 80(%rsp)\n"
+    "movdqu %xmm6, 96(%rsp)\n movdqu %xmm7, 112(%rsp)\n"
+    "movdqu %xmm8, 128(%rsp)\n movdqu %xmm9, 144(%rsp)\n"
+    "movdqu %xmm10, 160(%rsp)\n movdqu %xmm11, 176(%rsp)\n"
+    "movdqu %xmm12, 192(%rsp)\n movdqu %xmm13, 208(%rsp)\n"
+    "movdqu %xmm14, 224(%rsp)\n movdqu %xmm15, 240(%rsp)\n"
+    "call *8(%rbp)\n"
+    "movdqu 0(%rsp), %xmm0\n movdqu 16(%rsp), %xmm1\n"
+    "movdqu 32(%rsp), %xmm2\n movdqu 48(%rsp), %xmm3\n"
+    "movdqu 64(%rsp), %xmm4\n movdqu 80(%rsp), %xmm5\n"
+    "movdqu 96(%rsp), %xmm6\n movdqu 112(%rsp), %xmm7\n"
+    "movdqu 128(%rsp), %xmm8\n movdqu 144(%rsp), %xmm9\n"
+    "movdqu 160(%rsp), %xmm10\n movdqu 176(%rsp), %xmm11\n"
+    "movdqu 192(%rsp), %xmm12\n movdqu 208(%rsp), %xmm13\n"
+    "movdqu 224(%rsp), %xmm14\n movdqu 240(%rsp), %xmm15\n"
+    "lea -64(%rbp), %rsp\n"
+    "pop %r11\n pop %r10\n pop %r9\n pop %r8\n"
+    "pop %rcx\n pop %rdx\n pop %rsi\n pop %rdi\n"
+    "pop %rbp\n"
+    ".cfi_def_cfa %rsp, 16\n"
+    ".cfi_restore %rbp\n"
+    "lea 8(%rsp), %rsp\n"
+    ".cfi_def_cfa_offset 8\n"
+    "ret\n"
+    ".cfi_endproc\n"
+    ".size le_patch_call, .-le_patch_call\n");
 
 typedef struct {
     int len;
@@ -42,6 +99,7 @@ typedef struct {
     int branch;     /* rel32_at is a branch's target, not data's */
     int short_jump; /* a jmp or jcc rel8, its opcode the last byte but one */
     int ends;       /* the next instruction isn't run after it */
+    int call;
 } insn_t;
 
 /* the instruction at 'p', if one this file can move */
@@ -51,7 +109,7 @@ decode(const unsigned char *p, insn_t *in)
     int i = 0, z = 4, rexw = 0, modrm = 0, imm = 0;
     unsigned char op;
     in->rel32_at = -1;
-    in->branch = in->short_jump = in->ends = 0;
+    in->branch = in->short_jump = in->ends = in->call = 0;
     for (;; i++) {
         if (p[i] == 0x66)
             z = 2;
@@ -89,6 +147,7 @@ decode(const unsigned char *p, insn_t *in)
         in->rel32_at = i;
         in->branch = 1;
         in->ends = op == 0xe9;
+        in->call = op == 0xe8;
         i += 4;
     }
     else if (op == 0xeb || (op >= 0x70 && op <= 0x7f)) {
@@ -130,6 +189,7 @@ decode(const unsigned char *p, insn_t *in)
     else if (op == 0xff) { /* inc, dec, push, or an indirect call or jump */
         modrm = 1;
         in->ends = ((p[i] >> 3) & 7) == 4 || ((p[i] >> 3) & 7) == 5;
+        in->call = ((p[i] >> 3) & 7) == 2 || ((p[i] >> 3) & 7) == 3;
     }
     else
         return false;
@@ -186,7 +246,8 @@ move_entry(const unsigned char *fn, unsigned char *out)
     insn_t in;
     while (n < ENTRY_JUMP) {
         const unsigned char *p = fn + n;
-        if (!decode(p, &in) || (in.ends && n + in.len < ENTRY_JUMP))
+        /* a call from the stub would make it a return address */
+        if (!decode(p, &in) || in.call || (in.ends && n + in.len < ENTRY_JUMP))
             return 0;
         if (in.short_jump) {
             unsigned char op = p[0];
@@ -305,11 +366,14 @@ le_patch_entry(void *fn, void *by)
     memcpy(moved, endbr64, 4);
     if (move_entry(fn, moved + 4) == 0)
         return NULL; /* the stub's room is left unused */
-    /* jmp [rip+0], then the replacement's address */
-    stub[0] = 0xff;
-    stub[1] = 0x25;
-    memset(stub + 2, 0, 4);
-    memcpy(stub + 6, &by, 8);
+    {
+        static const unsigned char head[12] = {0xff, 0x35, 6, 0, 0, 0,
+                                               0xff, 0x25, 8, 0, 0, 0};
+        const void *call = le_patch_call;
+        memcpy(stub, head, 12);
+        memcpy(stub + 12, &by, 8);
+        memcpy(stub + 20, &call, 8);
+    }
     jump[0] = 0xe9;
     if (!put_rel32(jump + 1, (unsigned char *)fn + ENTRY_JUMP,
                    (intptr_t)stub) ||
