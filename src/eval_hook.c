@@ -33,6 +33,10 @@ le_eval_breaker_address(void); /* pyruntime.c */
 static PyObject *frame_done;
 #endif
 
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+DEFINEVAR PyObject *le_ex_callee = NULL;
+#endif
+
 static PyObject *
 LeCode_Run(PyObject *codebuf, le_frame_t *f)
 {
@@ -47,7 +51,15 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     PyThreadState *tstate = PyThreadState_GET();
 
     /* ceval counts the depth on entering every frame */
-    if (le_recursion_enter(tstate))
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+    if (le_ex_callee != NULL && le_ex_callee == LE_FRAME_FUNCOBJ(f)) {
+        le_ex_callee = NULL;
+        if (le_recursion_enter_untested(tstate))
+            return le_frame_finish(tstate, f, NULL, frame_done);
+    }
+    else
+#endif
+        if (le_recursion_enter(tstate))
         return le_frame_finish(tstate, f, NULL, frame_done);
     psyco_frame_start_register(&fr, f, &finfo);
     /* as ceval: the frame is the current one while its code runs, so that
