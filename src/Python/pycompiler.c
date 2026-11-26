@@ -4434,6 +4434,10 @@ cimpl_name_error(PyObject *w)
     cimpl_format_exc_check_arg(PyExc_NameError, LE_MSG_NAME_NOT_DEFINED, w);
 }
 
+static vinfo_t *
+ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
+        PyTypeObject *t);
+
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
    [kwargs], args, and the callable beside its NULL. The kwargs slot is
    there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
@@ -4449,8 +4453,10 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
     vinfo_t *callargs = stack_top[-1 - slot];
     vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
-    vinfo_t *zero = NULL, *result, **kwvalues;
     PyTypeObject *t;
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+    vinfo_t *result;
+#endif
     /* and the NULL under the callable, where PUSH_NULL puts one there */
     *stack_to_pop = 2 + slot + LE_HAS_OPCODE_PUSH_NULL;
     if (kwargs != NULL && psyco_knowntobe(kwargs, 0))
@@ -4459,6 +4465,42 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     t = Psyco_NeedType(po, callargs);
     if (t == NULL)
         return NULL;
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+    /* ceval's specialised call of a Python function counts its frame
+       without testing the recursion limit: so does a direct call
+       (psyfunc.c:psyco_call_pyfunc), and the entry of the real call's
+       frame (le_ex_callee), which is cleared after */
+    {
+        PyTypeObject *ft = Psyco_NeedType(po, func);
+        if (ft == NULL)
+            return NULL;
+        if (ft == &PyFunction_Type) {
+            vinfo_t *none = psyco_vi_Zero();
+            if (!ex_callee_store(po, func)) {
+                vinfo_decref(none, po);
+                return NULL;
+            }
+            po->pr.ex_call = 1;
+            result = ex_call(po, func, callargs, kwargs, t);
+            po->pr.ex_call = 0;
+            if (result != NULL && !ex_callee_store(po, none)) {
+                vinfo_decref(result, po);
+                result = NULL;
+            }
+            vinfo_decref(none, po);
+            return result;
+        }
+    }
+#endif
+    return ex_call(po, func, callargs, kwargs, t);
+}
+
+/* psyco_ext_do_call_ex's call, once callargs' type 't' is known */
+static vinfo_t *
+ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
+        PyTypeObject *t)
+{
+    vinfo_t *zero = NULL, *result, **kwvalues;
     if (kwargs == NULL)
         kwargs = zero = psyco_vi_Zero();
     if (t == &PyTuple_Type && zero == NULL &&

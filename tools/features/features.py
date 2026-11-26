@@ -790,6 +790,24 @@ def py_recursion_remaining(s):
     return _field(s, '_ts', 'py_recursion_remaining')
 
 
+def ex_call_skips_recursion_test(s):
+    """ceval's specialised f(*a, **kw) call of a Python function
+    (CALL_EX_PY) counts the frame it pushes in py_recursion_remaining
+    without testing the count, so recursion through such calls passes the
+    limit"""
+    path, case = _case_file(s, 'CALL_EX_PY')
+    if case is None:
+        return False, '%s: no TARGET(CALL_EX_PY)' % ', '.join(CASE_FILES)
+    where = '%s:TARGET(CALL_EX_PY)' % path
+    counts = _has_run(case, ['py_recursion_remaining', '--'])
+    tests = [i for i, t in enumerate(case[:-1]) if t == 'py_recursion_remaining'
+             and case[i + 1] in ('<', '<=', '>', '>=', '==')]
+    if not counts:
+        raise Unanswered('%s: no py_recursion_remaining--' % where)
+    return not tests and not _has_run(case, ['DISPATCH_INLINED']) and \
+        not _has_run(case, ['_Py_EnterRecursivePy']), where
+
+
 def current_exception(s):
     """the exception being raised is kept as its value alone
     (current_exception, no curexc_type)"""
@@ -1711,6 +1729,7 @@ STATE = [
     ('INTERP_MONITORING_VERSION', interp_monitoring_version),
     ('THREAD_LOCAL_TSTATE', thread_local_tstate),
     ('PY_RECURSION_REMAINING', py_recursion_remaining),
+    ('EX_CALL_SKIPS_RECURSION_TEST', ex_call_skips_recursion_test),
     ('C_RECURSION_REMAINING', c_recursion_remaining),
     ('C_STACK_SOFT_LIMIT', c_stack_soft_limit),
     ('CURRENT_EXCEPTION', current_exception),

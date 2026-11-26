@@ -567,6 +567,31 @@ def _table(entries):
 
 
 @probe
+def EX_CALL_SKIPS_RECURSION_TEST():
+    """recursion through f(*a) passes the recursion limit: ceval's
+    specialised call counts the frame without testing the count (run)"""
+    def down(n, *a):
+        return down(n - 1, *a) + 1 if n else 0
+
+    def depth():
+        f, n = sys._getframe(), 0
+        while f is not None:
+            f, n = f.f_back, n + 1
+        return n
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(depth() + 200)
+    try:
+        down(1000)
+        passed = True
+    except RecursionError:
+        passed = False
+    finally:
+        sys.setrecursionlimit(old)
+    return passed, 'down(1000) through f(*a) at a limit 200 deeper %s' % (
+        'returns' if passed else 'raises RecursionError')
+
+
+@probe
 def BREAKER_AFTER_BACK_JUMP():
     """a signal handled at a loop's backward jump is caught by an exception
     table entry for the code unit before the loop head alone (run: a loop
