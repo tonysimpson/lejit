@@ -15,3 +15,11 @@ extern void *
 psyco_map_reserve(long size);
 extern void
 psyco_unmap_reserve(void *p, long size);
+
+/* gives the pages of [p, p + size) back to the system, which maps zeroed
+   ones again when they are next written; 'p' and 'size' are multiples of
+   psyco_page_size() */
+extern void
+psyco_release_pages(void *p, long size);
+extern long
+psyco_page_size(void);
