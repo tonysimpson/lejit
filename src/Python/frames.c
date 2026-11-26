@@ -1716,9 +1716,12 @@ psyco_activation_returned(long *sp)
     gen = a->gen;
     keep = a->keep;
     nkeep = a->nkeep;
-    if (f->f_back == NULL && Py_REFCNT(f) > 1 && !gen && !a->suspended) {
+    if (f->f_back == NULL && Py_REFCNT(f) > 1 && !gen && !a->suspended &&
+        !(le_pyframe_code(f)->co_flags &
+          (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR))) {
         /* it outlives its call: linked to its caller, as CPython's is,
-           while the caller's record still says where the call was */
+           while the caller's record still says where the call was; a
+           generator's has none once it has ended */
         PyErr_Fetch(&t, &v, &tb);
         f->f_back = activation_caller(a);
         PyErr_Restore(t, v, tb);
