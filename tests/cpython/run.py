@@ -181,11 +181,6 @@ SKIPPED = {
         'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_formatunraisable',
     "an inlined frame's f_locals is empty once its call has returned":
         'test.test_frame.TestFrameLocals.test_constructor',
-    "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
-    'PyFrame_GetVar) misses those compiled code has set':
-        'test.test_capi.test_eval.Tests.test_eval_getlocals '
-        'test.test_frame.TestCAPI.test_getvar '
-        'test.test_capi.test_frame.FrameTest.test_getvar',
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
         'test.test_sys_settrace.*.test_20_async_for_loop',
@@ -259,10 +254,31 @@ SKIPPED = {
         'test.test_poplib.TestPOP3_SSLClass.* '
         'test.test_poplib.TestPOP3_TLSClass.* '
         'test.test_poplib.TestPOP3Class.test_stls*',
-    'binds a port find_unused_port chose, and skips itself when another '
-    'process took it first':
+    "plain CPython 3.14's own run in CI's container misses profile "
+    "events (testfunc's first call of helper) with the simulated timer, "
+    "so its counts and times differ; it doesn't fail outside CI":
+        'test.test_profile.ProfileTest.test_cprofile',
+    'binds a port find_unused_port chose, and fails or skips itself when '
+    'another process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress '
-        'test.test_ftplib.*.test_source_address*',
+        'test.test_ftplib.*.test_source_address* '
+        'test.test_asyncio.test_sendfile.*.test_sendfile '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_force_fallback '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_force_unsupported_native '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_for_closing_transp '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_pre_and_post_data '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_pre_and_post_data '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_partial '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_partial '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_close_peer_after_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_close_peer_after_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_close_peer_in_the_middle_of_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_fallback_close_peer_in_the_middle_of_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_prevents_bare_write '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_exception '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_exception_sync_callback '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_cancel',
     'skips itself on a sporadic ENOTCONN, so the plain and LeJIT runs can '
     'skip different counts':
         'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF '

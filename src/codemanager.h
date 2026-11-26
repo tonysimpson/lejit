@@ -140,10 +140,14 @@ psyco_owner_depend(CodeBufferObject *b);
    With it, the type hints in 'a' that owner doesn't hold are dropped. */
 EXTERNFN le_owner_t *
 psyco_owner_root_holding(vinfo_array_t *a);
-/* frames.c: calls 'mark' on the code object of every compiled frame
-   running on any thread, and on some more; -1 if it can't tell */
+/* frames.c: calls 'mark' for every compiled frame running on any thread,
+   with its code object and those of the frames inlined in it, and where
+   its code goes on: the return address of the call it is in, or NULL
+   where that isn't known; -1 if it can't tell which frames run */
 EXTERNFN int
-psyco_frames_running(void (*mark)(PyCodeObject *co, void *arg), void *arg);
+psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
+                                  void *arg),
+                     void *arg);
 /* dispatcher.c: the site forgets the code it compiled for 'key', if any */
 EXTERNFN void
 psyco_promotion_forget(void *site, long key);
