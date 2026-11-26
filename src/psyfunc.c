@@ -1296,10 +1296,9 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         if (untested && !refused && entered) {
             vinfo_t *zero = psyco_vi_Zero();
             entered = ex_callee_store(po, zero) &&
-                      (inlining ||
-                       ((!po->pr.is_inlining ||
-                         enter_recursive_levels(po, vts, 1)) &&
-                        count_recursive_call(po, vts)));
+                      (inlining || ((!po->pr.is_inlining ||
+                                     enter_recursive_levels(po, vts, 1)) &&
+                                    count_recursive_call(po, vts)));
             vinfo_decref(zero, po);
         }
         else
