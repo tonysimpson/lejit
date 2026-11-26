@@ -498,6 +498,15 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
                   global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg);
 
+#if !LE_HAS_LONG_VALUE
+/* MEDIUM_VALUE of int 'v' at run time, given its ob_size 'size' of -1, 0 or
+   1: ob_size times the first digit, read only when ob_size isn't 0, since
+   zero has no digit (ob_size is then the value). One path for every
+   value. */
+EXTERNFN vinfo_t *
+psyco_long_size_times_digit(PsycoObject *po, vinfo_t *v, vinfo_t *size);
+#endif
+
 #if LE_HAS_FRAME_STACKREFS
 /* A frame's word, a _PyStackRef read at run time, as the object
    PyStackRef_AsPyObjectSteal gives: a reference, or NULL for
