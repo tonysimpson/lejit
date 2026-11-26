@@ -228,14 +228,52 @@ runs_list(void)
     PyErr_Restore(t, v, tb);
 }
 
-DEFINEFN int
-psyco_frames_running(void (*mark)(PyCodeObject *co, void *arg), void *arg)
+/* at most this many runs of compiled code on one thread are unwound */
+#define MAX_RUNS 64
+/* the code objects of one compiled frame and the frames inlined in it */
+#define LE_FRAME_CODES_MAX 8
+static int
+runs_here(stack_frame_info_t **roots[MAX_RUNS],
+          stack_frame_info_t **inners[MAX_RUNS], stack_frame_info_t **upto);
+static int
+runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
+            code_t *ips[], long regs[REG_TOTAL]);
+
+/* the code objects of the compiled frame whose slot holds 'rec', a
+   record of a compiled call it makes or its inlined frame's own: those of
+   the frames inlined in it, after its own 'co' */
+static int
+frame_codes(PyCodeObject *co, stack_frame_info_t *rec, PyCodeObject **cos)
 {
-    PyThreadState *ts;
+    stack_frame_info_t *fd, *last;
+    int n = 0;
+    cos[n++] = co;
+    if (rec == NULL)
+        return n;
+    last = finfo_last(rec);
+    for (fd = rec->link_stack_depth == 0 ? rec : rec + 1; fd <= last; fd++)
+        if (n < LE_FRAME_CODES_MAX)
+            cos[n++] = fd->co;
+    return n;
+}
+
+DEFINEFN int
+psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
+                                  void *arg),
+                     void *arg)
+{
+    PyThreadState *ts, *here = PyThreadState_GET();
+    stack_frame_info_t **roots[MAX_RUNS], **inners[MAX_RUNS];
+    code_t *ips[MAX_RUNS];
+    int nhere = 0, nfound = 0;
     if (runs_lost)
         return -1;
     if (runs_key == NULL)
         return 0;
+    /* this thread's innermost frames are in C calls whose return
+       addresses only unwinding finds; another thread's are not known */
+    nhere = runs_here(roots, inners, NULL);
+    nfound = runs_unwind(roots, inners, nhere, ips, NULL);
     for (ts = PyInterpreterState_ThreadHead(PyInterpreterState_Main());
          ts != NULL; ts = PyThreadState_Next(ts)) {
         PyObject *c =
@@ -246,16 +284,32 @@ psyco_frames_running(void (*mark)(PyCodeObject *co, void *arg), void *arg)
         for (fr = *(FrameRuntime **)PyCapsule_GetPointer(c, NULL); fr != NULL;
              fr = fr->next) {
             stack_frame_info_t **f1;
-            mark((PyCodeObject *)fr->psy_code, arg);
-            if (fr->resumed)
+            PyCodeObject *co = fr->psy_code, *cos[LE_FRAME_CODES_MAX];
+            code_t *at;
+            int i;
+            if (fr->resumed) {
+                mark(&co, 1, NULL, arg);
                 continue;
-            for (f1 = *fr->psy_frames_start; (((long)*f1) & 1) == 0;
-                 f1 = psyco_next_stack_frame(f1)) {
-                stack_frame_info_t *fd = *f1, *last = finfo_last(fd);
-                for (; fd <= last; fd++) mark(fd->co, arg);
-                if ((*f1)->link_stack_depth == 0)
-                    break; /* stack top is an inline frame */
             }
+            /* each frame making a compiled call goes on where the call's
+               record says it returns */
+            for (f1 = *fr->psy_frames_start;
+                 (((long)*f1) & 1) == 0 && (*f1)->link_stack_depth != 0;
+                 f1 = psyco_next_stack_frame(f1)) {
+                mark(cos, frame_codes(co, *f1, cos), (*f1)->ret_addr, arg);
+                co = (*f1)->co;
+            }
+            /* the innermost, in a call to C */
+            at = NULL;
+            if (ts == here)
+                for (i = 0; i < nfound; i++)
+                    if (inners[i] == f1) {
+                        at = ips[i];
+                        break;
+                    }
+            mark(cos,
+                 frame_codes(co, (((long)*f1) & 1) == 0 ? *f1 : NULL, cos), at,
+                 arg);
         }
     }
     return 0;
@@ -422,85 +476,70 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
     }
 }
 
-#if LE_RESUMES_ON_FRAME
 /* What Python wrote in the locals the run holds while the body ran
    (psyco_frame_write_locals) is released as the run ends
    (psyco_frame_start_unregister), not here, where it could run code: the
-   slots take the compiled code's values after this. The frame's other
-   words are its own. */
+   slots take the compiled code's values after this. */
+#if LE_RESUMES_ON_FRAME
 DEFINEFN void
-psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
+psyco_gen_take_written(le_frame_t *f, const le_gen_taken_t *t)
 {
     int *nkeep = NULL;
-    PyObject ***kept = p->ntaken > 0 ? run_keep_of(f, &nkeep) : NULL;
-    if (kept != NULL && *kept != NULL) {
-        int i;
-        PyObject **keep =
-            PyMem_Realloc(*kept, (*nkeep + p->ntaken) * sizeof(PyObject *));
-        for (i = 0; i < p->ntaken; i++) {
-            PyObject *o = le_frame_word_take(f, p->taken[i]);
-            if (o == NULL)
-                continue;
-            if (keep != NULL)
-                keep[(*nkeep)++] = o;
-            else
-                Py_DECREF(o); /* out of memory */
-        }
+    PyObject ***kept = run_keep_of(f, &nkeep);
+    int i;
+    PyObject **keep;
+    if (kept == NULL || *kept == NULL)
+        return;
+    keep = PyMem_Realloc(*kept, (*nkeep + t->ntaken) * sizeof(PyObject *));
+    for (i = 0; i < t->ntaken; i++) {
+        PyObject *o = le_frame_word_take(f, t->taken[i]);
+        if (o == NULL)
+            continue;
         if (keep != NULL)
-            *kept = keep;
+            keep[(*nkeep)++] = o;
+        else
+            Py_DECREF(o); /* out of memory */
     }
-    if (p->lasti >= 0)
-        le_gen_frame_pause(f, p->lasti, p->nstack);
+    if (keep != NULL)
+        *kept = keep;
 }
 
 #else
-/* What Python wrote in the locals while the body ran
-   (psyco_frame_write_locals) is released as the run ends
-   (psyco_frame_start_unregister), not here, where it could run code: the
-   slots take the compiled code's values after this. */
-DEFINEFN le_frame_t *
-psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
+DEFINEFN void
+psyco_gen_take_written(FrameRuntime *fr)
 {
     le_frame_t *f = fr->frame;
-    if (fr->entry_locals != NULL) {
-        int i, n = le_code_nlocals(le_frame_code(f));
-        PyObject **keep = PyMem_Realloc(
-            fr->entry_locals, (fr->n_entry_locals + n) * sizeof(PyObject *));
-        for (i = 0; i < n; i++) {
-            PyObject *o = le_frame_word_take(f, i);
-            if (o == NULL)
-                continue;
-            if (keep != NULL)
-                keep[fr->n_entry_locals++] = o;
-            else
-                Py_DECREF(o); /* out of memory */
-        }
+    int i, n = le_code_nlocals(le_frame_code(f));
+    PyObject **keep;
+    if (fr->entry_locals == NULL)
+        return;
+    keep = PyMem_Realloc(fr->entry_locals,
+                         (fr->n_entry_locals + n) * sizeof(PyObject *));
+    for (i = 0; i < n; i++) {
+        PyObject *o = le_frame_word_take(f, i);
+        if (o == NULL)
+            continue;
         if (keep != NULL)
-            fr->entry_locals = keep;
+            keep[fr->n_entry_locals++] = o;
+        else
+            Py_DECREF(o); /* out of memory */
     }
-    le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
-    return f;
+    if (keep != NULL)
+        fr->entry_locals = keep;
 }
 #endif
 
-/* The callee-saved registers of the compiled frame whose slot is
-   'slot', as it called C, which keeps them or saves them in its frame:
-   found by unwinding the C frames from here down to it. LeJIT's code has no
-   unwind information, so each run of compiled code nearer here (from the
-   real frame LeCode_Run runs, innermost first) is stepped over from
-   where its glue saved the registers of the C code that called it
-   (iprocessor.c:write_glue_run_code_fn). False if that frame isn't the
-   innermost of a run, or the walk doesn't come out where expected. */
-#define MAX_RUNS 64
-static bool
-slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
-               code_t **ret_ip)
+/* The runs of compiled code on this thread, innermost first (from the
+   real frame LeCode_Run runs), up to 'upto' if it is one's innermost
+   slot: each one's first slot in roots[], its innermost compiled frame's
+   slot in inners[]; how many */
+static int
+runs_here(stack_frame_info_t **roots[MAX_RUNS],
+          stack_frame_info_t **inners[MAX_RUNS], stack_frame_info_t **upto)
 {
-    stack_frame_info_t **roots[MAX_RUNS], **inners[MAX_RUNS], **f1;
     le_frame_t *f = le_frame_current(PyThreadState_GET());
-    unw_context_t uc;
-    unw_cursor_t c;
-    int i, n = 0, steps;
+    stack_frame_info_t **f1;
+    int n = 0;
     for (; f != NULL && n < MAX_RUNS; f = le_frame_back(f)) {
         FrameRuntime *fr = psyco_frame_start_get(f);
         if (fr == NULL || !le_frame_executing(f))
@@ -511,13 +550,30 @@ slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
             if ((*f1)->link_stack_depth == 0)
                 break;
         inners[n] = f1;
-        if (inners[n++] == slot)
+        if (inners[n++] == upto)
             break;
     }
-    if (n == 0 || inners[n - 1] != slot)
-        return false;
+    return n;
+}
+
+/* Where the innermost compiled frame of each of the first 'n' runs
+   runs_here found called C, found by unwinding the C frames from here
+   down to it: the call's return address in ips[i], and for the last
+   run the callee-saved registers it called with, which C keeps or saves
+   in its frames. LeJIT's code has no unwind information, so each run is
+   stepped over from where its glue saved the registers of the C code
+   that called it (iprocessor.c:write_glue_run_code_fn). How many runs
+   were found, from the innermost: fewer if the walk doesn't come out
+   where expected. */
+static int
+runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
+            code_t *ips[], long regs[REG_TOTAL])
+{
+    unw_context_t uc;
+    unw_cursor_t c;
+    int i, steps;
     if (unw_getcontext(&uc) < 0 || unw_init_local(&c, &uc) < 0)
-        return false;
+        return 0;
     for (i = 0; i < n; i++) {
         unw_word_t sp, ip, v;
         long *saved = (long *)roots[i], *ret;
@@ -525,15 +581,16 @@ slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
         for (steps = 0;; steps++) {
             Dl_info info;
             if (unw_get_reg(&c, UNW_REG_IP, &ip) < 0)
-                return false;
+                return i;
             if (dladdr((void *)ip, &info) == 0)
                 break;
             if (steps > 4096 || unw_step(&c) <= 0)
-                return false;
+                return i;
         }
         if (unw_get_reg(&c, UNW_X86_64_RSP, &sp) < 0 ||
             sp >= (unw_word_t)inners[i] || (unw_word_t)inners[i] - sp > 65536)
-            return false;
+            return i;
+        ips[i] = (code_t *)ip;
         if (i == n - 1) {
             static const int nums[] = {UNW_X86_64_RBX, UNW_X86_64_RBP,
                                        UNW_X86_64_R12, UNW_X86_64_R13,
@@ -542,14 +599,15 @@ slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
                                           REG_X64_R12, REG_X64_R13,
                                           REG_X64_R14, REG_X64_R15};
             int k;
-            *ret_ip = (code_t *)ip;
+            if (regs == NULL)
+                return n;
             for (k = 0; k < REG_TOTAL; k++) regs[k] = 0;
             for (k = 0; k < 6; k++) {
                 if (unw_get_reg(&c, nums[k], &v) < 0)
-                    return false;
+                    return i;
                 regs[regnums[k]] = (long)v;
             }
-            return true;
+            return n;
         }
         /* above the slot: R15, R14, R13, R12, RBX, RBP, [pad,] return */
         ret = saved + 7;
@@ -564,9 +622,27 @@ slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
         uc.uc_mcontext.gregs[REG_RIP] = *ret;
         uc.uc_mcontext.gregs[REG_RSP] = (long)(ret + 1);
         if (unw_init_local2(&c, &uc, 0) < 0)
-            return false;
+            return i + 1;
     }
-    return false;
+    return n;
+}
+
+/* The callee-saved registers of the compiled frame whose slot is
+   'slot', as it called C, and where that call returns to (runs_unwind).
+   False if that frame isn't the innermost of a run, or the walk doesn't
+   come out where expected. */
+static bool
+slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
+               code_t **ret_ip)
+{
+    stack_frame_info_t **roots[MAX_RUNS], **inners[MAX_RUNS];
+    code_t *ips[MAX_RUNS];
+    int n = runs_here(roots, inners, slot);
+    if (n == 0 || inners[n - 1] != slot ||
+        runs_unwind(roots, inners, n, ips, regs) < n)
+        return false;
+    *ret_ip = ips[n - 1];
+    return true;
 }
 
 static vinfo_t *
@@ -826,7 +902,7 @@ typedef struct {
     /* the call runs a generator's body on its frame (on_gen_frame), whose
        frame object this is; what Python wrote in the locals the body
        holds is kept until the call ends, as a FrameRuntime's
-       entry_locals are (psyco_frame_write_locals, psyco_gen_pause) */
+       entry_locals are (psyco_frame_write_locals, psyco_gen_take_written) */
     int gen;
     PyObject **keep;
     int nkeep;

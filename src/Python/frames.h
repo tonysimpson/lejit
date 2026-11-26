@@ -215,29 +215,21 @@ typedef struct frame_runtime_s {
 } FrameRuntime;
 
 #if LE_RESUMES_ON_FRAME
-/* A resumable generator's frame 'f' pausing at a yield (pycompiler.c), as
-   ceval's YIELD_VALUE leaves it: its f_lasti and stack depth; or, with
-   lasti -1, its run ending. The compiled code then stores in it the
-   'ntaken' locals listed, which the run holds. */
+/* The locals of a resumable generator's frame 'f' that its compiled run
+   holds, listed, at a pause or end (pycompiler.c:gen_take_written): what
+   Python wrote in them meanwhile (psyco_frame_write_locals) is taken out
+   of the frame, before the compiled code stores its own. */
 typedef struct {
-    int lasti, nstack;
     int ntaken;
     int taken[1];
-} le_gen_pause_t;
+} le_gen_taken_t;
 EXTERNFN void
-psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p);
+psyco_gen_take_written(le_frame_t *f, const le_gen_taken_t *t);
 #else
-/* A resumable generator's frame pausing at a yield (pycompiler.c), as
-   ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks.
-   Gives the frame of the run 'fr', where the compiled code then stores
-   its locals and stack items. */
-typedef struct {
-    int lasti, nstack;
-    int iblock;
-    PyTryBlock blocks[1];
-} le_gen_pause_t;
-EXTERNFN le_frame_t *
-psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
+/* The same for the frame of the run 'fr', all of whose locals the
+   compiled run holds */
+EXTERNFN void
+psyco_gen_take_written(FrameRuntime *fr);
 #endif
 EXTERNVAR PyObject *psyco_coro_suspended;
 EXTERNFN PyObject *
