@@ -181,11 +181,6 @@ SKIPPED = {
         'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_formatunraisable',
     "an inlined frame's f_locals is empty once its call has returned":
         'test.test_frame.TestFrameLocals.test_constructor',
-    "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
-    'PyFrame_GetVar) misses those compiled code has set':
-        'test.test_capi.test_eval.Tests.test_eval_getlocals '
-        'test.test_frame.TestCAPI.test_getvar '
-        'test.test_capi.test_frame.FrameTest.test_getvar',
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
         'test.test_sys_settrace.*.test_20_async_for_loop',
