@@ -130,6 +130,10 @@ typedef struct {
     char go_interpreted;    /* the frame goes on in ceval from the next
                                instruction: a type-promotion site's
                                megamorphic version (Psyco_NeedType) */
+    char ex_call;           /* the call being compiled is an f(*a, **kw)
+                               call of a Python function, whose frame is
+                               counted without the recursion limit's test
+                               (psyfunc.c:psyco_call_pyfunc) */
     int call_site; /* 1 + the CALL_* instruction being compiled, or 0 */
     struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                          which gives it its return address */

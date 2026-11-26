@@ -151,6 +151,26 @@ le_recursion_leave(PyThreadState *ts)
     LE_C_RECURSION_LEAVE(ts);
     LE_C_RECURSION_GIVE(ts);
 }
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+/* The function whose f(*a, **kw) call compiled code is making
+   (pycompiler.c:psyco_ext_do_call_ex), or NULL: the frame of it that
+   LeCode_Run enters next counts its level without testing the limit, as
+   ceval's CALL_EX_PY does (le_recursion_enter_untested). The call clears
+   it once made. */
+EXTERNVAR PyObject *le_ex_callee;
+/* le_recursion_enter, the Python count taken without its test */
+static inline int
+le_recursion_enter_untested(PyThreadState *ts)
+{
+    LE_C_RECURSION_TAKE(ts);
+    if (LE_C_RECURSION_ENTER(ts)) {
+        LE_C_RECURSION_GIVE(ts);
+        return -1;
+    }
+    ts->py_recursion_remaining--;
+    return 0;
+}
+#endif
 #elif LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING
 /* Py_EnterRecursiveCall and Py_LeaveRecursiveCall in place, as compiled
    code counts (enter_recursive_call): only an overflow calls C */
@@ -413,6 +433,36 @@ enter_recursive_call(PsycoObject *po, vinfo_t *vts)
 {
     return enter_recursive_levels(po, vts, 1);
 }
+
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+typedef struct {
+    long value;
+} long_slot_t;
+#define LONG_value FMUT(DEF_FIELD(long_slot_t, long, value, NO_PREV_FIELD))
+
+/* one call counted in thread state 'vts' without the limit's test, as
+   CALL_EX_PY counts its frame: false with an exception set in 'po' */
+static inline bool
+count_recursive_call(PsycoObject *po, vinfo_t *vts)
+{
+    vinfo_t *vdepth = add_to_depth(po, LE_RECURSION_STEP, vts);
+    if (vdepth == NULL)
+        return false;
+    vinfo_decref(vdepth, po);
+    return true;
+}
+
+/* le_ex_callee set to 'v', a function or 0: false with an exception set
+   in 'po' */
+static inline bool
+ex_callee_store(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *vslot = vinfo_new(CompileTime_New((long)&le_ex_callee));
+    bool ok = psyco_put_field(po, vslot, LONG_value, v);
+    vinfo_decref(vslot, po);
+    return ok;
+}
+#endif
 
 #if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
 /* enter_recursive_call where an overflow is not raised here but left to
