@@ -28,13 +28,15 @@
    reference in *pval. Returns 1; 0 if it isn't one digit (the caller falls
    back); -1 on error or promotion. */
 static int
-plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
+read_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
 {
     vinfo_t *size, *digit0, *t;
     condition_code_t cc;
+    vinfo_t *w = PsycoLong_IsVirtual(v) || is_runtime(v->source)
+                     ? vinfo_getitem(v, iLONG_VALUE)
+                     : NULL;
 
-    if (PsycoLong_IsVirtual(v)) {
-        vinfo_t *w = v->array->items[iLONG_VALUE];
+    if (w != NULL) {
         /* -PyLong_MASK <= w <= PyLong_MASK, as one unsigned comparison */
         t = integer_add_i(po, w, PyLong_MASK, false);
         if (t == NULL)
@@ -105,6 +107,21 @@ plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
     *pval = integer_mul(po, size, digit0, false);
     return *pval != NULL ? 1 : -1;
 #endif
+}
+
+/* the same; a run-time int keeps the value read as its [iLONG_VALUE], so
+   reading it again costs only the range test */
+static int
+plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
+{
+    bool kept = PsycoLong_IsVirtual(v) || !is_runtime(v->source) ||
+                vinfo_getitem(v, iLONG_VALUE) != NULL;
+    int r = read_medium_value(po, v, pval);
+    if (r == 1 && !kept) {
+        vinfo_incref(*pval);
+        vinfo_setitem(po, v, iLONG_VALUE, *pval);
+    }
+    return r;
 }
 
 DEFINEFN int
