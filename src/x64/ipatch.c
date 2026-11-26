@@ -46,7 +46,9 @@
    alone and keep values in them across the call, where the replacement, an
    ordinary C function, would change them. It is here rather than in the
    stub so that unwinding finds it in a loaded object, with its frame
-   described: the stub is never a return address. */
+   described: the stub is never a return address. The replacement's
+   address moves below the caller's saved rbp, so that the frame-pointer
+   chain goes from here straight to the caller. */
 extern const char le_patch_call[] __attribute__((visibility("hidden")));
 __asm__(
     ".text\n"
@@ -58,11 +60,12 @@ __asm__(
     ".cfi_startproc\n"
     ".cfi_def_cfa %rsp, 16\n" /* the replacement's address on top */
     "endbr64\n"
-    "push %rbp\n"
+    "push (%rsp)\n"
     ".cfi_def_cfa_offset 24\n"
-    ".cfi_offset %rbp, -24\n"
-    "mov %rsp, %rbp\n"
-    ".cfi_def_cfa_register %rbp\n"
+    "mov %rbp, 8(%rsp)\n"
+    ".cfi_offset %rbp, -16\n"
+    "lea 8(%rsp), %rbp\n"
+    ".cfi_def_cfa %rbp, 16\n"
     "push %rdi\n push %rsi\n push %rdx\n push %rcx\n"
     "push %r8\n push %r9\n push %r10\n push %r11\n"
     "and $-16, %rsp\n"
@@ -75,7 +78,7 @@ __asm__(
     "movdqu %xmm10, 160(%rsp)\n movdqu %xmm11, 176(%rsp)\n"
     "movdqu %xmm12, 192(%rsp)\n movdqu %xmm13, 208(%rsp)\n"
     "movdqu %xmm14, 224(%rsp)\n movdqu %xmm15, 240(%rsp)\n"
-    "call *8(%rbp)\n"
+    "call *-8(%rbp)\n"
     "movdqu 0(%rsp), %xmm0\n movdqu 16(%rsp), %xmm1\n"
     "movdqu 32(%rsp), %xmm2\n movdqu 48(%rsp), %xmm3\n"
     "movdqu 64(%rsp), %xmm4\n movdqu 80(%rsp), %xmm5\n"
@@ -84,14 +87,13 @@ __asm__(
     "movdqu 160(%rsp), %xmm10\n movdqu 176(%rsp), %xmm11\n"
     "movdqu 192(%rsp), %xmm12\n movdqu 208(%rsp), %xmm13\n"
     "movdqu 224(%rsp), %xmm14\n movdqu 240(%rsp), %xmm15\n"
-    "lea -64(%rbp), %rsp\n"
+    "lea -72(%rbp), %rsp\n"
     "pop %r11\n pop %r10\n pop %r9\n pop %r8\n"
     "pop %rcx\n pop %rdx\n pop %rsi\n pop %rdi\n"
-    "pop %rbp\n"
-    ".cfi_def_cfa %rsp, 16\n"
-    ".cfi_restore %rbp\n"
     "lea 8(%rsp), %rsp\n"
-    ".cfi_def_cfa_offset 8\n"
+    "pop %rbp\n"
+    ".cfi_def_cfa %rsp, 8\n"
+    ".cfi_restore %rbp\n"
     "ret\n"
     ".cfi_endproc\n"
     ".size le_patch_call, .-le_patch_call\n");

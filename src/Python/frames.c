@@ -813,8 +813,9 @@ runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
             }
             return n;
         }
-        /* above the slot: R15, R14, R13, R12, RBX, RBP, [pad,] return */
-        ret = saved + 7;
+        /* above the slot: R15, R14, R13, R12, RBX, RBP, a copy of the
+           return address, [pad,] the return address */
+        ret = saved + 8;
         if (*ret == LE_GLUE_PAD)
             ret++;
         uc.uc_mcontext.gregs[REG_R15] = saved[1];
