@@ -4402,6 +4402,19 @@ capi_init(void)
 #undef REPLACE
 }
 
+/* libunwind opens a pipe the first time it unwinds, to test the addresses
+   it reads, and keeps it open. Opening it now takes its two file
+   descriptors as LeJIT loads, not during a later collection while the
+   program has its own files open, where it would shift their numbers. */
+static void
+unwind_pipe_init(void)
+{
+    unw_context_t uc;
+    unw_cursor_t c;
+    if (unw_getcontext(&uc) == 0 && unw_init_local(&c, &uc) == 0)
+        unw_step(&c);
+}
+
 INITIALIZATIONFN
 void
 psyco_frames_init(void)
@@ -4425,6 +4438,7 @@ psyco_frames_init(void)
     Py_XDECREF(sysmod);
     warn_init();
     get_referents_init();
+    unwind_pipe_init();
     psyco_coro_suspended =
         PyObject_CallObject((PyObject *)&PyBaseObject_Type, NULL);
     if (psyco_coro_suspended == NULL)
