@@ -30,6 +30,10 @@ psyco_code_take(size_t n);
 EXTERNFN int
 psyco_code_open_count(void);
 #define OPEN_EXTENTS_MAX 5
+/* whether 'p' is in one of the regions compiled code is written in,
+   which stay mapped */
+EXTERNFN bool
+psyco_in_code_regions(const void *p);
 
 #if LE_CODESTATS
 /* bytes and count of the code closed, by kind */

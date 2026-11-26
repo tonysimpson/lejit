@@ -166,6 +166,17 @@ map_region(code_t *near)
     free_insert((code_t *)p, (code_t *)p + REGION_SIZE - ISLAND_SIZE);
 }
 
+DEFINEFN bool
+psyco_in_code_regions(const void *p)
+{
+    int r;
+    for (r = 0; r < nregions; r++)
+        if ((const void *)regions[r].start <= p &&
+            p < (const void *)regions[r].end)
+            return true;
+    return false;
+}
+
 static int
 amap_reserve(le_addrmap_t *m);
 static void *

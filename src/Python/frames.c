@@ -588,8 +588,9 @@ runs_here(stack_frame_info_t **roots[MAX_RUNS],
 
 /* whether 'ip' is in a loaded object, not compiled code. dladdr searches
    the object's symbols, so the addresses found in one are remembered: the
-   same few return addresses come up in every unwinding, and an object
-   stays loaded. */
+   same few return addresses come up in every unwinding. One remembered
+   is not trusted in a region of compiled code, where an object unloaded
+   since may have been. */
 #define LOADED_IPS 4096
 static bool
 in_loaded_object(unw_word_t ip)
@@ -597,7 +598,7 @@ in_loaded_object(unw_word_t ip)
     static unw_word_t loaded[LOADED_IPS];
     unw_word_t *seen = &loaded[(ip ^ (ip >> 12)) % LOADED_IPS];
     Dl_info info;
-    if (*seen == ip)
+    if (*seen == ip && !psyco_in_code_regions((void *)ip))
         return true;
     if (dladdr((void *)ip, &info) == 0)
         return false;
