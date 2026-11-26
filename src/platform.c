@@ -28,6 +28,19 @@ psyco_allocate_executable_buffer(long size, char **result)
     return size;
 }
 
+void
+psyco_release_pages(void *p, long size)
+{
+    (void)p;
+    (void)size;
+}
+
+long
+psyco_page_size(void)
+{
+    return 4096;
+}
+
 /************************************************************/
 #else /* Assume UNIX */
 /************************************************************/
@@ -35,6 +48,7 @@ psyco_allocate_executable_buffer(long size, char **result)
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #if defined(MAP_ANON) && !defined(MAP_ANONYMOUS)
 #define MAP_ANONYMOUS MAP_ANON
 #endif
@@ -78,6 +92,23 @@ void
 psyco_unmap_reserve(void *p, long size)
 {
     munmap(p, size);
+}
+
+void
+psyco_release_pages(void *p, long size)
+{
+#ifdef MADV_DONTNEED
+    madvise(p, size, MADV_DONTNEED); /* a failure only keeps them */
+#endif
+}
+
+long
+psyco_page_size(void)
+{
+    static long size = 0;
+    if (size == 0)
+        size = sysconf(_SC_PAGESIZE);
+    return size;
 }
 
 /************************************************************/
