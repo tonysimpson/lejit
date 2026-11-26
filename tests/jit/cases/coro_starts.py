@@ -47,10 +47,17 @@ def _frame_objects():
 FRAME_OBJECTS = _frame_objects()
 
 
-def drive(c, sends=()):
-    # the values c yields, then how it ended
+def drive(c, sends=(), collect=False):
+    # the values c yields, then how it ended. Without 'collect', with the
+    # collector off: a collection pending as a coroutine is sent into runs
+    # that step in ceval (eval_hook.c:le_gen_to_run), which starts the
+    # bodies it awaits through the eval hook, so started() would depend on
+    # where collections fall
     out = []
     sends = list(sends)
+    enabled = gc.isenabled()
+    if not collect:
+        gc.disable()
     try:
         v = c.send(None)
         while True:
@@ -60,6 +67,9 @@ def drive(c, sends=()):
         out.append(('return', e.value))
     except Exception as e:
         out.append(('exc', type(e).__name__, str(e)))
+    finally:
+        if enabled:
+            gc.enable()
     return out
 
 
@@ -431,7 +441,7 @@ async def gc2(k):
 
 
 def collected(n):
-    out = [drive(gc2(n)) for _ in range(20)]
+    out = [drive(gc2(n), collect=True) for _ in range(20)]
     return out[0], all(o == out[0] for o in out), started(gc3)
 
 
