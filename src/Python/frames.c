@@ -45,8 +45,9 @@
  * the entry's over it as f_back, or the caller for the one that catches
  * (psyco_frame_link_callee, catcher_caller). C code reading f_back,
  * f_lasti or f_localsplus itself bypasses the getters: _warnings.warn runs
- * with every frame linked and placed (le_warn), gc.get_referents with its
- * frames' locals written (le_get_referents); other such C code
+ * with every frame linked and placed (le_warn), a warning C raises is
+ * given its place when shown (le_showwarnmsg), gc.get_referents runs with
+ * its frames' locals written (le_get_referents); other such C code
  * (PyEval_GetFrame, a freshly imported _warnings, a C extension's
  * PyFrame_FastToLocals) still skips compiled frames, and reads the locals
  * last written.
@@ -3016,6 +3017,170 @@ le_warn(PyObject *self, PyObject *args, PyObject *kwds)
     return le_warn_with_frames(original_warn, args, kwds);
 }
 
+/* A warning C raises (_warnings.c:setup_context) names the frame
+   PyThreadState_GetFrame gives at the line PyFrame_GetLineNumber reads
+   from its fields, so under compiled code the frame or line is wrong: C
+   inside CPython may see the innermost real frame (tstate's own), and a
+   frame LeCode_Run runs reads as at its first line. C shows the finished
+   message through warnings._showwarnmsg while the compiled frames are
+   still on the stack, so a replacement of it puts the place right, as
+   sys._getframe would see it, before the original shows it. Only a message
+   naming the place C could have found (in the real frame or the true one,
+   at the line its fields give), with no source line given, is changed. The
+   filters and the registries were applied at the place C found. */
+static PyObject *original_showwarnmsg = NULL;
+/* the message's attribute names, interned once: a name made for each
+   lookup is kept by the type's attribute cache */
+static PyObject *msg_line, *msg_filename, *msg_lineno, *msg_module;
+
+/* the thread's innermost frame as sys._getframe sees it: its code,
+   globals, current line (None if not known), and its frame object if it
+   is a real frame */
+struct innermost_s {
+    PyFrameObject *frame;
+    PyCodeObject *code;
+    PyObject *globals;
+    PyObject *line;
+};
+
+static PyObject *
+visit_innermost(const visited_frame_t *v, void *data)
+{
+    struct innermost_s *in = (struct innermost_s *)data;
+    in->frame = v->frame;
+    if (v->code == NULL) {
+        in->code = le_frame_code(le_frame_of(v->frame));
+        in->globals = le_frame_globals(le_frame_of(v->frame));
+    }
+    else {
+        in->code = (PyCodeObject *)v->code;
+        in->globals = v->globals;
+    }
+    if (v->frame != NULL)
+        in->line = frame_get_lineno(v->frame, NULL);
+    else if (v->lasti >= 0)
+        in->line = line_object(PyCode_Addr2Line(in->code, v->lasti));
+    else
+        Py_INCREF(Py_None), in->line = Py_None;
+    return Py_None;
+}
+
+/* the module a warning names for a frame's globals, as setup_context
+   finds it */
+static PyObject *
+warning_module(PyObject *globals)
+{
+    PyObject *name = PyDict_GetItemString(globals, "__name__");
+    if (name != NULL && PyUnicode_Check(name)) {
+        Py_INCREF(name);
+        return name;
+    }
+    return PyUnicode_FromString("<string>");
+}
+
+/* whether a message's attribute equals 'expected': -1 with an exception
+   set if it can't be read */
+static int
+message_attr_is(PyObject *msg, PyObject *name, PyObject *expected)
+{
+    PyObject *value = PyObject_GetAttr(msg, name);
+    int r;
+    if (value == NULL)
+        return -1;
+    r = PyObject_RichCompareBool(value, expected, Py_EQ);
+    Py_DECREF(value);
+    return r;
+}
+
+/* whether the message names 'f' at the line its fields give: -1 with an
+   exception set if it can't be read */
+static int
+names_fields_place(PyObject *msg, PyFrameObject *f)
+{
+    PyObject *line;
+    int r = message_attr_is(msg, msg_filename,
+                            le_frame_code(le_frame_of(f))->co_filename);
+    if (r != 1)
+        return r;
+    if ((line = PyLong_FromLong(PyFrame_GetLineNumber(f))) == NULL)
+        return -1;
+    r = message_attr_is(msg, msg_lineno, line);
+    Py_DECREF(line);
+    return r;
+}
+
+static int
+correct_place(PyObject *msg, PyFrameObject *real, struct innermost_s *top)
+{
+    PyObject *real_mod = NULL, *top_mod = NULL, *line;
+    PyObject *real_globals = le_frame_globals(le_frame_of(real));
+    bool found_top = false;
+    int r, same;
+    if (top->line == Py_None)
+        return 0;
+    if ((line = PyObject_GetAttr(msg, msg_line)) == NULL)
+        return -1;
+    same = line != Py_None;
+    Py_DECREF(line);
+    if (same)
+        return 0; /* a source line given: not setup_context's */
+    /* already the true place */
+    if ((same = message_attr_is(msg, msg_filename, top->code->co_filename)) ==
+        1)
+        same = message_attr_is(msg, msg_lineno, top->line);
+    if (same != 0)
+        return same < 0 ? -1 : 0;
+    if ((same = names_fields_place(msg, real)) == 0 && top->frame != NULL &&
+        top->frame != real) {
+        found_top = true;
+        same = names_fields_place(msg, top->frame);
+    }
+    if (same != 1)
+        return same < 0 ? -1 : 0;
+    if (PyObject_SetAttr(msg, msg_filename, top->code->co_filename) < 0 ||
+        PyObject_SetAttr(msg, msg_lineno, top->line) < 0)
+        return -1;
+    if (found_top || real_globals == top->globals)
+        return 0;
+    /* a message with the module, where WarningMessage has one */
+    r = -1;
+    if ((real_mod = warning_module(real_globals)) != NULL &&
+        (top_mod = warning_module(top->globals)) != NULL &&
+        (same = message_attr_is(msg, msg_module, real_mod)) >= 0)
+        r = same == 1 ? PyObject_SetAttr(msg, msg_module, top_mod) : 0;
+    Py_XDECREF(real_mod);
+    Py_XDECREF(top_mod);
+    return r;
+}
+
+static PyObject *
+le_showwarnmsg(PyObject *self, PyObject *msg)
+{
+    /* the thread's own innermost frame, as C inside CPython may read it */
+    le_frame_t *f = le_frame_current(PyThreadState_GET());
+    PyFrameObject *real = NULL;
+    struct innermost_s top = {NULL, NULL, NULL, NULL};
+    (void)self;
+    while (f != NULL && !le_frame_complete(f)) f = le_frame_back(f);
+    if (f != NULL && (real = le_frame_object(f)) == NULL)
+        return PyErr_Occurred() ? NULL : PyErr_NoMemory();
+    if (real != NULL)
+        pvisitframes(visit_innermost, &top);
+    if (top.code != NULL) {
+        int err = top.line == NULL ? -1 : correct_place(msg, real, &top);
+        Py_XDECREF(top.line);
+        /* a message without the attributes (a WarningMessage without the
+           module, before 3.15) is shown as it is */
+        if (err < 0 && !PyErr_ExceptionMatches(PyExc_AttributeError))
+            return NULL;
+        PyErr_Clear();
+    }
+    return PyObject_CallFunctionObjArgs(original_showwarnmsg, msg, NULL);
+}
+
+static PyMethodDef le_showwarnmsg_def = {"_showwarnmsg", le_showwarnmsg,
+                                         METH_O, NULL};
+
 /* locals, vars, dir, eval and exec read their caller's frame through
    PyEval_GetFrame, which is tstate->frame. Called from compiled code
    (through a meta of each: code naming them is left to the interpreter,
@@ -3193,7 +3358,8 @@ replacement_new(PyMethodDef *def, PyObject *mod, PyObject *original)
 static PyMethodDef le_warn_def = {"warn", (PyCFunction)(void (*)(void))le_warn,
                                   METH_VARARGS | METH_KEYWORDS, NULL};
 
-/* replaces warn in _warnings and, if imported, warnings */
+/* replaces warn in _warnings and, if imported, warnings, and warnings'
+   _showwarnmsg */
 static void
 warn_init(void)
 {
@@ -3221,6 +3387,21 @@ warn_init(void)
     }
     Py_XDECREF(fn);
     Py_DECREF(mod);
+    /* C shows its warnings through warnings._showwarnmsg, which it looks
+       up in sys.modules['warnings'] each time */
+    if (w != NULL && (msg_line = PyUnicode_InternFromString("line")) != NULL &&
+        (msg_filename = PyUnicode_InternFromString("filename")) != NULL &&
+        (msg_lineno = PyUnicode_InternFromString("lineno")) != NULL &&
+        (msg_module = PyUnicode_InternFromString("module")) != NULL &&
+        (original_showwarnmsg = PyObject_GetAttrString(w, "_showwarnmsg")) !=
+            NULL &&
+        (fn = replacement_new(&le_showwarnmsg_def, w, original_showwarnmsg)) !=
+            NULL) {
+        if (PyObject_SetAttrString(w, "_showwarnmsg", fn) < 0)
+            PyErr_Print();
+        Py_DECREF(fn);
+    }
+    PyErr_Clear();
 }
 
 /* A running coroutine of a body started by its await (psyco_coros_realise)
