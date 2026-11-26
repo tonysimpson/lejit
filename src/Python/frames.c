@@ -757,18 +757,25 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
     return true;
 }
 
+/* a generator's, coroutine's or async generator's frame keeps its own
+   locals, needing no catcher word to stand in */
+static bool
+keeps_own_locals(PyCodeObject *co)
+{
+    return (co->co_flags &
+            (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) != 0;
+}
+
 /* the catcher word (pycompiler.c:catcher_word) of the compiled frame of
    code 'co' whose own slot is 'slot', while it is in the call its slot
-   says (as slot_locals), if its frame has one; else NULL, as for a
-   generator's frame, which keeps its own locals */
+   says (as slot_locals), if its frame has one; else NULL */
 static PyObject **
 slot_word(stack_frame_info_t **slot, PyCodeObject *co)
 {
     long v = (long)*slot, regs[REG_TOTAL];
     struct locals_map_s *map;
     code_t *ip;
-    if (v == -1 || v == FINFO_RETURNING ||
-        (co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))
+    if (v == -1 || v == FINFO_RETURNING || keeps_own_locals(co))
         return NULL;
     if ((v & 1) != 0) {
         map = psyco_note_map(v);
@@ -2245,7 +2252,7 @@ DEFINEFN void
 psyco_frame_stands(PyFrameObject *f)
 {
     FrameRuntime *fr;
-    if (f == NULL || !runs_compiled(f))
+    if (f == NULL || keeps_own_locals(le_pyframe_code(f)) || !runs_compiled(f))
         return;
     fr = psyco_frame_start_get(le_frame_of(f));
     if (fr->psy_code != le_pyframe_code(f))
