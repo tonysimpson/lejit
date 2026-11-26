@@ -23,6 +23,15 @@ _Static_assert(offsetof(PyLongObject, long_value.lv_tag) ==
                "LeJIT: lv_tag is where ob_size is");
 #endif
 #define LONG_ob_digit0 CPY_FIELD(PyLongObject, ob_digit, FIX_signed_size)
+#if !LE_HAS_LONG_VALUE
+/* 4-byte items from ob_size on, so one read gives an int's first digit
+   or, for zero, ob_size's low half (0) in its place: item
+   LONG_DIGIT0_ITEM is ob_digit[0] */
+#define LONG_size_then_digits \
+    UNSIGNED_ARRAY(uint32_t, LE_OFS_PyVarObject__ob_size)
+#define LONG_DIGIT0_ITEM \
+    ((LE_OFS_PyLongObject__ob_digit - LE_OFS_PyVarObject__ob_size) / 4)
+#endif
 #define iLONG_OB_DIGIT0 FIELD_INDEX(LONG_ob_digit0)
 /* virtual ints only: the value as a machine word; not a C field, so it is
    never read from memory (a field read the virtual int doesn't have makes

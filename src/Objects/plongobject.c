@@ -83,6 +83,28 @@ plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
         return -1;
     if (!runtime_condition_t(po, cc))
         return 0;
+    if (is_runtime(size->source)) {
+        /* without a branch, which would compile the rest of the code once
+           more for each int that is zero: the digit's item when ob_size
+           is -1 or 1, item 0 (0) when it is 0, then times ob_size */
+        vinfo_t *one, *odd, *item;
+        one = vinfo_new(CompileTime_New(1));
+        odd = integer_and(po, size, one);
+        vinfo_decref(one, po);
+        if (odd == NULL)
+            return -1;
+        item = integer_mul_i(po, odd, LONG_DIGIT0_ITEM);
+        vinfo_decref(odd, po);
+        if (item == NULL)
+            return -1;
+        digit0 = psyco_get_field_array(po, v, LONG_size_then_digits, item);
+        vinfo_decref(item, po);
+        if (digit0 == NULL)
+            return -1;
+        *pval = integer_mul(po, size, digit0, false);
+        vinfo_decref(digit0, po);
+        return *pval != NULL ? 1 : -1;
+    }
     /* zero has no digit to read */
     cc = integer_cmp_i(po, size, 0, Py_EQ);
     if (cc == CC_ERROR)
