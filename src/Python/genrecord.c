@@ -36,26 +36,6 @@ le_gen_record_check(PyObject *o)
     return Py_TYPE(o) == &le_gen_record_type;
 }
 
-/* the frame's function, the reference it holds taken (NULL for none) */
-static PyObject *
-frame_func_take(le_frame_t *f)
-{
-    PyObject *o;
-#if LE_HAS_FRAME_STACKREFS
-    if (PyStackRef_IsNull(f->f_funcobj))
-        return NULL;
-    o = PyStackRef_AsPyObjectSteal(f->f_funcobj);
-    f->f_funcobj = PyStackRef_NULL;
-#elif LE_HAS_FRAME_FUNCOBJ
-    o = f->f_funcobj;
-    f->f_funcobj = NULL;
-#else
-    o = (PyObject *)f->f_func;
-    f->f_func = NULL;
-#endif
-    return o;
-}
-
 /* the frame's function, borrowed */
 static PyFunctionObject *
 frame_func(le_frame_t *f)
@@ -169,7 +149,7 @@ frame_give(PyFrameObject *fo, le_frame_t *f, bool ended)
     for (k = 0; k < n; k++) le_frame_word_put(f, k, NULL);
     le_gen_frame_set_depth(f, 0);
     f->f_locals = NULL;
-    (void)frame_func_take(f); /* the frame object's now */
+    (void)le_frame_func_take(f); /* the frame object's now */
     f->frame_obj = NULL;
     if (!PyObject_GC_IsTracked((PyObject *)fo))
         PyObject_GC_Track(fo);
@@ -207,7 +187,7 @@ frame_clear(le_frame_t *f)
         Py_DECREF(fo);
     }
     frame_clear_locals(f);
-    o = frame_func_take(f);
+    o = le_frame_func_take(f);
     Py_XDECREF(o);
 }
 

@@ -5150,6 +5150,30 @@ coro_exc_give(_PyErr_StackItem *to, _PyErr_StackItem *from)
 #endif
 }
 
+#if LE_HAS_INTERPRETER_FRAME
+/* A coroutine CPython makes has no frame object until one is asked for:
+   the one 'coro' was made around (le_gen_of_frame) goes if only the
+   coroutine holds it, and the coroutine's frame gets 'func' as its
+   function in place of the frame object's own (pyruntime.c:
+   function_without_code). The frame object frees nothing of the
+   coroutine's frame, which isn't its own. */
+static void
+coro_frame_object_drop(PyObject *coro, PyFrameObject *f,
+                       PyFunctionObject *func)
+{
+    le_frame_t *frame =
+        (le_frame_t *)((char *)coro + offsetof(PyGenObject, gi_iframe));
+    PyObject *own_func;
+    if (frame->frame_obj != f || Py_REFCNT(f) != 1)
+        return;
+    own_func = le_frame_func_take(frame);
+    le_frame_func_put(frame, func);
+    frame->frame_obj = NULL;
+    Py_DECREF(f);
+    Py_XDECREF(own_func);
+}
+#endif
+
 /* As psyco_resume_run, but the frame, with what psyco_resume_begin and
    psyco_resume_value gave it, is paused at 'at' as ceval leaves it at the
    await's yield, and becomes the coroutine 'func' made, as CPython made it at
@@ -5215,6 +5239,9 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack, long level,
         Py_DECREF(coro);
         return NULL;
     }
+#endif
+#if LE_HAS_INTERPRETER_FRAME
+    coro_frame_object_drop(coro, f, func);
 #endif
     Py_INCREF(value);
     suspended_coro = coro;

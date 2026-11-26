@@ -679,6 +679,37 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
     f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
 #endif
 }
+/* the frame's function, the reference it holds taken (NULL for none) */
+static inline PyObject *
+le_frame_func_take(le_frame_t *f)
+{
+    PyObject *o;
+#if LE_HAS_FRAME_STACKREFS
+    if (PyStackRef_IsNull(f->f_funcobj))
+        return NULL;
+    o = PyStackRef_AsPyObjectSteal(f->f_funcobj);
+    f->f_funcobj = PyStackRef_NULL;
+#elif LE_HAS_FRAME_FUNCOBJ
+    o = f->f_funcobj;
+    f->f_funcobj = NULL;
+#else
+    o = (PyObject *)f->f_func;
+    f->f_func = NULL;
+#endif
+    return o;
+}
+/* the frame holds a reference to 'func' as its function, in place of none */
+static inline void
+le_frame_func_put(le_frame_t *f, PyFunctionObject *func)
+{
+#if LE_HAS_FRAME_STACKREFS
+    f->f_funcobj = PyStackRef_FromPyObjectNew((PyObject *)func);
+#elif LE_HAS_FRAME_FUNCOBJ
+    f->f_funcobj = Py_NewRef(func);
+#else
+    f->f_func = (PyFunctionObject *)Py_NewRef(func);
+#endif
+}
 /* A frame for the generator function 'func' as RETURN_GENERATOR leaves a
    new generator's: its function and code (references it holds), globals
    and builtins (its function's), no locals mapping, no frame object and
