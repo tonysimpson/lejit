@@ -4392,26 +4392,103 @@ capi_sync(PyFrameObject *f)
     PyErr_Restore(t, v, tb);
 }
 
+/* the innermost frame Python sees made the thread's current one, for C
+   that reads the current frame itself, until capi_current_end; NULL, and
+   nothing changed, where compiled code isn't the innermost. 'saved' gets
+   the frame that was current. */
+static PyFrameObject *
+capi_current_begin(PyThreadState *ts, int linked, int locals,
+                   le_frame_t **saved)
+{
+    PyFrameObject *top;
+    if (!capi_compiled_innermost(ts) ||
+        (top = capi_innermost(linked, locals)) == NULL)
+        return NULL;
+    *saved = le_frame_current(ts);
+    if (le_frame_of(top) != *saved)
+        le_pyframe_make_current(ts, top);
+    return top;
+}
+
+static void
+capi_current_end(PyThreadState *ts, PyFrameObject *top, le_frame_t *saved)
+{
+    le_frame_set_current(ts, saved);
+    if (le_frame_of(top) != saved)
+        le_pyframe_current_end(top);
+}
+
 /* CPython's 'fn' run with the innermost frame Python sees current */
 static PyObject *
 capi_call_current(PyObject *(*fn)(void), int locals)
 {
     PyThreadState *ts = PyThreadState_GET();
     le_frame_t *saved;
+    PyFrameObject *top = capi_current_begin(ts, 0, locals, &saved);
+    PyObject *r = fn();
+    if (top != NULL) {
+        capi_current_end(ts, top, saved);
+        capi_hold(top); /* what it gave borrowed may be the frame's */
+    }
+    return r;
+}
+
+/* types whose tp_new reads the current frame itself, for the module of
+   the function that makes the object (typevarobject.c:caller,
+   sentinelobject.c:caller), each with CPython's tp_new */
+static struct {
+    PyTypeObject *type;
+    newfunc cpython;
+} frame_reading_types[5];
+static int n_frame_reading_types = 0;
+
+/* their tp_new, run with the innermost frame Python sees current, linked
+   to the frames out for the Python it may call */
+static PyObject *
+capi_new_with_frame(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    newfunc cpython = NULL;
+    le_frame_t *saved;
     PyFrameObject *top;
     PyObject *r;
-    if (!capi_compiled_innermost(ts) ||
-        (top = capi_innermost(0, locals)) == NULL)
-        return fn();
-    saved = le_frame_current(ts);
-    if (le_frame_of(top) != saved)
-        le_pyframe_make_current(ts, top);
-    r = fn();
-    le_frame_set_current(ts, saved);
-    if (le_frame_of(top) != saved)
-        le_pyframe_current_end(top);
-    capi_hold(top); /* what it gave borrowed may be the frame's */
+    int i;
+    for (i = 0; i < n_frame_reading_types && cpython == NULL; i++)
+        if (PyType_IsSubtype(type, frame_reading_types[i].type))
+            cpython = frame_reading_types[i].cpython;
+    if (cpython == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    top = capi_current_begin(ts, 1, 0, &saved);
+    r = cpython(type, args, kwds);
+    if (top != NULL) {
+        capi_current_end(ts, top, saved);
+        Py_DECREF(top);
+    }
     return r;
+}
+
+static void
+capi_replace_new(const char *module, const char *name)
+{
+    PyObject *mod = PyImport_ImportModule(module);
+    PyObject *o = mod == NULL ? NULL : PyObject_GetAttrString(mod, name);
+    PyTypeObject *tp = (PyTypeObject *)o;
+    Py_XDECREF(mod);
+    if (o == NULL) {
+        PyErr_Clear();
+        return;
+    }
+    if (!PyType_Check(o) || tp->tp_new == NULL) {
+        Py_DECREF(o);
+        return;
+    }
+    /* the reference is kept */
+    frame_reading_types[n_frame_reading_types].type = tp;
+    frame_reading_types[n_frame_reading_types++].cpython = tp->tp_new;
+    tp->tp_new = capi_new_with_frame;
+    PyType_Modified(tp);
 }
 
 static PyFrameObject *
@@ -4569,6 +4646,11 @@ capi_init(void)
     REPLACE("PyFrame_FastToLocals", capi_frame_fasttolocals,
             frame_fasttolocals_cpython);
 #undef REPLACE
+    capi_replace_new("_typing", "TypeVar");
+    capi_replace_new("_typing", "ParamSpec");
+    capi_replace_new("_typing", "TypeVarTuple");
+    capi_replace_new("_typing", "TypeAliasType");
+    capi_replace_new("builtins", "sentinel");
 }
 
 /* libunwind opens a pipe the first time it unwinds, to test the addresses
