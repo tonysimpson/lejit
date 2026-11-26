@@ -2,7 +2,8 @@
  * typeobject.c's slot functions for special methods defined in Python
  * (slot_nb_add and the rest of SLOT1BINFULL, the SLOT0 unary ones,
  * slot_tp_richcompare, slot_mp_subscript, slot_mp_ass_subscript,
- * slot_tp_call): a user's __add__, __getitem__ or __call__ called from
+ * slot_tp_call, slot_tp_iter): a user's __add__, __getitem__, __call__ or
+ * __iter__ called from
  * compiled code is a
  * direct call of the compiled function, as CALL_FUNCTION's, instead of the
  * residual slot function entering it from C through the eval hook.
@@ -394,6 +395,34 @@ generic:
                               self, args, kw);
 }
 
+/* slot_tp_iter: __iter__ looked up on the type, called with self; None or
+   no __iter__ (not iterable, or iterated by __getitem__) is the slot
+   function's */
+static getiterfunc slot_tp_iter;
+static PyObject *iter_name;
+
+static vinfo_t *
+pslot_tp_iter(PsycoObject *po, vinfo_t *self)
+{
+    PyTypeObject *ts = Psyco_KnownType(self);
+    PyObject *m = NULL;
+    if (ts == NULL || po->pr.class_unchecked)
+        goto generic;
+    switch (special_method(po, ts, &ts->tp_iter, iter_name, &m)) {
+        case 1:
+            break;
+        case -1:
+            return NULL;
+        default:
+            goto generic;
+    }
+    if (m != NULL)
+        return call_special(po, m, self, NULL);
+generic:
+    return psyco_generic_call(po, slot_tp_iter, CfCommonNewRefPyObject, "v",
+                              self);
+}
+
 static vinfo_t *
 pslot_mp_ass_subscript(PsycoObject *po, vinfo_t *self, vinfo_t *key,
                        vinfo_t *value)
@@ -632,7 +661,8 @@ probe_slots(void)
     if (PyDict_SetItemString(d, "__init__", Py_True) < 0 ||
         PyDict_SetItemString(d, "__getitem__", Py_True) < 0 ||
         PyDict_SetItemString(d, "__setitem__", Py_True) < 0 ||
-        PyDict_SetItemString(d, "__call__", Py_True) < 0)
+        PyDict_SetItemString(d, "__call__", Py_True) < 0 ||
+        PyDict_SetItemString(d, "__iter__", Py_True) < 0)
         goto done;
     t = PyObject_CallFunction((PyObject *)&PyType_Type, "s(O)O", "le_slots",
                               (PyObject *)&PyBaseObject_Type, d);
@@ -680,5 +710,9 @@ psy_typeobject_init(void)
     slot_tp_call = t->tp_call;
     if (slot_tp_call != NULL)
         Psyco_DefineMeta(slot_tp_call, pslot_tp_call);
+    iter_name = slot_name("__iter__");
+    slot_tp_iter = t->tp_iter;
+    if (slot_tp_iter != NULL)
+        Psyco_DefineMeta(slot_tp_iter, pslot_tp_iter);
     Py_DECREF(t);
 }

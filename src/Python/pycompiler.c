@@ -1229,6 +1229,7 @@ cimpl_exc_restore(PyObject **held)
 #if LE_HAS_INTERPRETER_FRAME
 #define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
 #define FRAME_frame_obj FMUT(CPY_FIELD(le_frame_t, frame_obj, NO_PREV_FIELD))
+#define FRAME_owner FMUT(DEF_FIELD(le_frame_t, char, owner, NO_PREV_FIELD))
 #else
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
 #endif
@@ -7551,6 +7552,12 @@ cimpl_yield_from_iter(PyObject *o, long iterable_coro)
 }
 #endif
 
+#if LE_RESUMES_GENERATORS_DIRECTLY
+#define LE_RECORD_TYPE_IS(tp) ((tp) == &le_gen_record_type)
+#else
+#define LE_RECORD_TYPE_IS(tp) false
+#endif
+
 #if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
 /* CLEANUP_THROW: the value of 'exc', a StopIteration, a new reference */
 static PyObject *
@@ -7660,9 +7667,21 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
 
 #if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
         /* yield from, in a resumable plain generator
-           (mergepoints.c:body_compilable): what it iterates */
-        case GET_YIELD_FROM_ITER:
-            if (Psyco_KnownType(TOP()) != &PyGen_Type) {
+           (mergepoints.c:body_compilable): what it iterates. Of a type
+           other than a coroutine's, PyObject_GetIter's, so that a class's
+           __iter__ that is a generator function gives a pending one. */
+        case GET_YIELD_FROM_ITER: {
+            PyTypeObject *tp = Psyco_KnownType(TOP());
+            if (tp != &PyGen_Type && (tp = Psyco_NeedType(po, TOP())) == NULL)
+                break;
+            if (tp != &PyGen_Type && tp != &PyCoro_Type) {
+                x = PsycoObject_GetIter(po, TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                PUSH(x);
+            }
+            else if (tp == &PyCoro_Type) {
                 x = psyco_generic_call(
                     po, cimpl_yield_from_iter, CfCommonNewRefPyObject, "vl",
                     TOP(),
@@ -7675,6 +7694,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             if (LE_HAS_GET_ITER_INDEX)
                 PUSH(psyco_vi_Zero());
             goto fine;
+        }
 
         /* its loop: the value on top is sent into the iterator under it,
            which yields, for the YIELD_VALUE after, which pauses the frame
@@ -7714,7 +7734,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
                 array_release(array);
                 break;
             }
-            if (tp == &PyGen_Type || tp == &PyCoro_Type)
+            if (tp == &PyGen_Type || tp == &PyCoro_Type ||
+                LE_RECORD_TYPE_IS(tp))
                 x = psyco_gen_send_status(po, iter, TOP(), array);
             else
                 x = psyco_generic_call(po, le_iter_send,
@@ -8269,6 +8290,53 @@ cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
 #endif
 
 #if LE_RESUMES_ON_FRAME
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* At a pause, a virtual generator on the stack that nothing else holds
+   (one yield from steps) stays a record, held in the frame's word, where
+   the frame is a record's with no frame object: so a paused chain of them
+   is records only, which nothing CPython runs sees (gen_send steps one
+   from the word; genrecord.c makes them real with the frame that holds
+   them). Elsewhere it is made real, as any virtual is at a pause. */
+static bool
+records_held(PsycoObject *po, vinfo_t **stack_a, int nstack)
+{
+    vinfo_t *frame, *v;
+    condition_code_t cc;
+    int i;
+    for (i = 0; i < nstack; i++)
+        if (PsycoVgen_Check(stack_a[i]) && stack_a[i]->refcount == 1)
+            break;
+    if (i == nstack)
+        return true;
+    frame = psyco_frame_words_frame(po);
+    v = psyco_get_field(po, frame, FRAME_owner);
+    cc = v == NULL ? CC_ERROR
+                   : integer_cmp_i(po, v, LE_FRAME_OWNED_BY_RECORD, Py_EQ);
+    vinfo_xdecref(v, po);
+    if (cc == CC_ERROR)
+        return false;
+    if (!runtime_condition_t(po, cc))
+        return true;
+    v = psyco_get_field(po, frame, FRAME_frame_obj);
+    cc = v == NULL ? CC_ERROR : object_non_null(po, v);
+    vinfo_xdecref(v, po);
+    if (cc == CC_ERROR)
+        return false;
+    if (runtime_condition_f(po, cc))
+        return true;
+    for (; i < nstack; i++) {
+        v = stack_a[i];
+        if (PsycoVgen_Check(v) && v->refcount == 1) {
+            vinfo_t *rec = v->array->items[iVGEN_RECORD];
+            vinfo_incref(rec);
+            vinfo_decref(v, po);
+            stack_a[i] = rec;
+        }
+    }
+    return true;
+}
+#endif
+
 /* A resumable generator's YIELD_VALUE at 'at': its frame (in the
    GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it, and the
    run ends returning the value (EReturn). The frame already holds the
@@ -8287,6 +8355,10 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
     vinfo_t *v;
     le_gen_pause_t *pause;
     (void)after_await;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    if (!records_held(po, stack_a, nstack))
+        return;
+#endif
     if (!catcher_flush(po))
         return;
     /* every item real before anything is stored: making one may call */
