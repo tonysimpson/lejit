@@ -743,7 +743,7 @@ def run_target(python, entries=None):
     """Run every probe in `python`; the raw results by name."""
     entries = ENTRIES if entries is None else entries
     try:
-        r = subprocess.run([python, '-I', '-c', DRIVER],
+        r = subprocess.run([python, '-I', '-S', '-c', DRIVER],
                            input=json.dumps(entries), stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, universal_newlines=True,
                            timeout=TIMEOUT)
@@ -1003,7 +1003,7 @@ def build(python, version):
 
 def target_version(python):
     try:
-        r = subprocess.run([python, '-I', '-c',
+        r = subprocess.run([python, '-I', '-S', '-c',
                             'import sys; print(sys.version.split()[0])'],
                            stdout=subprocess.PIPE, universal_newlines=True,
                            timeout=60)

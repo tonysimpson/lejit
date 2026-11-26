@@ -62,7 +62,7 @@ def runtime_features():
         # in a subprocess, so a crashing probe can't take this one down
         here = _os.path.dirname(__file__)
         r = subprocess.run(
-            [_sys.executable, '-I', _os.path.join(here, '_features', 'check.py'),
+            [_sys.executable, '-I', '-S', _os.path.join(here, '_features', 'check.py'),
              _os.path.dirname(here)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             universal_newlines=True)
