@@ -15,8 +15,9 @@
      that was current when it was opened. Its writer has a limit
      GUARANTEED_MINIMUM before its end (psyco.h);
    - owned: closed, the part written held by that owner (o->extents), and
-     free again when the owner is released (psyco_owner_release); with no
-     owner, kept for good.
+     free again when the owner is released (psyco_owner_release), the
+     pages wholly free then given back to the system; with no owner, kept
+     for good.
    An open extent is the whole free extent it was taken from, up to
    EXTENT_MAX, and closing it (psyco_code_close) frees what wasn't written,
    so while nothing is freed code is laid out one block after another, as
@@ -92,6 +93,41 @@ free_insert(code_t *start, code_t *end)
     free_ext[lo].start = start;
     free_ext[lo].end = end;
     nfree++;
+}
+
+/* gives back the pages of the free extent holding [start, end), freed just
+   now, that lie wholly in it and touch [start, end): those of its other
+   pages were given back when they were freed, or never touched */
+static void
+free_release_pages(code_t *start, code_t *end)
+{
+    uintptr_t page = (uintptr_t)psyco_page_size();
+    int lo = 0, hi = nfree;
+    uintptr_t from, to;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (free_ext[mid].end <= start)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    extra_assert(lo < nfree && free_ext[lo].start <= start &&
+                 end <= free_ext[lo].end);
+    from = ((uintptr_t)free_ext[lo].start + page - 1) & ~(page - 1);
+    to = (uintptr_t)free_ext[lo].end & ~(page - 1);
+    if (from < ((uintptr_t)start & ~(page - 1)))
+        from = (uintptr_t)start & ~(page - 1);
+    if (to > (((uintptr_t)end + page - 1) & ~(page - 1)))
+        to = ((uintptr_t)end + page - 1) & ~(page - 1);
+    if (from >= to)
+        return;
+    psyco_release_pages((void *)from, (long)(to - from));
+#if ALL_CHECKS
+    /* zeroed pages again, so that a stale jump still traps */
+    LE_UNPOISON((void *)from, to - from);
+    memset((void *)from, 0xCC, to - from);
+    LE_POISON((void *)from, to - from);
+#endif
 }
 
 /* Regions lie wherever the kernel puts them, so a rel32 jump may not reach
@@ -579,6 +615,7 @@ owner_free(le_owner_t *o, PyObject *mergepoints, PyObject *entry_point)
 #endif
         LE_STAT(psyco_stat_code_bytes_live -= e - s);
         free_insert(s, e);
+        free_release_pages(s, e);
     }
     PyMem_Free(dead.extents);
     PyMem_Free(dead.bufs);
