@@ -1,5 +1,5 @@
-# Calls of ctypes functions (Modules/pctypes.c): with argtypes set or not,
-# exact ints and floats, bytes, None, pointer and simple ctypes instances
+# Calls of ctypes functions (Modules/pctypes.c), of a library or through a
+# prototype: with argtypes set or not, exact ints and floats, bytes, None, pointer and simple ctypes instances
 # and byref() go to the C function directly, as do c_char_p, c_void_p,
 # c_float and c_bool arguments and results and pointer results; anything
 # else, and a function whose argtypes, restype or errcheck changed, takes
@@ -278,6 +278,60 @@ def byref_objects(n):
     return out
 
 
+def big_ints(n):
+    # ints of more than one digit, masked as ctypes masks them, or out of
+    # range for ctypes' own call to raise; each at its own call site
+    out = []
+    for i in range(n):
+        k = 2 ** (30 + 9 * i)
+        for x in (k + 5, -k - 3, 2 ** 64 - 1 - i, -2 ** 63 + i, 2 ** 64 + i,
+                  -2 ** 63 - 1 - i, k * k + 255, 1 << 1000 | i):
+            out.append((labs(x), labs_int(x), labs_ushort(x), labs_uint(x),
+                        labs_ulong(x), abs_ubyte(x), abs_byte(x), abs_short(x),
+                        error(lambda: abs_untyped(x)),
+                        error(lambda: labs_voidp(x)), abs_bool(x)))
+    return out
+
+
+def big_computed_ints(n):
+    # ints the compiled code computed, held as words
+    out = []
+    t = 3
+    for i in range(n):
+        t = t * 100003 + i
+        out.append((labs(t), labs(-t), labs_int(t), abs_ubyte(t),
+                    error(abs_untyped, t), error(labs_voidp, t), abs_bool(t - t),
+                    abs_bool(t)))
+    return out
+
+
+LabsType = ctypes.CFUNCTYPE(c_long, c_long)
+UntypedType = ctypes.CFUNCTYPE(c_int)
+VoidpType = ctypes.CFUNCTYPE(c_void_p, c_void_p)
+_labs_address = ctypes.cast(libc.labs, c_void_p).value
+labs_proto = LabsType(_labs_address)
+labs_voidp_proto = VoidpType(_labs_address)
+memset_proto = ctypes.CFUNCTYPE(None, IntP, c_int, c_size_t)(
+    ctypes.cast(libc.memset, c_void_p).value)
+retyped_proto = LabsType(_labs_address)
+retyped_proto.argtypes = (c_ubyte,)
+retyped_proto.restype = c_short
+
+
+def prototypes(n):
+    out = []
+    x = c_int(9)
+    for i in range(n):
+        memset_proto(byref(x), i, 1)
+        out.append((labs_proto(-i), labs_proto(2 ** 40 + i),
+                    labs_voidp_proto(-i), labs_voidp_proto(None),
+                    retyped_proto(-i - 300), x.value,
+                    error(labs_proto, 1.5), error(labs_proto),
+                    error(labs_proto, 1, 2), error(memset_proto, 1, 0, 0),
+                    UntypedType(_labs_address)(i - 5)))
+    return out
+
+
 CASES = [
     ('typed_ints', [(12,)], {}),
     ('untyped_ints', [(12,)], {}),
@@ -293,5 +347,8 @@ CASES = [
     ('floats', [(8,)], {}),
     ('bools', [(6,)], {}),
     ('pointer_results', [(6,)], {}),
+    ('big_ints', [(4,)], {}),
+    ('big_computed_ints', [(8,)], {}),
+    ('prototypes', [(6,)], {}),
     ('byref_objects', [(6,)], {}),
 ]
