@@ -634,7 +634,7 @@ static void
 group_free(le_group_t *g, PyObject *mergepoints, le_owner_t *pins_to,
            bool forget)
 {
-    if (forget)
+    if (forget && g->site != NULL)
         psyco_promotion_forget(g->site, (long)g->key);
     Py_XINCREF(mergepoints); /* owner_free releases it */
     owner_free(&g->owner, mergepoints, NULL);
@@ -832,8 +832,8 @@ psyco_record(le_addrmap_t *map, void *key)
    importlib's Python code, which LeJIT compiles, in every program.
    A group (codemanager.h) is a node too, held by nothing; one of a dead
    code object dies with it. Otherwise it is alive if an alive group
-   depends on it or is under it, if its code object's own code jumps into
-   it, if a frame runs in its code on any thread, or may
+   (of any code object) depends on it or is under it, if code that is no
+   group's jumps into it, if a frame runs in its code on any thread, or may
    (frames.c:psyco_frames_running, mark_running), or if every key from it up to
    its code object is alive. That is decided after the rest, until no more
    groups come alive; the dead ones of live code objects are freed, each
@@ -1463,6 +1463,50 @@ psyco_group_new(PyObject *key, void *site)
 }
 
 static bool
+holds(le_owner_t *o, source_known_t *sk);
+
+/* the current owner, or a group it is under, holds 'sk' */
+static bool
+chain_holds(source_known_t *sk)
+{
+    le_owner_t *o;
+    for (o = psyco_owner; o != NULL; o = o->parent)
+        if (holds(o, sk))
+            return true;
+    return false;
+}
+
+/* a new group, which holds its key and becomes the current owner, for
+   'sk' if it is an object that looks short-lived and isn't held yet */
+static void
+enter_group_for(source_known_t *sk)
+{
+    le_owner_t *g;
+    if (chain_holds(sk) ||
+        (g = psyco_group_new((PyObject *)sk->value, NULL)) == NULL)
+        return;
+    psyco_owner = g;
+    psyco_owner_pin((PyObject *)sk->value);
+}
+
+DEFINEFN void
+psyco_owner_enter_groups(vinfo_array_t *a)
+{
+    int i;
+    for (i = 0; i < a->count; i++) {
+        vinfo_t *v = a->items[i];
+        if (v == NULL)
+            continue;
+        if (is_compiletime(v->source))
+            enter_group_for(CompileTime_Get(v->source));
+        if (v->type_hint != NULL)
+            enter_group_for(v->type_hint);
+        if (v->array != NullArray)
+            psyco_owner_enter_groups(v->array);
+    }
+}
+
+static bool
 holds(le_owner_t *o, source_known_t *sk)
 {
     PyObject *p = (PyObject *)sk->value;
@@ -1509,6 +1553,13 @@ psyco_owner_root_holding(vinfo_array_t *a)
     return root;
 }
 
+DEFINEFN bool
+psyco_owner_would_hold(CodeBufferObject *b)
+{
+    return (psyco_owner == NULL || psyco_owner->parent == NULL) &&
+           group_blocks.n != 0 && amap_get(&group_blocks, b) != NULL;
+}
+
 DEFINEFN void
 psyco_owner_depend(CodeBufferObject *b)
 {
@@ -1520,8 +1571,7 @@ psyco_owner_depend(CodeBufferObject *b)
     for (p = o; p != NULL; p = p->parent)
         if (p == &g->owner)
             return; /* its own, or one of a group it is under */
-    if (o == NULL || o->parent == NULL ||
-        owner_root(o) != owner_root(&g->owner)) {
+    if (o == NULL || o->parent == NULL) {
         g->held = 1;
         return;
     }

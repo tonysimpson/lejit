@@ -1055,7 +1055,9 @@ pin_constants(vinfo_array_t *a)
 
 /* Compile a direct call's callee, as its own owner (codemanager.h). The
    caller's code jumps into it, so the caller holds the callee's code
-   object, which holds the compiled code. */
+   object, which holds the compiled code. Code for an argument that may die
+   soon (a class made per call) goes in a group of the callee's, which the
+   caller's code keeps while it lives. */
 static CodeBufferObject *
 compile_callee(PsycoObject *mypo, PyCodeObject *co)
 {
@@ -1065,10 +1067,12 @@ compile_callee(PsycoObject *mypo, PyCodeObject *co)
     psyco_owner_pin((PyObject *)co);
     {
         LE_OWNER_ENTER(callee);
+        psyco_owner_enter_groups(&mypo->vlocals);
         pin_constants(&mypo->vlocals);
         codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
         LE_OWNER_LEAVE();
     }
+    psyco_owner_depend(codebuf);
     return codebuf;
 }
 

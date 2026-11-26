@@ -1150,6 +1150,12 @@ compile_join(PsycoObject *po, global_entries_t *ge, bool branch, bool first)
     XMM_SPILL();
     END_CODE
     cmp = ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
+    /* code that is no group's compiles its own block rather than keep a
+       group's alive by jumping into it */
+    if (cmp != NULL && psyco_owner_would_hold(cmp->matching)) {
+        psyco_stabilize(cmp);
+        cmp = NULL;
+    }
 
     if (cmp != NULL && cmp->diff == NullArray) {
         CodeBufferObject *oldcodebuf;

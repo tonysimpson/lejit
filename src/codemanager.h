@@ -111,10 +111,11 @@ typedef struct le_group_s {
     le_owner_t owner;         /* first: a group is its owner */
     struct le_group_s *next;  /* in its code object's list */
     PyObject *key;            /* the promoted value, held in owner.pins */
-    void *site;               /* the promotion site, in its parent's code */
+    void *site;               /* the promotion site, in its parent's code;
+                                 NULL for a callee's (psyfunc.c) */
     struct le_group_s **deps; /* other groups its code jumps into */
     int ndeps, depscap;
-    char held; /* its code object's own code jumps into it */
+    char held; /* code that is no group's jumps into it */
     char dead; /* being freed by the owner scan */
 } le_group_t;
 /* a new group under the current owner, for 'key' (held by the caller) at
@@ -122,6 +123,15 @@ typedef struct le_group_s {
    long as its module */
 EXTERNFN le_owner_t *
 psyco_group_new(PyObject *key, void *site);
+/* the current owner becomes a new group under it for each object in 'a'
+   that looks short-lived and that it doesn't hold, each group under the
+   last and holding its object; restored by the caller's LE_OWNER_LEAVE */
+EXTERNFN void
+psyco_owner_enter_groups(vinfo_array_t *a);
+/* would the current owner's code jumping into 'b' keep a group alive for
+   as long as its code object lives? */
+EXTERNFN bool
+psyco_owner_would_hold(CodeBufferObject *b);
 /* the current owner's code jumps into 'b' */
 EXTERNFN void
 psyco_owner_depend(CodeBufferObject *b);
