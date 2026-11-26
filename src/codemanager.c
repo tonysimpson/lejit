@@ -1390,11 +1390,10 @@ psyco_record(le_addrmap_t *map, void *key)
    main interpreter and never during a compile; its cost per record stays
    the same and dead records are at most about half the live. It also runs
    at a full collection (gc.collect()) if a record was counted since the
-   last: a gc.callbacks entry, listed once a record is counted after the
-   program has imported gc (as any program calling gc.collect() has), acts
-   on generation 2 only, where the sweep runs too. Importing gc for it
-   would run importlib's Python code, which LeJIT compiles, in every
-   program.
+   last: a gc.callbacks entry, listed only once the program has imported
+   gc (as any program calling gc.collect() has), and only while there are
+   such records, acts on generation 2 only. Importing gc for it would run
+   importlib's Python code, which LeJIT compiles, in every program.
    A group (codemanager.h) is a node too, held by nothing; one of a dead
    code object dies with it. Otherwise it is alive if an alive group
    (of any code object) depends on it or is under it, if code that is no
@@ -1829,21 +1828,35 @@ owners_scan(void)
 
 /*** The sweep: compiled code not used lately is released ***/
 
-/* At every full collection, the compiled code of each code object that no
-   frame has entered through the hook (eval_hook.c:le_code_to_run,
+/* After every full collection, the compiled code of each code object that
+   no frame has entered through the hook (eval_hook.c:le_code_to_run,
    le_gen_to_run) or was found running in for SWEEP_COLD sweeps is
    released with everything its owner and groups hold, as if the code
    object had died, unless code that stays may jump into it: code that
    stays keeps the code of every code object it pins (compiled code holds
    the code objects whose code it calls or inlines) and of every group it
    depends on, so cold code objects that pin each other go together. The
-   next call compiles afresh. Code released SWEEP_RELEASES times stays. */
+   next call compiles afresh. Code released SWEEP_RELEASES times stays.
+   A full collection is told by an object of LeJIT's own that the
+   collector tracks: once it is old, only a full collection traverses it,
+   and its traverse asks for the sweep as a pending call, which runs
+   between bytecodes in the main interpreter, as the owner scan's does
+   (owners_pending). Unlike a gc.callbacks entry, it costs nothing at the
+   other collections and needs no import of gc. */
 #define SWEEP_COLD 4
 #define SWEEP_RELEASES 3
 
 #if ALL_CHECKS
 DEFINEVAR long le_stat_sweeps[3]; /* sweeps run, code released, its bytes */
 #endif
+
+/* has code the sweep may release once it is cold */
+static bool
+sweep_may_release(le_code_extra_t *x)
+{
+    return x->owner.nbufs > 0 && x->entry_point != Py_None &&
+           x->releases < SWEEP_RELEASES && x != le_gen_interpreted_x;
+}
 
 static void
 sweep_running(PyCodeObject **cos, int ncos, code_t *at, void *unused)
@@ -1895,6 +1908,8 @@ sweep_keep(le_code_extra_t *x, le_code_extra_t **stack, size_t *n)
     }
 }
 
+static bool sweep_asked = false; /* the pending call is queued */
+
 static void
 sweep(void)
 {
@@ -1902,22 +1917,24 @@ sweep(void)
     PyObject **reports;
     le_owner_t dropped;
     size_t n = 0, ncand = 0, nstack = 0, i, k;
+    LE_STAT(le_stat_sweeps[0]++);
     for (x = le_code_extras; x != NULL; x = x->next) {
         if (x->cold < SWEEP_COLD)
             x->cold++;
         n++;
+        if (x->cold == SWEEP_COLD && sweep_may_release(x))
+            ncand++;
     }
-    if (n == 0 || psyco_frames_running(sweep_running, NULL) < 0)
+    /* which frames run is asked only when something may go */
+    if (ncand == 0 || psyco_frames_running(sweep_running, NULL) < 0)
         return;
-    LE_STAT(le_stat_sweeps[0]++);
+    ncand = 0;
     /* the candidates, then a stack of those found to stay */
     cand = PyMem_Malloc(2 * n * sizeof(*cand));
     if (cand == NULL)
         return;
     for (x = le_code_extras; x != NULL; x = x->next) {
-        if (x->cold < SWEEP_COLD || x->owner.nbufs == 0 ||
-            x->entry_point == Py_None || x->releases >= SWEEP_RELEASES ||
-            x == le_gen_interpreted_x)
+        if (x->cold < SWEEP_COLD || !sweep_may_release(x))
             continue;
         x->swept = 1;
         cand[ncand++] = x;
@@ -1983,6 +2000,36 @@ sweep(void)
 }
 
 static int
+sweep_pending(void *arg)
+{
+    PyObject *t, *v, *tb;
+    sweep_asked = false;
+    if (PyThreadState_GET()->interp != PyInterpreterState_Main() ||
+        psyco_owner != NULL || le_compile_depth != 0 || nopen != 0 ||
+        psyco_compile_guard != NULL || le_is_finalizing())
+        return 0;
+    PyErr_Fetch(&t, &v, &tb);
+    sweep();
+    PyErr_Restore(t, v, tb);
+    return 0;
+}
+
+static int
+sweep_clock_traverse(PyObject *self, visitproc visit, void *arg)
+{
+    if (!sweep_asked && Py_AddPendingCall(sweep_pending, NULL) == 0)
+        sweep_asked = true;
+    return 0;
+}
+
+static PyTypeObject SweepClock_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "lejit._core.sweep_clock",
+    .tp_basicsize = sizeof(PyObject),
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .tp_traverse = sweep_clock_traverse,
+};
+
+static int
 owners_pending(void *arg)
 {
     PyObject *t, *v, *tb;
@@ -2020,15 +2067,19 @@ owners_gc_callback(PyObject *self, PyObject *args)
     if (strcmp(phase, "start") == 0) {
         gen = PyDict_Check(info) ? PyDict_GetItemString(info, "generation")
                                  : NULL;
-        if (gen != NULL && PyLong_Check(gen) && PyLong_AsLong(gen) == 2 &&
-            psyco_owner == NULL && le_compile_depth == 0 && nopen == 0 &&
+        if (extras_since_scan > 0 && gen != NULL && PyLong_Check(gen) &&
+            PyLong_AsLong(gen) == 2 && psyco_owner == NULL &&
+            le_compile_depth == 0 && nopen == 0 &&
             psyco_compile_guard == NULL && !le_is_finalizing()) {
-            if (extras_since_scan > 0) {
-                extras_since_scan = 0;
-                owners_scan();
-            }
-            sweep();
+            extras_since_scan = 0;
+            owners_scan();
         }
+    }
+    else if (extras_since_scan == 0 && scan_listed_last()) {
+        /* the last one, so that removing it skips no other callback */
+        Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
+        if (PyList_SetSlice(gc_callbacks, n - 1, n, NULL) < 0)
+            PyErr_Clear();
     }
     Py_RETURN_NONE;
 }
@@ -2320,6 +2371,14 @@ owners_scan_init(void)
     PyObject *c;
     if (PyType_Ready(&Record_Type) < 0)
         PyErr_Clear();
+    /* held for good */
+    if (PyType_Ready(&SweepClock_Type) == 0) {
+        PyObject *clock =
+            (PyObject *)PyObject_GC_New(PyObject, &SweepClock_Type);
+        if (clock != NULL)
+            PyObject_GC_Track(clock);
+    }
+    PyErr_Clear();
     c = PyObject_CallFunction((PyObject *)&PyType_Type, "s()N", "C",
                               PyDict_New());
     if (c != NULL)
