@@ -258,7 +258,23 @@ SKIPPED = {
     'another process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress '
         'test.test_ftplib.*.test_source_address* '
-        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl',
+        'test.test_asyncio.test_sendfile.*.test_sendfile '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_force_fallback '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_force_unsupported_native '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_for_closing_transp '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_pre_and_post_data '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_pre_and_post_data '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_partial '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_partial '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_close_peer_after_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_close_peer_after_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_close_peer_in_the_middle_of_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_fallback_close_peer_in_the_middle_of_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_prevents_bare_write '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_exception '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_exception_sync_callback '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_cancel',
     'skips itself on a sporadic ENOTCONN, so the plain and LeJIT runs can '
     'skip different counts':
         'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF '
