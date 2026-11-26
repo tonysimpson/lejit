@@ -97,6 +97,14 @@ psyco_call_lasti(PyCodeObject *co, int pos);
 /* the frame 'f' has just run and outlives its call (le_frame_outlives) */
 EXTERNFN void
 psyco_frame_returned(le_frame_t *f);
+/* the real frame object 'f', if compiled code runs it, keeps the locals
+   its run ends with */
+EXTERNFN void
+psyco_frame_stands(PyFrameObject *f);
+/* the same for 'back', if it has a frame object something else holds too:
+   a frame that called from it may have outlived its call */
+EXTERNFN void
+psyco_frame_back_stands(le_frame_t *back);
 /* a frame whose caller is 'back' is called from a compiled callee or
    inlined frame of the real frame 'back' */
 EXTERNFN int
@@ -125,6 +133,9 @@ struct locals_map_s {
     int nvalues;
     long below;
     long ret_below; /* a note's: where the frame keeps its return address */
+    /* the frame's catcher word (pycompiler.c:catcher_word) as an offset
+       from data, or -1 if it has none */
+    long word;
     long items[1];
 };
 
@@ -211,7 +222,9 @@ typedef struct frame_runtime_s {
     int resumed;
     int exposed;                   /* frames.c:expose */
     struct walked_calls_s *walked; /* frames.c:innermost_slot, or NULL */
-    struct frame_runtime_s *next;  /* the next outer one */
+    PyObject **word; /* the run's catcher word (frames.c:psyco_frame_stands),
+                        or NULL if not found yet */
+    struct frame_runtime_s *next; /* the next outer one */
 } FrameRuntime;
 
 #if LE_RESUMES_ON_FRAME

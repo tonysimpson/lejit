@@ -328,6 +328,7 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->resumed = 0;
     fr->exposed = 0;
     fr->walked = NULL;
+    fr->word = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
     if (fr->next == NULL && !runs_listed) {
@@ -754,6 +755,58 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
     }
     PyErr_Restore(t, val, tb);
     return true;
+}
+
+/* the catcher word (pycompiler.c:catcher_word) of the compiled frame of
+   code 'co' whose own slot is 'slot', while it is in the call its slot
+   says (as slot_locals), if its frame has one; else NULL */
+static PyObject **
+slot_word(stack_frame_info_t **slot, PyCodeObject *co)
+{
+    long v = (long)*slot, regs[REG_TOTAL];
+    struct locals_map_s *map;
+    code_t *ip;
+    if (v == -1 || v == FINFO_RETURNING)
+        return NULL;
+    if ((v & 1) != 0) {
+        map = psyco_note_map(v);
+        if (map == NULL || map->word < 0 ||
+            map->nvalues != n_locals_plus(co) ||
+            !slot_registers(slot, regs, &ip) || ip != map->retaddr)
+            return NULL;
+    }
+    else {
+        map = ((stack_frame_info_t *)v)->back_locals;
+        if (map == NULL || map->word < 0 || map->retaddr != NULL ||
+            map->nvalues != n_locals_plus(co))
+            return NULL;
+    }
+    return (PyObject **)((char *)slot - map->below + map->word);
+}
+
+/* A frame object made for a compiled call that is running, which may be
+   held past the call's end, keeps the call's locals as they end, as
+   CPython's frame does: the call's catcher word holds it, where the frame
+   has one that is free, and the call's end gives it the locals
+   (pycompiler.c:catcher_flush). A generator's frame keeps its own
+   locals. */
+static void
+stand_in_word(PyFrameObject *f, PyObject **word)
+{
+    if (word == NULL || *word != NULL ||
+        (le_pyframe_code(f)->co_flags &
+         (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))
+        return;
+    Py_INCREF(f);
+    *word = (PyObject *)f;
+}
+
+/* the frame object of the compiled callee whose own slot is 'own' stands
+   for its call (stand_in_word) */
+static void
+stand_for_call(PyFrameObject *f, stack_frame_info_t **own)
+{
+    stand_in_word(f, slot_word(own, le_pyframe_code(f)));
 }
 
 /* f's locals now, from the compiled frame whose slot is 'slot', if it
@@ -1510,8 +1563,11 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
             return NULL;
         f = a->frame;
         Py_INCREF(f);
-        if (!a->resumed)
+        if (!a->resumed) {
             le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
+            if (!inlined)
+                stand_for_call(f, own);
+        }
         return f;
     }
     if (!inlined && ret == NULL)
@@ -1537,8 +1593,10 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     a->nkeep = 0;
     if (inlined)
         psyco_inline_frames_kept++;
-    else
+    else {
         a->ret = barrier_taken(own, ret);
+        stand_for_call(f, own);
+    }
     Py_INCREF(f);
     return f;
 }
@@ -1848,6 +1906,7 @@ emulate_frame(const visited_frame_t *v)
 {
     if (v->frame != NULL) {
         /* a real Python frame, or the one whose code LeCode_Run runs */
+        psyco_frame_stands(v->frame);
         Py_INCREF(v->frame);
         return v->frame;
     }
@@ -2181,6 +2240,22 @@ runs_compiled(PyFrameObject *f)
     return fr != NULL && !fr->resumed;
 }
 
+/* the real frame object 'f', if compiled code runs its code, stands for
+   that run (stand_in_word): the word's place is found once a run */
+DEFINEFN void
+psyco_frame_stands(PyFrameObject *f)
+{
+    FrameRuntime *fr;
+    if (f == NULL || !runs_compiled(f))
+        return;
+    fr = psyco_frame_start_get(le_frame_of(f));
+    if (fr->psy_code != le_pyframe_code(f))
+        return;
+    if (fr->word == NULL)
+        fr->word = slot_word(*fr->psy_frames_start, fr->psy_code);
+    stand_in_word(f, fr->word);
+}
+
 /* frame.f_back, replaced in PyFrame_Type's dict. A running real frame
    entered through C from compiled code has as f_back the real frame
    LeCode_Run runs, which skips any compiled frames in
@@ -2307,6 +2382,7 @@ catcher_caller(PyFrameObject *f)
     pvisitframes(visit_back_frame, &b);
     PyErr_Clear();
     if (b.top == NULL && b.found) {
+        psyco_frame_stands(b.back);
         Py_INCREF(b.back);
         return b.back;
     }
@@ -2764,13 +2840,44 @@ psyco_frame_callee_back(void)
     return top;
 }
 
+/* 'f' or the first complete frame out of it, or NULL */
+static le_frame_t *
+complete_frame(le_frame_t *f)
+{
+    while (f != NULL && !le_frame_complete(f)) f = le_frame_back(f);
+    return f;
+}
+
+DEFINEFN
+void
+psyco_frame_back_stands(le_frame_t *back)
+{
+    PyFrameObject *fo;
+    back = complete_frame(back);
+    if (back == NULL)
+        return;
+#if LE_HAS_INTERPRETER_FRAME
+    fo = back->frame_obj;
+#else
+    fo = back;
+#endif
+    if (fo != NULL && Py_REFCNT(fo) > 1)
+        psyco_frame_stands(fo);
+}
+
 DEFINEFN
 void
 psyco_frame_returned(le_frame_t *f)
 {
     PyFrameObject *top;
-    if (!psyco_frame_called_from_callee(le_frame_back(f)))
+    le_frame_t *back = le_frame_back(f);
+    if (!psyco_frame_called_from_callee(back)) {
+        /* the frame it was called from is its f_back */
+        back = complete_frame(back);
+        if (back != NULL)
+            psyco_frame_stands(le_frame_object(back));
         return;
+    }
     top = psyco_frame_callee_back();
     if (top != NULL)
         le_frame_set_back_at_exit(f, top);

@@ -184,9 +184,6 @@ SKIPPED = {
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
         'test.test_sys_settrace.*.test_20_async_for_loop',
-    'a failed task the test drops is freed only by the gc, so its '
-    'exception handler runs late':
-        'test.test_asyncio.test_futures2.PyFutureTests.test_task_exc_handler_correct_context',
     'tracing that starts in a running frame (pdb.set_trace)':
         'test.test_sys_settrace.*.test_09_settrace_and_raise '
         'test.test_pdb.test_* '

@@ -143,8 +143,10 @@ frame_give(PyFrameObject *fo, le_frame_t *f, bool ended)
     if (ended && fo->f_back == NULL) {
         for (p = f->previous; p != NULL && !le_frame_complete(p);)
             p = p->previous;
-        if (p != NULL)
+        if (p != NULL) {
             fo->f_back = (PyFrameObject *)Py_XNewRef(le_frame_object(p));
+            psyco_frame_stands(fo->f_back);
+        }
     }
     memcpy(own, f, (char *)&f->localsplus[n] - (char *)f);
 #if LE_HAS_FRAME_STACKREFS
