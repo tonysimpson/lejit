@@ -369,6 +369,7 @@ HEADER_DETECTORS = {
     'CURRENT_EXCEPTION': features.current_exception,
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
     'EVAL_FRAME_POPS': internal(features.eval_frame_pops),
+    'GC_GENERATION0': internal(features.gc_generation0),
     'FRAME_FUNCOBJ': internal(features.frame_funcobj),
     'COMMON_CONSTS_STACKREFS': internal(features.common_consts_stackrefs),
     'FRAME_EXECUTABLE': internal(features.frame_executable),
