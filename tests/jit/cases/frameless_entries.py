@@ -11,8 +11,10 @@ def f(x, y=2, *, z=3):
     return x * 100 + y * 10 + z
 
 
-def pos_only(a, /, b):
-    return a - b
+try:  # positional-only parameters are newer syntax
+    exec('def pos_only(a, /, b):\n    return a - b\n')
+except SyntaxError:
+    pos_only = None
 
 
 def keywords_and_defaults(n):
@@ -37,8 +39,9 @@ def bind_errors(n):
         out.append(error(lambda: functools.partial(f, w=1)(1)))
         out.append(error(lambda: functools.partial(f, 1, x=2)()))
         out.append(error(lambda: functools.partial(f, y=1)()))
-        out.append(error(lambda: functools.partial(pos_only, a=1)(2)))
-        out.append(error(lambda: functools.partial(pos_only, b=1)(5)))
+        if pos_only is not None:
+            out.append(error(lambda: functools.partial(pos_only, a=1)(2)))
+            out.append(error(lambda: functools.partial(pos_only, b=1)(5)))
     return out
 
 

@@ -1082,8 +1082,8 @@ typedef struct le_code_extra_s {
     le_owner_t owner;         /* what its compiled code holds */
     char counted;             /* in the owner scan's count (codemanager.c) */
     unsigned char cold;       /* sweeps since its code was last entered
-                                 through the hook or found running
-                                 (codemanager.c) */
+                                 (through the hook, or frameless from C)
+                                 or found running (codemanager.c) */
     unsigned char releases;   /* times the sweep released its code */
     char swept;               /* being released by the sweep */
     char frameless;           /* the entry point may be run with no frame,

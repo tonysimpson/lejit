@@ -864,6 +864,7 @@ le_frameless_vectorcall(PyObject *callable, PyObject *const *args,
             goto cpython;
         args = bound;
     }
+    x->cold = 0; /* entered, as through the hook */
     result = le_run_frameless(x->entry_point, func, args, frameless_words(co));
     for (k = 0; k < nheld; k++) Py_DECREF(held[k]);
     return result;
