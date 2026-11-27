@@ -331,7 +331,9 @@ same_code_both_ways.compiled_code = SHARED
 CASES = [
     ('numeric_loop', [()], {}),
     ('string_loop', [()], {}),
-    ('functions_called_in_a_loop', [()], {}),
+    ('functions_called_in_a_loop', [()],
+     {'warmup': (40, 'each run makes a new class, and its call sites go on '
+                     'specialising for some rounds')}),
     ('star_import_all', [()], {}),
     ('star_import_dict', [()], {}),
     ('star_import_math', [()], {}),
