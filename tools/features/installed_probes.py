@@ -927,6 +927,23 @@ def TAGGED_DICT_OR_VALUES():
 
 
 @probe
+def RANGE_ITER_FREE_LIST():
+    """range iterators given up are kept for the next ones, not all freed:
+    the object allocator's blocks in use fall by fewer than the 100 that
+    go, give or take the few the counts themselves take (run)"""
+    r = range(3)
+    taken = [iter(r) for _ in range(100)]
+    before = sys.getallocatedblocks()
+    taken.clear()
+    after = sys.getallocatedblocks()
+    kept = 100 - (before - after)
+    if before == 0 or not -3 <= kept <= 50:
+        raise Unanswered('blocks in use %d, then %d' % (before, after))
+    return kept >= 3, '100 range iterators freed: blocks in use %d, then %d' % (
+        before, after)
+
+
+@probe
 def RANGE_ITER_INDEX():
     """an iterator over range(1, 7, 2) that has given one item pickles as the
     whole range and the index 1, not as range(3, 7, 2) with no index
