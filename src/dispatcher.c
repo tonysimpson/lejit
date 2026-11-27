@@ -1506,7 +1506,10 @@ static bool compatible_at_join = false;
    that compare is over): the state there is the state before the
    promotion plus the promoted fact, and dropping it would jump back into
    the block that promoted, which promotes again, hits its own cache and
-   jumps back, forever, without running an instruction. Every other compare
+   jumps back, forever, without running an instruction. The same holds for a
+   value a megamorphic site has just flagged (RunTime_Megamorphic), even
+   deep inside a virtual value, where a field 'b' lacks is otherwise
+   dropped (compatible_array). Every other compare
    comes after an instruction was compiled, so a chain of jumps between
    blocks without progress can only enter blocks that know more and
    more. */
@@ -1722,6 +1725,8 @@ compatible_array(vinfo_array_t *aa, int count, vinfo_array_t **result,
     /* special-case test. See comments below. */
 #define CHECK_FOR_NULL(a)                                               \
     if (a != NULL) {                                                    \
+        if (psyco_compatible_keep_facts && is_megamorphic(a->source))   \
+            return false;                                               \
         if (compatible_unused_fact(a, rt_parent))                       \
             compatible_drops++;                                         \
         else {                                                          \

@@ -2249,22 +2249,24 @@ iter_cannot_raise(PyTypeObject *tp)
    at its first step: a plain generator whose body runs compiled, bound
    from its positional arguments alone. One whose body takes the iterator
    of its argument has it taken by the consumer instead, so only from an
-   iterable of a type known here (promoting it, a value inside the pending
-   generator, can loop at a megamorphic site) whose iter() can't be seen. */
-static bool
-vgen_startable(vinfo_t *vgen, PyCodeObject *co)
+   iterable whose iter() can't be seen, its type promoted here (at a site
+   that has seen too many, it is made real). 1, 0, or -1 (a promotion or
+   an error). */
+static int
+vgen_startable(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co)
 {
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
     bool takes_iter;
     PyTypeObject *tp;
+    int r;
     if (!pending_steppable(co) || args == NULL ||
         PsycoTuple_Load(args) != co->co_argcount ||
         le_gen_record_start_unit(co, &takes_iter) < 0)
-        return false;
+        return 0;
     if (!takes_iter)
-        return true;
-    tp = Psyco_KnownType(PsycoTuple_GET_ITEM(args, 0));
-    return tp != NULL && iter_cannot_raise(tp);
+        return 1;
+    r = Psyco_NeedTypeMega(po, PsycoTuple_GET_ITEM(args, 0), &tp);
+    return r > 0 ? iter_cannot_raise(tp) : r;
 }
 
 /* 'v' put in word 'k' of a record whose words are on 'vwords' (its
@@ -2484,7 +2486,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     stack_frame_info_t *finfo;
     Source sources[2];
     bool sends_any;
-    int r;
+    int r, startable = 1;
     bool held = false;
 #if LE_STACK_SEGMENTS
     bool as_direct = false;
@@ -2496,10 +2498,14 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
            now and stepped as a real one, unless a for loop with no yield
            in it steps it. yield from's is kept in the frame's word as a
            record (yield_resumable). */
-        if (PsycoGenexpr_Check(vgen) &&
-            (!vgen_startable(vgen, co) ||
-             (psyco_generator_mode(po) == GENEXPR_RESUMABLE && out == NULL &&
-              !loop_has_no_yield(po)))) {
+        if (PsycoGenexpr_Check(vgen))
+            startable = psyco_generator_mode(po) == GENEXPR_RESUMABLE &&
+                                out == NULL && !loop_has_no_yield(po)
+                            ? 0
+                            : vgen_startable(po, vgen, co);
+        if (startable < 0)
+            return NULL;
+        if (startable == 0) {
             if (!compute_vinfo(vgen, po))
                 return NULL;
         }
