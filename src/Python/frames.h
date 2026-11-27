@@ -163,6 +163,10 @@ struct locals_map_s {
     /* the frame's catcher word (pycompiler.c:catcher_word) as an offset
        from data, or -1 if it has none */
     long word;
+    /* whether one more value follows the locals': the function of the
+       frame the record is for, known only at run time (the callee's, or
+       for an own map the inlined frame's) */
+    int func;
     long items[1];
 };
 
@@ -209,9 +213,12 @@ struct stack_frame_info_s {
    inlined frame's parent's, whose slot the call uses, unless 'own'. A
    local only in a register is found there (LM_REG), or with reg_pos at
    the position its register is pushed at for this call
-   (psyco_call_psyco). Nothing is emitted. */
+   (psyco_call_psyco). Nothing is emitted. After the locals, the
+   function of the frame called, if known only at run time: 'func', or
+   for 'own' the inlined frame's (LOC_INLINE_FUNC). */
 EXTERNFN struct locals_map_s *
-psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own);
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own,
+                 vinfo_t *func);
 EXTERNVAR struct locals_map_s **psyco_locals_maps;
 EXTERNFN bool
 psyco_locals_map_reads(vinfo_t *vi, int level);

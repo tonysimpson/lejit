@@ -119,9 +119,8 @@ static PyFunctionObject *
 inlined_function(PsycoObject *po)
 {
     vinfo_t *v = po->vlocals.items[INDEX_LOC_INLINING];
-    return (PyFunctionObject *)CompileTime_Get(
-               v->array->items[LOC_INLINE_FUNC]->source)
-        ->value;
+    long f = CompileTime_Get(v->array->items[LOC_INLINE_FUNC]->source)->value;
+    return (f & 1) != 0 ? NULL : (PyFunctionObject *)f;
 }
 
 /* the entry after a record's first for the inlined frame 'caller' runs
@@ -1916,6 +1915,70 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     return f;
 }
 
+/* the function of code 'co' that 'map' of the call in 'slot' holds after
+   its locals (frames.h:locals_map_s), else NULL; borrowed, as the frame
+   that makes the call holds it */
+static PyFunctionObject *
+map_function(stack_frame_info_t **slot, struct locals_map_s *map,
+             const long *regs, PyCodeObject *co)
+{
+    long *p;
+    vinfo_t *vi;
+    PyObject *o, *t, *val, *tb;
+    int i;
+    if (map == NULL || !map->func)
+        return NULL;
+    p = map->items;
+    for (i = 0; i < map->nvalues; i++) vinfo_xdecref(lm_vinfo(&p, regs), NULL);
+    vi = lm_vinfo(&p, regs);
+    if (vi == NULL)
+        return NULL;
+    PyErr_Fetch(&t, &val, &tb);
+    o = direct_xobj_vinfo(vi, (char *)slot - map->below);
+    vinfo_decref(vi, NULL);
+    if (o == NULL)
+        PyErr_Clear();
+    PyErr_Restore(t, val, tb);
+    if (o == NULL)
+        return NULL;
+    Py_DECREF(o);
+    if (!PyFunction_Check(o) ||
+        ((PyFunctionObject *)o)->func_code != (PyObject *)co)
+        return NULL;
+    return (PyFunctionObject *)o;
+}
+
+/* the function of entry 'entry' of the record in 'slot' while its call
+   runs, where it is known: the record's, or one the caller holds at run
+   time (map_function); else NULL */
+static PyFunctionObject *
+record_function(stack_frame_info_t **slot, long entry)
+{
+    stack_frame_info_t *rec = *slot, *in;
+    long regs[REG_TOTAL];
+    code_t *ip;
+    if (rec[entry].func != NULL)
+        return rec[entry].func;
+    if (entry == 0 && rec->nargs >= 0 && rec->link_stack_depth != 0)
+        /* a compiled callee: its caller's map, at the call */
+        return rec->back_locals == NULL || rec->back_locals->retaddr != NULL
+                   ? NULL
+                   : map_function(slot, rec->back_locals, NULL, rec->co);
+    /* an inlined frame, in the compiled call it makes or in its own record
+       (as slot_locals reads its locals) */
+    in = rec->link_stack_depth == 0 ? rec : rec + 1;
+    if (in != rec + entry || in->own_locals == NULL)
+        return NULL;
+    if (in == rec && rec->back_locals != NULL &&
+        rec->back_locals->retaddr != NULL) {
+        if (!slot_registers(slot, regs, &ip) ||
+            ip != rec->back_locals->retaddr)
+            return NULL;
+        return map_function(slot, in->own_locals, regs, in->co);
+    }
+    return map_function(slot, in->own_locals, NULL, in->co);
+}
+
 /* the frame of the frameless run 'fr''s own frame, kept until the run
    ends (root_ended), keyed by its slot; at 'lasti'. A new reference. */
 static PyFrameObject *
@@ -1968,8 +2031,8 @@ root_ended(FrameRuntime *fr)
     drop_activation(a);
 }
 
-/* the function of the compiled frame of 'tag' (kept_frame) where its
-   record knows it, else NULL */
+/* the function of the compiled frame of 'tag' (kept_frame) where it is
+   known, else NULL */
 static PyFunctionObject *
 tag_function(long tag)
 {
@@ -1977,7 +2040,7 @@ tag_function(long tag)
     if (TAG_ROOT(tag) != NULL)
         return TAG_ROOT(tag)->func;
     entry = (-tag) & (sizeof(long) - 1);
-    return (*(stack_frame_info_t **)(tag + entry))[entry].func;
+    return record_function((stack_frame_info_t **)(tag + entry), entry);
 }
 
 /* 'tag' is the slot holding the frame's record, less one per inlined
@@ -2000,7 +2063,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         return keep_frame(
             own, slot, 0,
             act_find(own) != NULL ? NULL : return_address(own, rec), co,
-            globals, rec->func, lasti);
+            globals, record_function(slot, 0), lasti);
     }
     if ((entry == 1 && rec->nargs >= 0 && finfo_last(rec) == rec + 1 &&
          (rec + 1)->co == (PyCodeObject *)co) ||
@@ -2009,7 +2072,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         /* an inlined frame, in the compiled call it makes or in its own
            record: its parent's slot is the one holding them */
         return keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals,
-                          rec[entry].func, lasti);
+                          record_function(slot, entry), lasti);
     return NULL;
 }
 
@@ -2364,7 +2427,7 @@ psyco_innermost_function(PyCodeObject *co)
     FrameRuntime *run;
     stack_frame_info_t **slot = innermost_slot(&run);
     if (slot != NULL)
-        return (*slot)->co == co ? (*slot)->func : NULL;
+        return (*slot)->co == co ? record_function(slot, 0) : NULL;
     if (run == NULL || run->psy_code != co)
         return NULL;
     return run->frame != NULL ? le_frame_function(run->frame) : run->func;
@@ -5727,7 +5790,7 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     else {
         st->f = le_pyframe_new(PyThreadState_GET(), co, globals,
                                st->slot != NULL && (*st->slot)->co == co
-                                   ? (*st->slot)->func
+                                   ? record_function(st->slot, 0)
                                    : NULL);
         if (st->f == NULL) {
             Py_XDECREF(c);
