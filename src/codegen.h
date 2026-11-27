@@ -145,13 +145,15 @@ psyco_call_address(PsycoObject *po, vinfo_t *vtarget, int flags,
    the run-time sources for the arguments, as specified by
    psyco_build_frame(). */
 /* How CPython runs a frame that compiled code calls: from Python, with no
-   C between, or from C, as a consumer such as sum() runs a generator, or
-   as next() or a generator's send() steps one */
+   C between, or from C, as a consumer such as sum() runs a generator, as
+   next() or a generator's send() steps one, or as PyObject_Call runs the
+   bound method of an f(*a, **kw) call */
 enum le_through_c {
     LE_C_NONE,
     LE_C_CONSUMER,
     LE_C_NEXT,
     LE_C_SEND,
+    LE_C_EX_METHOD,
     LE_C_WAYS
 };
 /* Py_LeaveRecursiveCall after a compiled call (psyfunc.c), and where
@@ -159,6 +161,11 @@ enum le_through_c {
    from C; false with an exception set */
 EXTERNFN bool
 psyco_leave_recursive_call(PsycoObject *po, int through_c);
+/* the condition under which 'levels' Py_EnterRecursiveCall tests, each
+   inside the last, made by C called here could fail
+   (mechanisms/recursion.h:recursion_levels_over); nothing is counted */
+EXTERNFN condition_code_t
+psyco_recursion_levels_over(PsycoObject *po, int levels);
 /* tests the 32-bit int at 'address' at run time: CC_NE if it isn't 0 */
 EXTERNFN condition_code_t
 psyco_int32_nonzero_at(PsycoObject *po, void *address);

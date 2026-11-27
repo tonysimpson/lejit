@@ -142,7 +142,7 @@ PsycoDict_MergeEmpty(PsycoObject *po, vinfo_t *d, vinfo_t *update)
     vinfo_t **values;
     PyObject *names = PsycoDict_PendingNames(d, &values);
     PyTypeObject *t;
-    if (names == NULL || PyTuple_GET_SIZE(names) != 0)
+    if (names != NULL && PyTuple_GET_SIZE(names) != 0)
         return 0;
     t = Psyco_NeedType(po, update);
     if (t == NULL)
