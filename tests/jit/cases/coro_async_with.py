@@ -472,10 +472,12 @@ HIDDEN_IN_C_CALLS = running_frame_hidden()
 
 def referrers(n):
     out = [outcome(holds_exception(k)) for k in range(3)]
+    # before the calls below, whose gc.get_referrers() counts as a full
+    # collection for LeJIT's sweep, which could release holds_exception's
+    # code
+    ok = compiled(holds_exception) if HANDLERS_COMPILED else True
     out.append([list(gen_holds(k)) for k in range(3)])
     out.append([outcome(resumed_holds(k)) for k in range(3)])
-    ok = compiled(holds_exception) if HANDLERS_COMPILED else True
-    # (after compiled(), which reads whether lejit is imported)
     return out, ok
 
 

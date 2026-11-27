@@ -475,6 +475,31 @@ PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
     return r;
 }
 
+/* A module's attribute, as _Py_module_getattro finds it: in the module's
+   dict, where ModuleType (static, so looked up now) has no attribute of
+   that name. Its class can be assigned a subclass of ModuleType, so it is
+   checked at run time (Psyco_ConstantType, through OB_type), and any
+   other class is CPython's load. NULL with no exception: the caller's
+   run-time load. */
+static vinfo_t *
+module_getattr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
+{
+    PyObject *m = (PyObject *)CompileTime_Get(o->source)->value;
+    PyObject *name = (PyObject *)CompileTime_Get(attr_name->source)->value;
+    vinfo_t *vtp, *v;
+    if (_PyType_Lookup(&PyModule_Type, name) != NULL)
+        return NULL;
+    vtp = psyco_get_const(po, o, OB_type);
+    if (vtp == NULL)
+        return NULL;
+    if (!is_compiletime(vtp->source) ||
+        CompileTime_Get(vtp->source)->value != (long)&PyModule_Type)
+        return NULL;
+    if (!psyco_module_attr_cached(po, m, name, &v))
+        return NULL;
+    return v;
+}
+
 DEFINEFN
 vinfo_t *
 PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
@@ -485,6 +510,14 @@ PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
         !PyUnicode_CheckExact(
             (PyObject *)CompileTime_Get(attr_name->source)->value))
         goto generic;
+    /* any module: a replay may see it with another class */
+    if (is_compiletime(o->source) &&
+        PyModule_Check((PyObject *)CompileTime_Get(o->source)->value)) {
+        vinfo_t *v = module_getattr(po, o, attr_name);
+        if (v != NULL || PycException_Occurred(po))
+            return v;
+        goto generic;
+    }
     r = need_type_mega(po, o, &tp);
     if (r < 0)
         return NULL;
@@ -599,10 +632,8 @@ static bool
 has_managed_values(PyTypeObject *tp)
 {
 #if LE_HAS_INLINE_VALUES
-    /* emitted code reaches the values with a byte displacement */
     return (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
-           ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL &&
-           tp->tp_basicsize + LE_VALUES_ARRAY < 128;
+           ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
 #elif LE_HAS_MANAGED_VALUES_POINTER || LE_HAS_TAGGED_DICT_OR_VALUES
     return (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
            ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
@@ -1360,6 +1391,51 @@ load_calls_python(PyTypeObject *tp, PyObject *name)
 }
 #endif
 
+#if LE_HAS_MANAGED_DICT
+/* An instance of a class with a managed dict and no values made for its
+   attributes: whether it has a dict (or values, made while its class had
+   keys to share) now, a condition code */
+#define MANAGED_word FMUT(DEF_ARRAY(PyObject *, 0))
+/* ... unless its instances may keep values that lazy_dict_made doesn't
+   see: inline in the object */
+static bool
+lazy_dict_values(PyTypeObject *tp)
+{
+#if LE_HAS_INLINE_VALUES
+    return (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) != 0;
+#else
+    return false;
+#endif
+}
+static condition_code_t
+lazy_dict_made(PsycoObject *po, vinfo_t *obj)
+{
+    vinfo_t *w =
+        psyco_get_field_offset(po, obj, MANAGED_word, LE_MANAGED_DICT_OFFSET);
+    condition_code_t cc;
+#if LE_HAS_MANAGED_VALUES_POINTER
+    vinfo_t *values, *both;
+    if (w == NULL)
+        return CC_ERROR;
+    values = psyco_get_field_offset(po, obj, MANAGED_word,
+                                    -4 * (long)sizeof(PyObject *));
+    if (values == NULL) {
+        vinfo_decref(w, po);
+        return CC_ERROR;
+    }
+    both = integer_or(po, w, values);
+    vinfo_decref(values, po);
+    vinfo_decref(w, po);
+    w = both;
+#endif
+    if (w == NULL)
+        return CC_ERROR;
+    cc = integer_non_null(po, w);
+    vinfo_decref(w, po);
+    return cc;
+}
+#endif
+
 /* 'generic' is the function the compiled code calls when the type has
    changed: PyObject_GetAttr from PsycoObject_GetAttr, because the change
    may have given the type a __getattr__ or __getattribute__. */
@@ -1434,10 +1510,19 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
 #if LE_HAS_MANAGED_DICT
     /* the attributes may be in values with no dict: read inline for an
        exact str (instance_dict_get); CPython makes the dict for any other
-       name */
+       name. Without values, a class attribute is the load while no dict
+       is made, as ceval's LOAD_ATTR_METHOD_LAZY_DICT. */
     if ((tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
-        !(has_managed_values(tp) && PyUnicode_CheckExact(name)))
-        goto generic;
+        !(has_managed_values(tp) && PyUnicode_CheckExact(name))) {
+        if (descr == NULL || lazy_dict_values(tp))
+            goto generic;
+        cc = lazy_dict_made(po, obj);
+        if (cc == CC_ERROR)
+            return NULL;
+        if (runtime_condition_f(po, cc))
+            goto generic;
+        goto class_attribute;
+    }
 #endif
     if (tp->tp_dictoffset != 0) {
         bool found;
@@ -1460,6 +1545,9 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
         vinfo_decref(v, po);
     }
 
+#if LE_HAS_MANAGED_DICT
+class_attribute:
+#endif
     if (f != NULL)
         return Psyco_META3(po, f, CfCommonNewRefPyObject, "lvl", descr, obj,
                            tp);
@@ -1918,18 +2006,53 @@ cimpl_managed_store_miss(PyObject *obj, PyObject *value, store_cache_t *c)
 static code_t *managed_store_miss_glue;
 #endif
 
+/* The member a store through 'descr' writes as PyMember_SetOne does for an
+   object member (a __slots__ name): a pointer at a fixed offset of an
+   instance of 'tp', or NULL. member_set's descr_setcheck is the subtype
+   test; a read-only member raises, and one placed after the items moves
+   with the size, so both are CPython's. */
+static PyMemberDef *
+slot_member(PyTypeObject *tp, PyObject *descr)
+{
+    PyMemberDef *l;
+    if (descr == NULL || Py_TYPE(descr) != &PyMemberDescr_Type ||
+        !PyType_IsSubtype(tp, PyDescr_TYPE(descr)))
+        return NULL;
+    l = ((PyMemberDescrObject *)descr)->d_member;
+    if ((l->type != T_OBJECT_EX && l->type != T_OBJECT) ||
+        (l->flags & READONLY))
+        return NULL;
+#ifdef Py_RELATIVE_OFFSET
+    if (l->flags & Py_RELATIVE_OFFSET)
+        return NULL;
+#endif
+#ifdef _Py_AFTER_ITEMS
+    if (l->flags & _Py_AFTER_ITEMS)
+        return NULL;
+#endif
+    return l;
+}
+
+/* store_kind's for a store into a member: the descriptor with bit 1 set,
+   never a function's address, which is in the code, nor another kind */
+#define SLOT_KIND(descr) ((void *)((uintptr_t)(descr) | 2))
+
 /* What a compiled store does once its type guard passes: the function it
    calls. cimpl_instance_dict_set where 3.7's
    _PyObject_GenericSetAttrWithDict would go to the instance dict (no data
-   descriptor for the name), else tp_setattro. A class attribute whose type
-   is a heap type counts as a data descriptor: that type may gain __set__
-   without the class's guard seeing it. Assigns the version tag first. */
+   descriptor for the name), SLOT_KIND for a member slot_member writes
+   inline, else tp_setattro. A class attribute whose type is a heap type
+   counts as a data descriptor: that type may gain __set__ without the
+   class's guard seeing it. Assigns the version tag first. */
 static void *
 store_kind(PyTypeObject *tp, PyObject *name)
 {
     PyObject *descr = NULL;
     if (le_type_dict(tp) != NULL)
         descr = _PyType_Lookup(tp, name); /* borrowed */
+    if (tp->tp_setattro == PyObject_GenericSetAttr &&
+        slot_member(tp, descr) != NULL)
+        return SLOT_KIND(descr);
     if (tp->tp_setattro != PyObject_GenericSetAttr ||
         (tp->tp_dictoffset <= 0 && !has_managed_values(tp)) ||
         le_type_dict(tp) == NULL)
@@ -2044,6 +2167,27 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
     return true;
 }
 
+/* PyMember_SetOne's store of 'v' into an object member at 'offset', inline:
+   the old value is read, the new one stored with a reference, then the
+   old one released, which may run Python code */
+#define SLOT_object FMUT(DEF_ARRAY(PyObject *, 0))
+static vinfo_t *
+slot_store(PsycoObject *po, vinfo_t *obj, long offset, vinfo_t *v)
+{
+    vinfo_t *old = psyco_get_field_offset(po, obj, SLOT_object, offset);
+    if (old == NULL)
+        return NULL;
+    if (!psyco_put_field_offset(po, obj, SLOT_object, offset, v)) {
+        vinfo_decref(old, po);
+        return NULL;
+    }
+    consume_reference(po, v);
+    po->pr.class_unchecked = 1;
+    psyco_xdecref_v(po, old);
+    vinfo_decref(old, po);
+    return VINFO_OK;
+}
+
 /* PyObject_SetAttr on a heap type, specialised on the type behind a guard
    like generic_getattr's: store_kind chooses now what the store calls,
    valid while the type is unchanged. A changed type calls
@@ -2061,6 +2205,7 @@ heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, PyObject *name,
              vinfo_t *v)
 {
     void *kind;
+    PyObject *descr;
     attr_guard_t *guard;
     vinfo_t *vd, *vv, *r;
     condition_code_t cc;
@@ -2069,6 +2214,11 @@ heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, PyObject *name,
     guard = store_guard(tp, name, kind, true);
     if (guard == NULL)
         OUT_OF_MEMORY();
+    descr = _PyType_Lookup(tp, name); /* borrowed */
+    if (kind == SLOT_KIND(descr))
+        /* held, so that its address names it while a guard of that kind
+           can be repaired */
+        psyco_owner_pin(descr);
     /* the guard takes the state store_kind saw */
     store_guard_set(guard, tp);
     /* making a virtual value can collect garbage and so run any code: do it
@@ -2082,6 +2232,16 @@ heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, PyObject *name,
     if (runtime_condition_f(po, cc)) {
         r = psyco_generic_call(po, cimpl_store_type_changed, CfCommonIntZeroOk,
                                v ? "vlv" : "vll", obj, (long)name, v);
+        return r != NULL;
+    }
+    if (kind == SLOT_KIND(descr)) {
+        /* a deletion is CPython's, for its error */
+        if (v == NULL)
+            r = psyco_generic_call(po, PyObject_GenericSetAttr,
+                                   CfCommonIntZeroOk, "vll", obj, (long)name,
+                                   0L);
+        else
+            r = slot_store(po, obj, slot_member(tp, descr)->offset, v);
         return r != NULL;
     }
     if (kind != (void *)cimpl_instance_dict_set) {
