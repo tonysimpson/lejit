@@ -5259,15 +5259,53 @@ cimpl_stopiteration_error(PyObject *exc, const char *msg,
 }
 #endif
 
+#if LE_HAS_INTERPRETER_FRAME
+/* The cell in slot k of the frame ceval made for 'co' (eval_hook.c:
+   LeCode_Run), which the compiled code borrows, goes as the frame's end
+   would drop it (le_frame_finish): there unless a frame object outlives
+   the frame and keeps its words. */
+static void
+cimpl_frame_cell_drop(PyCodeObject *co, long k, PyObject *cell)
+{
+    le_frame_t *f = le_frame_current(PyThreadState_GET());
+    if (f == NULL || le_frame_code(f) != co || LE_FRAME_WORD(f, k) != cell ||
+        f->owner != FRAME_OWNED_BY_THREAD ||
+        (f->frame_obj != NULL && Py_REFCNT(f->frame_obj) > 1))
+        return;
+    Py_DECREF(le_frame_word_take(f, (int)k));
+}
+
+/* whether *pp, a slot of the frame's words, holds a cell the frame
+   holds, borrowed by the compiled code */
+static bool
+frame_cell_at(PsycoObject *po, vinfo_t **pp)
+{
+    long k = pp - LOC_LOCALS_PLUS;
+    return *pp != NULL && k < le_code_nlocalsplus(po->pr.co) &&
+           le_code_local_is_cell(po->pr.co, (int)k) &&
+           is_runtime((*pp)->source) && !has_rtref((*pp)->source);
+}
+
+/* whether releasing v runs code: it is not a constant or a borrowed
+   run-time value */
+static bool
+released_at_run_time(vinfo_t *v)
+{
+    return v != NULL && !is_compiletime(v->source) &&
+           (!is_runtime(v->source) || has_rtref(v->source));
+}
+#endif
+
 static code_t *
 exit_function(PsycoObject *po)
 {
     vinfo_t **locals_plus;
     vinfo_t **pp;
-    long i;
+    long i, n, last = -1;
     Source retsource;
     long mode = psyco_generator_mode(po); /* before the locals go */
     extra_assert(!po->pr.is_inlining);
+    (void)last;
 
     /* the frame that stood for the call keeps its locals as they end */
     if (!catcher_flush(po))
@@ -5279,8 +5317,12 @@ exit_function(PsycoObject *po)
     /* clear the locals, first to last as frame_dealloc does (finalisers run
        in that order), then the stack; where FRAME_CLEARED_LAST_FIRST, the
        stack top down, then the locals last to first. On a return CPython
-       has popped the frame first. */
+       has popped the frame first. RELEASED(i) is the i-th to go. */
     locals_plus = LOC_LOCALS_PLUS;
+#define RELEASED(i)                                        \
+    (LE_HAS_FRAME_CLEARED_LAST_FIRST                       \
+         ? po->vlocals.items + po->vlocals.count - 1 - (i) \
+         : locals_plus + (i))
     for (pp = locals_plus; PycException_Is(po, &EReturn) &&
                            pp < po->vlocals.items + po->vlocals.count;
          pp++)
@@ -5290,10 +5332,33 @@ exit_function(PsycoObject *po)
             END_CODE
             break;
         }
-    for (i = 0; locals_plus + i < po->vlocals.items + po->vlocals.count; i++) {
-        pp = LE_HAS_FRAME_CLEARED_LAST_FIRST
-                 ? po->vlocals.items + po->vlocals.count - 1 - i
-                 : locals_plus + i;
+    n = po->vlocals.items + po->vlocals.count - locals_plus;
+#if LE_HAS_INTERPRETER_FRAME
+    /* A cell the frame ceval made holds (a borrowed run-time value) would
+       go when the frame ends, after the locals here: one that CPython
+       releases before some of them goes in its place, once the return
+       value, which may be a closure over it, is made. The frame keeps its
+       cells while an exception leaves it, for the traceback. */
+    if (PycException_Is(po, &EReturn)) {
+        bool dropping = false;
+        for (last = n - 1; last >= 0; last--)
+            if (released_at_run_time(*RELEASED(last)))
+                break;
+        for (i = 0; i < last && !dropping; i++)
+            dropping = frame_cell_at(po, RELEASED(i));
+        if (dropping && !compute_vinfo(po->pr.val, po))
+            return NULL;
+    }
+#endif
+    for (i = 0; i < n; i++) {
+        pp = RELEASED(i);
+#if LE_HAS_INTERPRETER_FRAME
+        if (i < last && frame_cell_at(po, pp) &&
+            psyco_generic_call(po, cimpl_frame_cell_drop, CfNoReturnValue,
+                               "llv", (long)po->pr.co,
+                               (long)(pp - locals_plus), *pp) == NULL)
+            return NULL;
+#endif
         if (*pp != NULL) {
             vinfo_decref(*pp, po);
             *pp = NULL;
@@ -5331,6 +5396,7 @@ exit_function(PsycoObject *po)
     }
 
     return psyco_finish_return(po, retsource);
+#undef RELEASED
 }
 
 /***************************************************************/
