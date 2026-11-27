@@ -4,7 +4,8 @@
 # strings, and the calls that must go on as CPython's: argument errors,
 # keywords named by a str subclass, other globals or builtins, tracing,
 # generators, defaults replaced while the call runs, an __exit__ that
-# frees the traceback it was lent.
+# frees the traceback it was lent, a module __getattr__ that deletes
+# itself, the only reference to it and its code.
 import functools, sys, types
 
 
@@ -165,6 +166,33 @@ def caller_frames(n):
         w() for w in [who] * n]
 
 
+GETATTR = '''
+def __getattr__(name):
+    if name == 'gone':
+        del globals()['__getattr__']
+    raise AttributeError(name)
+'''
+
+
+def module_with_getattr(i):
+    m = types.ModuleType('m%d' % i)
+    exec(compile(GETATTR, '<getattr>', 'exec'), m.__dict__)
+    return m
+
+
+def getattr_deletes_itself(n):
+    out = []
+    for i in range(n):
+        m = module_with_getattr(i)
+        for name in ['a'] * 5 + ['gone', 'b']:
+            try:
+                getattr(m, name)
+            except AttributeError as e:
+                out.append(str(e))
+        out.append('__getattr__' in m.__dict__)
+    return out
+
+
 CASES = [
     ('keywords_and_defaults', [(0,), (5,)], {}),
     ('bind_errors', [(2,)], {}),
@@ -176,4 +204,5 @@ CASES = [
     ('star_arguments', [(3,)], {}),
     ('exit_drops_traceback', [(3,)], {}),
     ('caller_frames', [(3,)], {}),
+    ('getattr_deletes_itself', [(3,)], {}),
 ]
