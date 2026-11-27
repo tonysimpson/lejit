@@ -2730,10 +2730,10 @@ psyco_get_globals(void)
    out (a kept frame already is, from when it was made), up to the first
    that finds its own caller when asked (frame_get_back): CPython makes
    only the frame asked for. A real frame keeps its own
-   f_back, as the evaluators put tstate->frame back to it; frame.f_back
-   gives the compiled frames it skips (frame_get_back). With 'undo', a
-   list, for C code that reads f_back itself: real frames are relinked
-   too, each as (frame, old f_back) in it, and a frame LeCode_Run runs
+   f_back, even none, as the evaluators put tstate->frame back to it;
+   frame.f_back gives the compiled frames it skips (frame_get_back). With
+   'undo', a list, for C code that reads f_back itself: real frames are
+   relinked too, each as (frame, old f_back) in it, and a frame LeCode_Run runs
    gets its place, as (frame, old f_lasti), for restore_links. */
 /* a compiled callee's frame kept while its call runs, which finds its
    caller when asked (frame_get_back) */
@@ -2748,6 +2748,7 @@ struct link_s {
     int depth;
     PyFrameObject *top, *prev;
     PyObject *undo;
+    bool prev_real; /* prev is a real frame, not an emulated one */
 };
 
 static PyObject *
@@ -2774,7 +2775,7 @@ visit_link_frame(const visited_frame_t *v, void *data)
         l->top = f; /* the reference returned */
     else if ((back = le_frame_object_back(l->prev)) == f)
         Py_DECREF(f);
-    else if (back == NULL)
+    else if (back == NULL && !l->prev_real)
         l->prev->f_back = f; /* takes the reference */
     else if (l->undo == NULL ||
              (t = PyTuple_Pack(2, l->prev,
@@ -2794,13 +2795,14 @@ visit_link_frame(const visited_frame_t *v, void *data)
     if (l->undo == NULL && (visited_gen_frame(v) != NULL || kept_callee(f)))
         return Py_None;
     l->prev = f;
+    l->prev_real = v->frame != NULL;
     return NULL;
 }
 
 static PyFrameObject *
 linked_frame(int depth, PyObject *undo)
 {
-    struct link_s l = {depth, NULL, NULL, undo};
+    struct link_s l = {depth, NULL, NULL, undo, false};
     pvisitframes(visit_link_frame, &l);
     return l.top;
 }
@@ -3416,14 +3418,14 @@ frame_get_back(PyFrameObject *frame, void *closure)
         back = frame->f_back = catcher_caller(frame); /* takes the reference */
     else if (back == NULL && kept_callee(frame))
         back = frame->f_back = activation_caller(live_activation(frame));
-    if (back == NULL)
-        Py_RETURN_NONE;
     /* a generator's frame its body runs on as a direct call is linked
        only to the frame the call was made from; a frame entered through
-       C from a frameless run is in that run, entered at 'back' */
+       C from a frameless run is in that run, entered at 'back' (none for
+       a thread's first) */
     if (le_frame_is_executing(frame) &&
-        (runs_compiled(back) ||
-         frameless_at(NULL, le_frame_of(back)) != NULL) &&
+        (back == NULL ? frameless_at(NULL, NULL) != NULL
+                      : runs_compiled(back) ||
+                            frameless_at(NULL, le_frame_of(back)) != NULL) &&
         ((a = live_activation(frame)) == NULL || a->gen)) {
         struct back_s b = {frame, back, NULL, NULL, false, NULL, NULL, NULL};
         pvisitframes(visit_back_frame, &b);
@@ -3431,6 +3433,8 @@ frame_get_back(PyFrameObject *frame, void *closure)
         if (b.top != NULL)
             return (PyObject *)b.top;
     }
+    if (back == NULL)
+        Py_RETURN_NONE;
     Py_INCREF(back);
     return (PyObject *)back;
 }
