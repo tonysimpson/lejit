@@ -45,7 +45,10 @@ if checked:
 # compiled code that checks a tag compiles again on its next run, so the
 # calls run once more after the cache is emptied, before the count starts.
 import gc
-clear_type_cache = sys._clear_type_cache if sys.argv[8] == '1' else (lambda: None)
+# not a lambda: the harness's own compiled code, called once between the
+# rounds, would be released by the sweep (codemanager.c) during them and
+# compiled again after them
+clear_type_cache = sys._clear_type_cache if sys.argv[8] == '1' else int
 for _ in range(int(sys.argv[7])):
     for args in calls:
         try:
