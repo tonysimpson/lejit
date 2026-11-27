@@ -5,7 +5,7 @@
 # exceptions and tracebacks through it, frames from inside it, the order
 # things die in when the chain is dropped, closed or thrown into, and each
 # way a generator of the chain is made real, followed by its use.
-import dis, gc, sys
+import gc, sys
 
 LOG = []
 
@@ -24,10 +24,8 @@ def work(x):
 
 def compiled(*fns):
     lejit = sys.modules.get('lejit')
-    # a release build can't say what compiled, and without SEND a body
-    # with yield from runs interpreted
-    if (lejit is None or not hasattr(lejit._core, '_code_info') or
-            'SEND' not in dis.opmap):
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)

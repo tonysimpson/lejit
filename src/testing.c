@@ -102,7 +102,6 @@ le_stats(PyObject *self, PyObject *unused)
             Py_CLEAR(d);
         Py_XDECREF(t);
     }
-#if LE_RESUMES_GENERATORS_DIRECTLY
     if (d != NULL) {
         /* virtual generators' records (Python/genrecord.c) */
         PyObject *t = Py_BuildValue(
@@ -114,7 +113,6 @@ le_stats(PyObject *self, PyObject *unused)
             Py_CLEAR(d);
         Py_XDECREF(t);
     }
-#endif
     if (d != NULL) {
         /* code moved after its compile, code that stayed, and relocations
            kept (codemanager.c:psyco_code_move_made) */
@@ -250,11 +248,10 @@ le_code_info(PyObject *self, PyObject *co)
         return PyUnicode_FromString("unsupported");
     if (e->entry_point == NULL || e->entry_point == Py_None) {
         /* a resumable generator's body: an entry at its start or a yield */
-        int i, j;
+        int i;
         for (i = 0; i < e->nresumes; i++)
-            for (j = 0; j < e->resumes[i].count; j++)
-                if (e->resumes[i].entries[j].code != Py_None)
-                    return PyUnicode_FromString("compiled");
+            if (e->resumes[i].code != NULL && e->resumes[i].code != Py_None)
+                return PyUnicode_FromString("compiled");
         return PyUnicode_FromString("no entry point");
     }
     return PyUnicode_FromString("compiled");

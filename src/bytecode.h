@@ -579,13 +579,15 @@ le_op_flags(int op)
         case GET_ANEXT:
         case END_ASYNC_FOR:
             return LE_OPF_COMPILED;
+        /* yield from in a resumable generator: GET_YIELD_FROM_ITER, then
+           YIELD_FROM, or SEND's loop, which sends into the iterator and
+           yields what it yields, and its end (END_SEND), or a throw's
+           (CLEANUP_THROW) */
+        case GET_YIELD_FROM_ITER:
+            return LE_OPF_COMPILED;
         case YIELD_FROM:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
 #if LE_HAS_OPCODE_SEND
-        /* yield from in a resumable generator: GET_YIELD_FROM_ITER, then
-           SEND's loop, which sends into the iterator and yields what it
-           yields, and its end (END_SEND), or a throw's (CLEANUP_THROW) */
-        case GET_YIELD_FROM_ITER:
         case CLEANUP_THROW:
             return LE_OPF_COMPILED;
         case SEND:

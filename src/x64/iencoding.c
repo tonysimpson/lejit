@@ -973,7 +973,6 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     return vresult;
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* the word at run-time source 'src' pushed */
 #define PUSH_SOURCE(src)                                               \
     do {                                                               \
@@ -1076,7 +1075,6 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     return run_time_result(po, CfReturnTypePtr);
 }
 #undef PUSH_SOURCE
-#endif
 
 /* internal, see NEED_CC() */
 EXTERNFN condition_code_t

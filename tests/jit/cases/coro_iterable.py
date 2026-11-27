@@ -3,14 +3,9 @@
 # Each case drives such generators, awaited from coroutines or by hand, and
 # returns what CPython shows of them; compiled() says whether their bodies
 # were compiled.
-import asyncio, dis, sys, types
+import asyncio, sys, types
 
 from coro_bodies import compiled, drive, work
-
-
-def compiled_yield_from(*fns):
-    # without SEND a body with yield from runs interpreted
-    return 'SEND' not in dis.opmap or compiled(*fns)
 
 
 @types.coroutine
@@ -64,7 +59,7 @@ def basics(n):
     out.append((g.gi_running, g.gi_frame.f_lineno))
     g.close()
     out.append(g.gi_frame)
-    return out, compiled(steps, nothing), compiled_yield_from(onto_native,
+    return out, compiled(steps, nothing), compiled(onto_native,
                                                                onto_iterator)
 
 
@@ -145,7 +140,7 @@ def bad_operands(n):
         except BaseException as e:
             out.append((type(e).__name__, str(e)))
         g.close()
-    return out, compiled_yield_from(onto_bad)
+    return out, compiled(onto_bad)
 
 
 async def sleepy(n, log):

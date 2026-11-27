@@ -474,7 +474,6 @@ ex_callee_store(PsycoObject *po, vinfo_t *v)
 }
 #endif
 
-#if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
 /* enter_recursive_call where an overflow is not raised here but left to
    another path: 1 if counted, 0 if it would overflow (counted back, the
    count's rare path taken), -1 with an exception set in 'po' */
@@ -485,7 +484,7 @@ enter_recursive_call_or_not(PsycoObject *po, vinfo_t *vts)
     vinfo_t *vdepth = add_to_depth(po, LE_RECURSION_STEP, vts);
     if (vdepth == NULL)
         return -1;
-    cc = integer_cmp_i(po, vdepth, 0, Py_LT);
+    cc = count_over(po, vdepth);
     vinfo_decref(vdepth, po);
     if (cc == CC_ERROR)
         return -1;
@@ -498,7 +497,6 @@ enter_recursive_call_or_not(PsycoObject *po, vinfo_t *vts)
     }
     return 1;
 }
-#endif
 
 #if LE_HAS_C_RECURSION_REMAINING || LE_HAS_C_STACK_SOFT_LIMIT
 /* Where compiled code runs a frame that CPython runs from C (a generator
@@ -734,7 +732,6 @@ enter_c_recursive_levels(PsycoObject *po, vinfo_t *vts, int levels,
 #endif
 }
 
-#if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
 /* enter_recursive_call_or_not where CPython enters the frame from C, the
    way 'through_c' */
 static inline int
@@ -756,7 +753,6 @@ enter_c_recursive_call_or_not(PsycoObject *po, vinfo_t *vts, int through_c)
     return enter_recursive_call_or_not(po, vts);
 #endif
 }
-#endif
 
 /* consumes 'vts'; false with an exception set in 'po' */
 static inline bool

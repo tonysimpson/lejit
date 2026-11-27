@@ -257,12 +257,10 @@ finfo_last(stack_frame_info_t *finfo)
 
 EXTERNFN stack_frame_info_t *
 psyco_finfo(PsycoObject *caller, PsycoObject *callee);
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* the record of a call from 'caller' that runs a body of the generator
    code 'co' on the generator's own frame (on_gen_frame) */
 EXTERNFN stack_frame_info_t *
 psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
-#endif
 
 /* A run of compiled code from C: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs). Either the
@@ -305,7 +303,6 @@ typedef struct frame_runtime_s {
     FrameRuntime_list_t *list; /* its thread's frame_runs */
 } FrameRuntime;
 
-#if LE_RESUMES_ON_FRAME
 /* The locals of a resumable generator's frame 'f' that its compiled run
    holds, listed, at a pause or end (pycompiler.c:gen_take_written): what
    Python wrote in them meanwhile (psyco_frame_write_locals) is taken out
@@ -316,12 +313,9 @@ typedef struct {
 } le_gen_taken_t;
 EXTERNFN void
 psyco_gen_take_written(le_frame_t *f, const le_gen_taken_t *t);
-#else
-/* The same for the frame of the run 'fr', all of whose locals the
-   compiled run holds */
-EXTERNFN void
-psyco_gen_take_written(FrameRuntime *fr);
-#endif
+/* how many runs keep what Python wrote in their frames' locals
+   (psyco_frame_write_locals): none, and no run has anything to take */
+EXTERNVAR int psyco_frames_written;
 EXTERNVAR PyObject *psyco_coro_suspended;
 EXTERNFN PyObject *
 psyco_resume_suspend(struct resume_s *st, long at, long nstack, long level,
