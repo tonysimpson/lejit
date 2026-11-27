@@ -3614,6 +3614,94 @@ getframemodulename_init(PyObject *sysmod)
 }
 #endif
 
+static PyFrameObject *
+root_copy(PyFrameObject *f);
+static bool
+capi_compiled_innermost(PyThreadState *ts);
+static PyObject *
+visit_innermost(const visited_frame_t *v, void *unused);
+
+/* set while a frame is found: the C API calls made meanwhile are
+   CPython's own */
+static _Thread_local int capi_finding LE_FAST_TLS;
+
+/* For the length of one call that reads the thread's frames itself (C's
+   readers, the warnings module, the frame builtins): the innermost frame
+   Python sees is made a frame object and made the thread's current frame,
+   and with LINK_ALL every frame out from it is linked to the next by
+   f_back too, as tstate's chain would have them; frames_unlinked puts it
+   all back. LINK_LOCALS: the innermost frame's locals are its compiled
+   frame's now; LINK_COPY_ROOT: a real frame compiled code runs is given
+   to the call as a copy with them, which the call may write. Any
+   exception set stays. */
+#define LINK_ALL 1
+#define LINK_LOCALS 2
+#define LINK_COPY_ROOT 4
+typedef struct {
+    le_frame_t *saved;  /* the thread's current frame before */
+    PyFrameObject *top; /* the innermost frame (a reference), or NULL */
+    PyObject *undo;     /* the links to put back (restore_links), or NULL */
+} linked_t;
+
+static void
+frames_linked(linked_t *l, int how)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    PyObject *t, *v, *tb;
+    l->saved = le_frame_current(ts);
+    l->top = NULL;
+    l->undo = NULL;
+    PyErr_Fetch(&t, &v, &tb);
+    capi_finding = 1;
+    if (!(how & LINK_ALL))
+        l->top = (PyFrameObject *)pvisitframes(visit_innermost, NULL);
+    else if ((l->undo = PyList_New(0)) != NULL)
+        l->top = linked_frame(0, l->undo);
+    if (l->top != NULL && (how & LINK_COPY_ROOT) && runs_compiled(l->top))
+        l->top = root_copy(l->top);
+    else if (l->top != NULL)
+        view_sync(l->top, VIEW_PLACE | (how & (LINK_LOCALS | LINK_COPY_ROOT)
+                                            ? VIEW_LOCALS
+                                            : 0));
+    if (l->top != NULL && le_frame_of(l->top) != l->saved)
+        le_pyframe_make_current(ts, l->top);
+    capi_finding = 0;
+    PyErr_Clear();
+    PyErr_Restore(t, v, tb);
+}
+
+static void
+frames_unlinked(linked_t *l)
+{
+    le_frame_set_current(PyThreadState_GET(), l->saved);
+    if (l->top != NULL && le_frame_of(l->top) != l->saved)
+        le_pyframe_current_end(l->top);
+    if (l->undo != NULL) {
+        restore_links(l->undo);
+        Py_DECREF(l->undo);
+    }
+}
+
+/* fn(arg) run with every frame linked and the innermost current
+   (frames_linked), for the signal handlers ceval would run here
+   (pyruntime.c:le_eval_breaker_handler): a handler is given the frame the
+   signal landed in */
+int
+le_with_frames_linked(int (*fn)(void *), void *arg)
+{
+    linked_t l = {NULL, NULL, NULL};
+    bool compiled =
+        frame_runs != NULL && capi_compiled_innermost(PyThreadState_GET());
+    int r;
+    if (compiled)
+        frames_linked(&l, LINK_ALL);
+    r = fn(arg);
+    if (compiled)
+        frames_unlinked(&l);
+    Py_XDECREF(l.top);
+    return r;
+}
+
 /* _warnings.warn walks tstate->frame in C: it runs with the compiled
    frames over the current real frame emulated and current. */
 static PyObject *original_warn = NULL;
@@ -3623,23 +3711,12 @@ DEFINEFN
 PyObject *
 le_warn_with_frames(PyObject *warn, PyObject *args, PyObject *kwds)
 {
-    PyThreadState *ts = PyThreadState_GET();
-    le_frame_t *saved = le_frame_current(ts);
-    PyFrameObject *top;
-    PyObject *result, *undo = PyList_New(0);
-    if (undo == NULL)
-        return NULL;
-    /* every frame is linked for the call, and put back after it */
-    top = linked_frame(0, undo);
-    if (top != NULL && le_frame_of(top) != saved)
-        le_pyframe_make_current(ts, top);
+    linked_t l;
+    PyObject *result;
+    frames_linked(&l, LINK_ALL);
     result = PyObject_Call(warn, args, kwds);
-    le_frame_set_current(ts, saved);
-    if (top != NULL && le_frame_of(top) != saved)
-        le_pyframe_current_end(top);
-    restore_links(undo);
-    Py_DECREF(undo);
-    Py_XDECREF(top);
+    frames_unlinked(&l);
+    Py_XDECREF(l.top);
     return result;
 }
 
@@ -3866,24 +3943,13 @@ cimpl_with_frame(long which, PyObject *self, PyObject *args)
     PyMethodDef *ml = frame_builtins[which];
     int flags = ml->ml_flags & ~(METH_CLASS | METH_STATIC | METH_COEXIST);
     Py_ssize_t n = args == NULL ? 0 : PyTuple_GET_SIZE(args);
-    PyThreadState *ts = PyThreadState_GET();
-    le_frame_t *saved = le_frame_current(ts);
-    PyFrameObject *top = NULL;
-    PyObject *result, *undo = NULL;
+    linked_t l = {NULL, NULL, NULL};
+    bool reads = which == 0 || n < (which >= 3 ? 2 : 1);
+    PyObject *result;
     /* locals always reads the frame; vars and dir with no argument, eval
        and exec with no globals */
-    if (which == 0 || n < (which >= 3 ? 2 : 1)) {
-        undo = PyList_New(0);
-        if (undo == NULL)
-            return NULL;
-        top = linked_frame(0, undo);
-        if (top != NULL && runs_compiled(top))
-            top = root_copy(top);
-        else if (top != NULL)
-            view_sync(top, VIEW_LOCALS);
-        if (top != NULL && le_frame_of(top) != saved)
-            le_pyframe_make_current(ts, top);
-    }
+    if (reads)
+        frames_linked(&l, LINK_ALL | LINK_COPY_ROOT);
     switch (flags) {
         case METH_NOARGS:
             result = ml->ml_meth(self, NULL);
@@ -3905,14 +3971,9 @@ cimpl_with_frame(long which, PyObject *self, PyObject *args)
                             "LeJIT: unexpected builtin form");
             result = NULL;
     }
-    le_frame_set_current(ts, saved);
-    if (top != NULL && le_frame_of(top) != saved)
-        le_pyframe_current_end(top);
-    if (undo != NULL) {
-        restore_links(undo);
-        Py_DECREF(undo);
-    }
-    Py_XDECREF(top);
+    if (reads)
+        frames_unlinked(&l);
+    Py_XDECREF(l.top);
     return result;
 }
 
@@ -4692,9 +4753,6 @@ static PyObject *(*frame_getvarstring_cpython)(PyFrameObject *, const char *);
 static int (*frame_fasttolocalswitherror_cpython)(PyFrameObject *);
 static void (*frame_fasttolocals_cpython)(PyFrameObject *);
 
-/* set while a frame is found: the C API calls made meanwhile are
-   CPython's own */
-static _Thread_local int capi_finding LE_FAST_TLS;
 /* the frame last given borrowed, if nothing else held it (an emulated
    frame not kept), held until the next is */
 static PyFrameObject *capi_held = NULL;
@@ -4779,44 +4837,21 @@ capi_sync(PyFrameObject *f)
     PyErr_Restore(t, v, tb);
 }
 
-/* the innermost frame Python sees made the thread's current one, for C
-   that reads the current frame itself, until capi_current_end; NULL, and
-   nothing changed, where compiled code isn't the innermost. 'saved' gets
-   the frame that was current. */
-static PyFrameObject *
-capi_current_begin(PyThreadState *ts, int linked, int locals,
-                   le_frame_t **saved)
-{
-    PyFrameObject *top;
-    if (!capi_compiled_innermost(ts) ||
-        (top = capi_innermost(linked, locals)) == NULL)
-        return NULL;
-    *saved = le_frame_current(ts);
-    if (le_frame_of(top) != *saved)
-        le_pyframe_make_current(ts, top);
-    return top;
-}
-
-static void
-capi_current_end(PyThreadState *ts, PyFrameObject *top, le_frame_t *saved)
-{
-    le_frame_set_current(ts, saved);
-    if (le_frame_of(top) != saved)
-        le_pyframe_current_end(top);
-}
-
-/* CPython's 'fn' run with the innermost frame Python sees current */
+/* CPython's 'fn' run with the innermost frame Python sees current, where
+   compiled code runs the thread's innermost frame */
 static PyObject *
 capi_call_current(PyObject *(*fn)(void), int locals)
 {
-    PyThreadState *ts = PyThreadState_GET();
-    le_frame_t *saved;
-    PyFrameObject *top = capi_current_begin(ts, 0, locals, &saved);
-    PyObject *r = fn();
-    if (top != NULL) {
-        capi_current_end(ts, top, saved);
-        capi_hold(top); /* what it gave borrowed may be the frame's */
-    }
+    linked_t l = {NULL, NULL, NULL};
+    bool compiled = capi_compiled_innermost(PyThreadState_GET());
+    PyObject *r;
+    if (compiled)
+        frames_linked(&l, locals ? LINK_LOCALS : 0);
+    r = fn();
+    if (compiled)
+        frames_unlinked(&l);
+    if (l.top != NULL)
+        capi_hold(l.top); /* what it gave borrowed may be the frame's */
     return r;
 }
 
@@ -4835,10 +4870,9 @@ static int n_frame_reading_types = 0;
 static PyObject *
 capi_new_with_frame(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
-    PyThreadState *ts = PyThreadState_GET();
     newfunc cpython = NULL;
-    le_frame_t *saved;
-    PyFrameObject *top;
+    linked_t l = {NULL, NULL, NULL};
+    bool compiled = capi_compiled_innermost(PyThreadState_GET());
     PyObject *r;
     int i;
     for (i = 0; i < n_frame_reading_types && cpython == NULL; i++)
@@ -4848,12 +4882,12 @@ capi_new_with_frame(PyTypeObject *type, PyObject *args, PyObject *kwds)
         PyErr_BadInternalCall();
         return NULL;
     }
-    top = capi_current_begin(ts, 1, 0, &saved);
+    if (compiled)
+        frames_linked(&l, LINK_ALL);
     r = cpython(type, args, kwds);
-    if (top != NULL) {
-        capi_current_end(ts, top, saved);
-        Py_DECREF(top);
-    }
+    if (compiled)
+        frames_unlinked(&l);
+    Py_XDECREF(l.top);
     return r;
 }
 
@@ -5057,6 +5091,54 @@ unwind_pipe_init(void)
         unw_step(&c);
 }
 
+/* sys._current_frames, replaced too: this thread's frame is the innermost
+   one Python sees, linked by f_back as sys._getframe's is. Other threads'
+   are CPython's. */
+static PyObject *original_current_frames = NULL;
+
+static PyObject *
+le_current_frames(PyObject *self, PyObject *unused)
+{
+    PyObject *d = PyObject_CallObject(original_current_frames, NULL);
+    PyObject *id;
+    PyFrameObject *f;
+    int err;
+    if (d == NULL || frame_runs == NULL)
+        return d;
+    f = linked_frame(0, NULL);
+    if (f == NULL) {
+        if (!PyErr_Occurred())
+            return d;
+        Py_DECREF(d);
+        return NULL;
+    }
+    id = PyLong_FromUnsignedLong(PyThreadState_GET()->thread_id);
+    err = id == NULL ? -1 : PyDict_SetItem(d, id, (PyObject *)f);
+    Py_XDECREF(id);
+    Py_DECREF(f);
+    if (err < 0)
+        Py_CLEAR(d);
+    return d;
+}
+
+static PyMethodDef le_current_frames_def = {
+    "_current_frames", le_current_frames, METH_NOARGS,
+    "Return a dict mapping each thread's thread id to its current stack "
+    "frame.\n\nThis function should be used for specialized purposes "
+    "only."};
+
+static void
+current_frames_init(PyObject *sysmod, PyObject *name)
+{
+    PyObject *fn = PyCFunction_NewEx(&le_current_frames_def, NULL, name);
+    original_current_frames =
+        PyObject_GetAttrString(sysmod, "_current_frames");
+    if (fn == NULL || original_current_frames == NULL ||
+        PyObject_SetAttrString(sysmod, "_current_frames", fn) < 0)
+        PyErr_Print();
+    Py_XDECREF(fn);
+}
+
 INITIALIZATIONFN
 void
 psyco_frames_init(void)
@@ -5071,6 +5153,8 @@ psyco_frames_init(void)
     if (sysmod == NULL || fn == NULL || original_getframe == NULL ||
         PyObject_SetAttrString(sysmod, "_getframe", fn) < 0)
         PyErr_Print();
+    if (sysmod != NULL && name != NULL)
+        current_frames_init(sysmod, name);
 #if LE_HAS_FRAME_FUNCOBJ
     if (sysmod != NULL)
         getframemodulename_init(sysmod);
