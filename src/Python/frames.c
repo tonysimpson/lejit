@@ -3062,6 +3062,7 @@ caller_in_walk(FrameRuntime *fr, stack_frame_info_t **last,
     struct walked_calls_s *w = fr->walked;
     le_frame_t *gf = NULL;
     visited_frame_t v;
+    PyFrameObject *f;
     rec = *last;
     v.frame = NULL;
     v.object = NULL;
@@ -3096,8 +3097,15 @@ caller_in_walk(FrameRuntime *fr, stack_frame_info_t **last,
     v.globals = in->globals;
     if (v.globals == NULL)
         v.globals = gf != NULL ? le_frame_globals(gf) : fr->psy_globals;
-    *found = true;
-    return emulate_frame(&v);
+    f = emulate_frame(&v);
+    /* a frame that won't find its own caller when asked is left to a
+       walk, which links it */
+    if (f != NULL && visited_gen_frame(&v) == NULL && !kept_callee(f)) {
+        Py_DECREF(f);
+        return NULL;
+    }
+    *found = f != NULL;
+    return f;
 }
 
 /* the caller of the call whose own slot is 'own', which has just

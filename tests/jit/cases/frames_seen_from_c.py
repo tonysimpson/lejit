@@ -169,6 +169,28 @@ def _deep_top(n):
     return during, mid, chain_names(f, 3), m, t
 
 
+# the callers, through f_back, of a frame returned through compiled
+# callers that never asked for theirs: all of them are there
+def _returns_frame1():
+    return sys._getframe()
+
+
+def _returns_frame2():
+    return _returns_frame1()
+
+
+def _returns_frame3():
+    return _returns_frame2()
+
+
+def _returns_frame4():
+    return _returns_frame3()
+
+
+def getframe_returned():
+    return chain_names(_returns_frame4(), 6)
+
+
 def getframe_deep():
     return [_deep_top(n) for n in range(2)]
 
@@ -506,6 +528,7 @@ CASES = [
     ('lasti_through_c', "[()]", {}),
     ('getframe_through', "[()]", {}),
     ('getframe_deep', "[()]", {}),
+    ('getframe_returned', "[()]", {}),
     ('trim_arity_case', "[()]", {}),
     ('replaced_functions', "[()]", {}),
 ]
