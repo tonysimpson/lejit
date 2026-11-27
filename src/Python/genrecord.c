@@ -76,15 +76,26 @@ frame_nwords(le_frame_t *f)
     return LE_FRAME_CODE(f)->co_nlocalsplus + (depth > 0 ? depth : 0);
 }
 
+/* the collector's header before a generator (PyGC_Head, internal where
+   records are made): two words */
+#define GC_HEAD_SIZE (2 * sizeof(uintptr_t))
+
 DEFINEFN PyObject *
 le_gen_record_new(PyObject *func, long start)
 {
     PyCodeObject *co = (PyCodeObject *)((PyFunctionObject *)func)->func_code;
-    le_gen_record_t *r = PyObject_GC_NewVar(
-        le_gen_record_t, &le_gen_record_type,
-        co->co_nlocalsplus + co->co_stacksize);
-    if (r == NULL)
-        return NULL;
+    Py_ssize_t n = co->co_nlocalsplus + co->co_stacksize;
+    /* as a generator is laid out, with the collector's header before it,
+       but not counted among the collector's allocations: a record that
+       never escapes doesn't hasten a collection */
+    char *mem = PyObject_Malloc(GC_HEAD_SIZE +
+                                _PyObject_VAR_SIZE(&le_gen_record_type, n));
+    le_gen_record_t *r;
+    if (mem == NULL)
+        return PyErr_NoMemory();
+    memset(mem, 0, GC_HEAD_SIZE);
+    r = (le_gen_record_t *)(mem + GC_HEAD_SIZE);
+    PyObject_Init((PyObject *)r, &le_gen_record_type);
     LE_STAT(le_stat_gen_records[0]++);
     r->gi_exc_state.exc_value = NULL;
     r->gi_exc_state.previous_item = NULL;
@@ -500,7 +511,7 @@ record_dealloc(PyObject *self)
     code = (PyObject *)le_record_frame(r)->f_code;
 #endif
     Py_XDECREF(code);
-    PyObject_GC_Del(r);
+    PyObject_Free((char *)r - GC_HEAD_SIZE);
 }
 
 /* never tracked: only a generator it has become is */
