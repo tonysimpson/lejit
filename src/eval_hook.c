@@ -748,7 +748,9 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
    held for the run, as a frame would hold them. */
 static PyObject *(*function_vectorcall)(PyObject *, PyObject *const *, size_t,
                                         PyObject *);
-static int frameless_on = 0;
+/* the interpreter LeJIT's hook was last put in: compiled code runs only
+   in it, as the hook runs only there */
+static PyInterpreterState *frameless_interp = NULL;
 #if !LE_HAS_FRAME_BUILTINS_OF_FUNCTION
 static PyObject *str_builtins;
 #endif
@@ -851,7 +853,7 @@ le_frameless_vectorcall(PyObject *callable, PyObject *const *args,
     Py_ssize_t n = PyVectorcall_NARGS(nargsf);
     PyObject *bound[LE_FRAMELESS_ARGS], *held[LE_FRAMELESS_ARGS], *result;
     int nheld = 0, k;
-    if (!frameless_on || le_tracing_now(tstate, co) ||
+    if (tstate->interp != frameless_interp || le_tracing_now(tstate, co) ||
 #if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
         le_ex_callee != NULL ||
 #endif
@@ -1599,7 +1601,7 @@ le_entry_install(void)
     find_async_gen_wrapper();
 #if LE_ENTERS_FUNCTIONS_FRAMELESS
     frameless_install();
-    frameless_on = 1;
+    frameless_interp = PyThreadState_GET()->interp;
 #endif
     if (now != LeEval_EvalFrame) {
         original_eval_frame = now;
@@ -1645,7 +1647,8 @@ le_entry_remove(void)
     else if (now != original_eval_frame)
         return -1;
 #if LE_ENTERS_FUNCTIONS_FRAMELESS
-    frameless_on = 0;
+    if (frameless_interp == PyThreadState_GET()->interp)
+        frameless_interp = NULL;
 #endif
     return 0;
 }
