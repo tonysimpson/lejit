@@ -358,11 +358,17 @@ gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
 }
 
 #if LE_RESUMES_GENERATORS_DIRECTLY
+static size_t
+direct_size(PyCodeObject *co)
+{
+    return offsetof(le_gen_direct_t, entries) +
+           (le_code(co).size / LE_UNIT + 2) * sizeof(code_t *);
+}
+
 DEFINEFN le_gen_direct_t *
 le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x)
 {
     PyObject *mergepoints;
-    int n;
     if (x->direct != NULL)
         return x->direct;
     if (x->nresumes < 0 || !(co->co_flags & (CO_GENERATOR | CO_COROUTINE)) ||
@@ -372,10 +378,15 @@ le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x)
     if (mergepoints == Py_None ||
         !(psyco_mp_flags(mergepoints) & MP_FLAGS_RESUMABLE))
         return NULL;
-    n = le_code(co).size / LE_UNIT + 2;
-    x->direct = PyMem_Calloc(
-        1, offsetof(le_gen_direct_t, entries) + n * sizeof(code_t *));
+    x->direct = PyMem_Calloc(1, direct_size(co));
     return x->direct;
+}
+
+DEFINEFN void
+le_gen_direct_clear(PyCodeObject *co, le_code_extra_t *x)
+{
+    if (x->direct != NULL)
+        memset(x->direct, 0, direct_size(co));
 }
 
 /* the entry 'codebuf' resumes 'f' with, into its code's table of direct
@@ -424,6 +435,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
         PyErr_Clear(); /* out of memory */
         return NULL;
     }
+    x->cold = 0;
     p = resume_point(x, co, le_frame_lasti(f));
     if (p == NULL || !le_frame_iterators_real(f, nstack))
         return NULL;
@@ -529,6 +541,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
         PyErr_Clear(); /* out of memory */
         return NULL;
     }
+    x->cold = 0;
     p = resume_point(x, co, le_frame_lasti(f));
     if (p == NULL)
         return NULL;
@@ -642,8 +655,10 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
                 x->entry_builtins = builtins;
             }
             if (entry_point != Py_None && x->entry_globals == globals &&
-                x->entry_builtins == builtins)
+                x->entry_builtins == builtins) {
+                x->cold = 0;
                 return entry_point;
+            }
         }
     }
     return NULL;
@@ -1204,7 +1219,12 @@ static const char stack_probe_source[] =
     "def next_(n):\n"
     "    yield sp() if n == 0 else next(next_(n - 1))\n"
     "def send_(n):\n"
-    "    yield sp() if n == 0 else send_(n - 1).send(None)\n";
+    "    yield sp() if n == 0 else send_(n - 1).send(None)\n"
+    "class Ex_:\n"
+    "    def m(self, n):\n"
+    "        return sp() if n == 0 else self.m(*(n - 1,))\n"
+    "def ex_(n):\n"
+    "    return Ex_().m(n)\n";
 
 /* the C stack pointer at the bottom of 'fn'(depth), a generator stepped
    once if 'gen'; 0 with an exception set */
@@ -1234,7 +1254,7 @@ stack_probe_level(PyObject *ns, const char *name)
 {
     PyObject *fn = PyDict_GetItemString(ns, name);
     uintptr_t one = 0, two = 0;
-    int gen = strcmp(name, "call_") != 0, round;
+    int gen = strcmp(name, "call_") != 0 && strcmp(name, "ex_") != 0, round;
     if (fn == NULL)
         return 0;
     for (round = 0; round < 3; round++) {
@@ -1302,6 +1322,7 @@ le_entry_install(void)
             plain_step[LE_C_CONSUMER] = stack_probe_level(probes, "sum_");
             plain_step[LE_C_NEXT] = stack_probe_level(probes, "next_");
             plain_step[LE_C_SEND] = stack_probe_level(probes, "send_");
+            plain_step[LE_C_EX_METHOD] = stack_probe_level(probes, "ex_");
         }
     }
 #endif

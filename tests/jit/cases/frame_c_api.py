@@ -36,6 +36,8 @@ _EvalFrameLocals = _function('PyEval_GetFrameLocals', ctypes.c_void_p)
 _EvalFrameGlobals = _function('PyEval_GetFrameGlobals', ctypes.c_void_p)
 _EvalFrameBuiltins = _function('PyEval_GetFrameBuiltins', ctypes.c_void_p)
 _DecRef = _function('Py_DecRef', None, ctypes.c_void_p)
+_LineNumber = _function('PyFrame_GetLineNumber', ctypes.c_int,
+                        ctypes.py_object)
 
 
 def _borrowed(address):
@@ -94,8 +96,21 @@ def two_down(n):
     return direct_callee(z), z
 
 
+# the line C reads of the innermost frame, at two places in one call: the
+# frame it gets is where the call is each time
+def _lines_here():
+    first = _LineNumber(_borrowed(_GetFrame()))
+    second = _LineNumber(_borrowed(_GetFrame()))
+    return second - first
+
+
+def lines_from_c(n):
+    return [_lines_here() for i in range(n)]
+
+
 CASES = [
     ('seen_here', "[(1,), (2,)]", {}),
     ('direct_callee', "[(1,), (3,)]", {}),
     ('two_down', "[(1,)]", {}),
+    ('lines_from_c', [(3,)], {}),
 ]

@@ -828,12 +828,16 @@ typedef qword_t stackitem_t;
    because of how conditional jumps are emitted (pycompiler.c). Past the
    limit there are GUARANTEED_MINIMUM bytes more, for what is written
    before the next END_CODE, which then goes on in a new extent after a
-   jump (codemanager.c:psyco_code_continue). */
+   jump (codemanager.c:psyco_code_continue). So no block between
+   BEGIN_CODE and END_CODE may write more than that, less the jump, from
+   wherever it starts; checked builds assert it at every END_CODE, and a
+   block that writes in a loop as long as its input makes room as it goes
+   (CODE_ROOM_IN_BLOCK). */
 #ifndef BUFFER_MARGIN
 #define BUFFER_MARGIN 1024
 #endif
 #ifndef GUARANTEED_MINIMUM
-#define GUARANTEED_MINIMUM 64
+#define GUARANTEED_MINIMUM 1024
 #endif
 
 #define EXTERNVAR extern
@@ -1073,6 +1077,12 @@ typedef struct le_code_extra_s {
                                  code inlines no calls (psyfunc.c) */
     le_owner_t owner;         /* what its compiled code holds */
     char counted;             /* in the owner scan's count (codemanager.c) */
+    unsigned char cold;       /* sweeps since its code was last entered
+                                 through the hook or found running
+                                 (codemanager.c) */
+    unsigned char releases;   /* times the sweep released its code */
+    char swept;               /* being released by the sweep */
+    struct le_code_extra_s *prev, *next; /* in le_code_extras */
     int nresumes; /* a resumable generator's points, or -1: not resumable */
     le_resume_point_t *resumes;     /* one per yield and the start, or NULL */
     le_resume_point_t *last_resume; /* the one the last resume used */
@@ -1096,6 +1106,9 @@ typedef struct le_gen_direct_s {
    memory (eval_hook.c) */
 EXTERNFN le_gen_direct_t *
 le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x);
+/* its entries emptied, as if none were compiled yet */
+EXTERNFN void
+le_gen_direct_clear(PyCodeObject *co, le_code_extra_t *x);
 /* what compiled code calls on thread 'ts' after a direct step of the
    generator 'gen' whose run gave 'result' and didn't simply pause at a
    yield (eval_hook.c), as gen_iternext returns */
@@ -1111,6 +1124,8 @@ EXTERNFN int
 le_gen_direct_send_status(PyThreadState *ts, PyObject *gen, PyObject *result,
                           PyObject *out[]);
 #endif
+/* every record, newest first (lejit.c) */
+EXTERNVAR le_code_extra_t *le_code_extras;
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {
     PyWeakReference wr;
@@ -1131,6 +1146,20 @@ le_code_extra_get(PyCodeObject *co)
             return &((code_record_t *)r)->x;
     return NULL;
 }
+/* the code object of an attached record */
+static inline PyCodeObject *
+le_code_extra_code(le_code_extra_t *x)
+{
+    code_record_t *r =
+        (code_record_t *)((char *)x - offsetof(code_record_t, x));
+    return (PyCodeObject *)r->wr.wr_object;
+}
+/* 'x' as a new record, but for its owner, which the caller releases with
+   the report and entry point given back, and its table of direct entries,
+   which compiled code may still hold: emptied. Its code object lives. */
+EXTERNFN void
+le_code_extra_reset(le_code_extra_t *x, PyObject **mergepoints,
+                    PyObject **entry_point);
 /* the code last found not resumable, and its record, which outlives it
    (eval_hook.c:gen_may_resume) */
 EXTERNVAR PyCodeObject *le_gen_interpreted;
@@ -1290,17 +1319,47 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match);
     } while (0)
 #endif
 
+#if ALL_CHECKS
+/* where the block, or its part since CODE_ROOM_IN_BLOCK, began */
+#define CODE_BLOCK_BEGIN code_t *code_block_start = code;
+#define CODE_BLOCK_RESTART code_block_start = code;
+#define CODE_BLOCK_CHECK                    \
+    psyco_assert(code < code_block_start || \
+                 code - code_block_start <= \
+                     GUARANTEED_MINIMUM - MAXIMUM_SIZE_OF_FAR_JUMP);
+#else
+#define CODE_BLOCK_BEGIN
+#define CODE_BLOCK_RESTART
+#define CODE_BLOCK_CHECK
+#endif
+
 #define BEGIN_CODE               \
     do {                         \
         code_t *code = po->code; \
+        CODE_BLOCK_BEGIN         \
         le_trace_begin_code(po);
 #define END_CODE                           \
     po->code = code;                       \
+    CODE_BLOCK_CHECK                       \
     le_trace_end_code(po);                 \
     if (code >= po->codelimit) {           \
         PsycoObject_EmergencyCodeRoom(po); \
     }                                      \
     }                                      \
     while (0);
+
+/* inside a block, at a point where nothing written so far depends on where
+   the code after it goes: go on in a new extent if past the limit, as
+   END_CODE does */
+#define CODE_ROOM_IN_BLOCK()                   \
+    do {                                       \
+        po->code = code;                       \
+        CODE_BLOCK_CHECK                       \
+        if (code >= po->codelimit) {           \
+            PsycoObject_EmergencyCodeRoom(po); \
+            code = po->code;                   \
+        }                                      \
+        CODE_BLOCK_RESTART                     \
+    } while (0)
 
 #endif /* _PSYCO_H */
