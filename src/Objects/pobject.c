@@ -394,8 +394,8 @@ class_getattr(PsycoObject *po, vinfo_t *vcls, vinfo_t *vname);
    types at a site: 1 (*tp set), 0 (megamorphic: stay generic), or -1. A
    heap type made a constant stays alive with the code, so the bound also
    limits how many classes a site keeps. */
-static int
-need_type_mega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp)
+DEFINEFN int
+Psyco_NeedTypeMega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp)
 {
     vinfo_t *vtp;
     if (is_compiletime(obj->source)) {
@@ -453,7 +453,7 @@ PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
             PyObject_GenericGetAttr)
         r = 1;
     else
-        r = need_type_mega(po, o, &tp);
+        r = Psyco_NeedTypeMega(po, o, &tp);
     if (r < 0)
         return -1;
     if (r > 0) {
@@ -518,7 +518,7 @@ PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
             return v;
         goto generic;
     }
-    r = need_type_mega(po, o, &tp);
+    r = Psyco_NeedTypeMega(po, o, &tp);
     if (r < 0)
         return NULL;
     /* a heap type's tp_getattro can change (a new __getattr__), and a respawn
@@ -1317,7 +1317,7 @@ PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vclass, vinfo_t *self,
     r = psyco_pyobj_atcompiletime_mega(po, vclass, &cls);
     if (r <= 0 || !PyType_Check(cls))
         return r < 0 ? -1 : 0;
-    r = need_type_mega(po, self, &tp);
+    r = Psyco_NeedTypeMega(po, self, &tp);
     if (r <= 0)
         return r;
     /* typeobject.c:supercheck's case of an instance */
@@ -1455,7 +1455,7 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
     name = (PyObject *)CompileTime_Get(vname->source)->value;
     if (!PyUnicode_CheckExact(name))
         goto generic;
-    r = need_type_mega(po, obj, &tp);
+    r = Psyco_NeedTypeMega(po, obj, &tp);
     if (r < 0)
         return NULL;
     /* a static type's tp_getattro never changes; a heap type's is checked
@@ -2309,7 +2309,7 @@ PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *vattrname,
     if (!PyUnicode_CheckExact(name))
         goto generic; /* PyObject_SetAttr raises TypeError for a non-str */
 
-    r = need_type_mega(po, o, &tp);
+    r = Psyco_NeedTypeMega(po, o, &tp);
     if (r < 0)
         return false;
     if (r == 0)
