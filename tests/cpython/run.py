@@ -221,6 +221,10 @@ SKIPPED = {
         'test.test_ctypes.test_refcounts.RefcountTestCase.test_1 '
         'test.test_ctypes.test_refcounts.RefcountTestCase.test_refcount '
         'test.test_ctypes.test_stringptr.StringPtrTestCase.test__POINTER_c_char',
+    'compiled code released after a full collection drops the references '
+    'it held, while the test counts them':
+        'ctypes.test.test_refcounts.AnotherLeak.test_callback '
+        'test.test_ctypes.test_refcounts.AnotherLeak.test_callback',
     'compiling allocates memory and objects the gc tracks, while the test '
     'counts them':
         'test.test_descr.ClassPropertiesAndMethods.test_slots '

@@ -100,6 +100,29 @@ def running_frame_stays():
     return t
 
 
+def long_loop(n):
+    t = 0
+    for k in range(n):
+        gc.collect()
+        t += k
+    return t
+
+
+def compiled(f):
+    lejit = sys.modules.get('lejit')
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
+        return True
+    return lejit._core._code_info(f.__code__) == 'compiled'
+
+
+def ran_through_sweeps_stays():
+    # entered once through the hook (map), then running through more
+    # sweeps than make code cold: just returned, it isn't cold
+    t = list(map(long_loop, [6]))
+    gc.collect()
+    return t, compiled(long_loop)
+
+
 def direct_callee_stays():
     # caller's code calls leaf's directly and runs between the sweeps
     t = 0
@@ -142,6 +165,7 @@ CASES = [
     ('cold_recursion_goes_together', [()],
      {'compiles_each_call': FRESH, 'interpreted': 'calls exec'}),
     ('running_frame_stays', [()], {}),
+    ('ran_through_sweeps_stays', [()], {}),
     ('direct_callee_stays', [()], {}),
     ('paused_generator_resumes', [()], {}),
     ('generator_stepped_across_sweeps', [()], {}),

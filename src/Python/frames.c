@@ -260,7 +260,7 @@ frame_codes(PyCodeObject *co, stack_frame_info_t *rec, PyCodeObject **cos)
 DEFINEFN int
 psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
                                   void *arg),
-                     void *arg)
+                     void *arg, bool where)
 {
     PyThreadState *ts, *here = PyThreadState_GET();
     stack_frame_info_t **roots[MAX_RUNS], **inners[MAX_RUNS];
@@ -272,8 +272,10 @@ psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
         return 0;
     /* this thread's innermost frames are in C calls whose return
        addresses only unwinding finds; another thread's are not known */
-    nhere = runs_here(roots, inners, NULL);
-    nfound = runs_unwind(roots, inners, nhere, ips, NULL);
+    if (where) {
+        nhere = runs_here(roots, inners, NULL);
+        nfound = runs_unwind(roots, inners, nhere, ips, NULL);
+    }
     for (ts = PyInterpreterState_ThreadHead(PyInterpreterState_Main());
          ts != NULL; ts = PyThreadState_Next(ts)) {
         PyObject *c =

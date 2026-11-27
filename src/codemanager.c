@@ -1676,7 +1676,7 @@ scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
             push_alive(i);
     propagate();
     /* then the groups reached, until no more are */
-    if (scan.n > 0 && psyco_frames_running(mark_running, NULL) < 0)
+    if (scan.n > 0 && psyco_frames_running(mark_running, NULL, true) < 0)
         scan.unknown = true;
     do {
         changed = false;
@@ -1897,11 +1897,13 @@ sweep(void)
         if (x->cold < SWEEP_COLD)
             x->cold++;
         n++;
+    }
+    if (psyco_frames_running(sweep_running, NULL, false) < 0)
+        return;
+    for (x = le_code_extras; x != NULL; x = x->next)
         if (x->cold == SWEEP_COLD && sweep_may_release(x))
             ncand++;
-    }
-    /* which frames run is asked only when something may go */
-    if (ncand == 0 || psyco_frames_running(sweep_running, NULL) < 0)
+    if (ncand == 0)
         return;
     ncand = 0;
     /* the candidates, then a stack of those found to stay */
@@ -1992,8 +1994,16 @@ sweep_pending(void *arg)
 static int
 sweep_clock_traverse(PyObject *self, visitproc visit, void *arg)
 {
-    if (!sweep_asked && Py_AddPendingCall(sweep_pending, NULL) == 0)
+    PyObject *t, *v, *tb;
+    if (sweep_asked || le_is_finalizing())
+        return 0;
+    /* some versions set an error when the call can't be added */
+    PyErr_Fetch(&t, &v, &tb);
+    if (Py_AddPendingCall(sweep_pending, NULL) == 0)
         sweep_asked = true;
+    else
+        PyErr_Clear();
+    PyErr_Restore(t, v, tb);
     return 0;
 }
 
