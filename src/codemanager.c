@@ -710,9 +710,9 @@ extent_cmp(const void *a, const void *b)
     return x->start < y->start ? -1 : x->start > y->start;
 }
 
-/* whether [p, p + 8) meets a new copy */
+/* whether [p, p + size) meets a new copy */
 static bool
-in_copies(code_t *p)
+in_copies(code_t *p, int size)
 {
     int lo = 0, hi = ncopies;
     while (lo < hi) {
@@ -722,7 +722,7 @@ in_copies(code_t *p)
         else
             hi = mid;
     }
-    return lo < ncopies && copies[lo].start < p + 8;
+    return lo < ncopies && copies[lo].start < p + size;
 }
 
 static int
@@ -925,7 +925,7 @@ psyco_code_move_made(void)
         note_t *x = &notes[i];
         code_t *at = moved(x->at);
         made_t *m = made_find(x->at);
-        if (m == NULL && in_copies(x->at))
+        if (m == NULL && in_copies(x->at, NOTE_SIZE(x)))
             continue;
         if (x->kind == LE_RELOC_WORD) {
             code_t *v, *w;
