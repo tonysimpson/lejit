@@ -12,7 +12,8 @@
 #include "mechanisms/recursion.h"
 
 extern int
-le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
+le_eval_breaker_at_entry(PyThreadState *ts,
+                         PyCodeObject *co); /* pyruntime.c */
 #if LE_HAS_TSTATE_EVAL_BREAKER
 /* whether an event is flagged for the thread: its eval_breaker's low byte
    (pyruntime.c:le_eval_breaker_handler) */
@@ -37,8 +38,42 @@ static PyObject *frame_done;
 DEFINEVAR PyObject *le_ex_callee = NULL;
 #endif
 
+#if LE_HAS_FRAME_STACKREFS
+/* compiled code runs on the words as objects, which the frame holds: a
+   tagged word is the object less its tag bit. Up to this many are copied
+   into a fixed array (the glue copies them on to the machine stack), more
+   into one sized for them, out of line. */
+#define LE_RUN_FEW_WORDS 16
+
+static __attribute__((noinline)) PyObject *
+run_on_many_words(CodeBufferObject *codebuf, le_frame_t *f, int n,
+                  stack_frame_info_t ***finfo)
+{
+    PyObject *args[n];
+    int k;
+    for (k = 0; k < n; k++) args[k] = LE_FRAME_WORD(f, k);
+    return psyco_processor_run(codebuf, (long *)args, finfo);
+}
+
+static inline PyObject *
+run_on_words(CodeBufferObject *codebuf, le_frame_t *f,
+             stack_frame_info_t ***finfo)
+{
+    PyObject *args[LE_RUN_FEW_WORDS];
+    int k, n = RUN_ARGC(codebuf);
+    if (n > LE_RUN_FEW_WORDS)
+        return run_on_many_words(codebuf, f, n, finfo);
+    for (k = 0; k < n; k++) args[k] = LE_FRAME_WORD(f, k);
+    return psyco_processor_run(codebuf, (long *)args, finfo);
+}
+#else
+#define run_on_words(codebuf, f, finfo) \
+    psyco_processor_run(codebuf, (long *)le_frame_args(f), finfo)
+#endif
+
+/* 'tstate' is the thread's, which the hook is given */
 static PyObject *
-LeCode_Run(PyObject *codebuf, le_frame_t *f)
+LeCode_Run(PyThreadState *tstate, PyObject *codebuf, le_frame_t *f)
 {
     /* the chain of compiled frames is empty until the code starts: a
        frame walk (frames.c:pvisitframes) from Python that the
@@ -47,8 +82,6 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     stack_frame_info_t **finfo = &no_frames;
     FrameRuntime fr;
     PyObject *result;
-
-    PyThreadState *tstate = PyThreadState_GET();
 
     /* ceval counts the depth on entering every frame */
 #if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
@@ -72,23 +105,12 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     le_frame_set_executing(f, 1);
     /* ceval's eval_breaker test at the start */
     if (le_frame_start(f) < 0 ||
-        le_eval_breaker_at_entry(le_frame_code(f)) < 0) {
+        le_eval_breaker_at_entry(tstate, le_frame_code(f)) < 0) {
         PyTraceBack_Here(le_frame_object(f));
         result = NULL;
     }
-    else {
-#if LE_HAS_FRAME_STACKREFS
-        /* compiled code runs on the words as objects, which the frame
-           holds: a tagged word is the object less its tag bit */
-        int k, n = RUN_ARGC(codebuf);
-        PyObject *args[n > 0 ? n : 1];
-        for (k = 0; k < n; k++) args[k] = LE_FRAME_WORD(f, k);
-#else
-        PyObject **args = le_frame_args(f);
-#endif
-        result = psyco_processor_run((CodeBufferObject *)codebuf, (long *)args,
-                                     &finfo);
-    }
+    else
+        result = run_on_words((CodeBufferObject *)codebuf, f, &finfo);
 #if LE_HAS_EVAL_FRAME_POPS
     if (fr.frame == NULL) {
         /* ceval ran it on to its end and popped it (frames.c:
@@ -584,12 +606,12 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
    is the frame's locals mapping (NULL for a function). */
 static PyObject *
-le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
-               PyObject *builtins)
+le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
+               PyObject *locals, PyObject *builtins)
 {
     /* run interpreted while a trace or profile function is set: compiled
        code is invisible to them */
-    if (le_tracing_now(PyThreadState_GET(), co))
+    if (le_tracing_now(tstate, co))
         return NULL;
     /* only function frames, whose f_locals is NULL at entry. Module code,
        class bodies and exec or eval with a locals mapping have one */
@@ -882,10 +904,10 @@ LeFunc_Eval(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
     PyObject *result, *entry_point;
     entry_point =
-        le_code_to_run(le_frame_code(frame), le_frame_globals(frame),
+        le_code_to_run(tstate, le_frame_code(frame), le_frame_globals(frame),
                        le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
-        result = LeCode_Run(entry_point, frame);
+        result = LeCode_Run(tstate, entry_point, frame);
 #if LE_HAS_EVAL_FRAME_POPS
     /* ceval links the frame to its caller, the current frame */
     else if (psyco_frame_called_from_callee(le_frame_current(tstate)))
@@ -996,11 +1018,12 @@ LeGen_Eval(PyFrameObject *frame, le_code_extra_t *x)
 static __attribute__((noinline)) PyObject *
 LeFunc_Eval(PyFrameObject *frame, int throwflag)
 {
+    PyThreadState *tstate = PyThreadState_GET();
     PyObject *result, *entry_point;
-    entry_point = le_code_to_run(frame->f_code, frame->f_globals,
+    entry_point = le_code_to_run(tstate, frame->f_code, frame->f_globals,
                                  frame->f_locals, frame->f_builtins);
     if (entry_point != NULL)
-        result = LeCode_Run(entry_point, frame);
+        result = LeCode_Run(tstate, entry_point, frame);
     else
         result = original_eval_frame(frame, throwflag);
     if (le_frame_outlives(frame) != NULL)

@@ -151,13 +151,15 @@ le_frame_start(le_frame_t *f)
     PyCodeObject *co = LE_FRAME_CODE(f);
     int k, nfrees = co->co_nfreevars, n = co->co_nlocalsplus - nfrees;
     LE_FRAME_PLACE(f) = _PyCode_CODE(co) + co->_co_firsttraceable;
-    for (k = 0; k < n; k++)
-        if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
-            PyObject *cell = PyCell_New(LE_FRAME_WORD(f, k));
-            if (cell == NULL)
-                return -1;
-            le_frame_word_set(f, k, cell);
-        }
+    /* most code has no cells to look for */
+    if (co->co_ncellvars > 0)
+        for (k = 0; k < n; k++)
+            if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
+                PyObject *cell = PyCell_New(LE_FRAME_WORD(f, k));
+                if (cell == NULL)
+                    return -1;
+                le_frame_word_set(f, k, cell);
+            }
     for (k = 0; k < nfrees; k++) {
         PyObject *o = PyTuple_GET_ITEM(le_frame_closure(f), k);
         le_frame_word_set(f, n + k, Py_NewRef(o));
