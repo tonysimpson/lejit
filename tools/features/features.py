@@ -773,6 +773,11 @@ def tstate_attach(s):
 
 
 
+def function_vectorcall(s):
+    """a function keeps the C function its calls go through (vectorcall)"""
+    return _field(s, 'PyFunctionObject', 'vectorcall')
+
+
 def tstate_holds_gil(s):
     """a thread state says whether it holds the GIL in a field of its own,
     holds_gil (else in its _status bits)"""
@@ -1732,6 +1737,7 @@ STATE = [
     ('TSTATE_STATUS', tstate_status),
     ('TSTATE_ATTACH', tstate_attach),
     ('TSTATE_HOLDS_GIL', tstate_holds_gil),
+    ('FUNCTION_VECTORCALL', function_vectorcall),
     ('TSTATE_GIL_REQUESTED', tstate_gil_requested),
     ('GENERATOR_RETURN_KIND', generator_return_kind),
     ('LAST_PROFILED_FRAME', last_profiled_frame),
