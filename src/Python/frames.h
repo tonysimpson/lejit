@@ -231,11 +231,25 @@ EXTERNFN stack_frame_info_t *
 psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
 #endif
 
-/* A real frame LeCode_Run runs: on its C stack, linked into this
-   thread's list from start to return (frames.c:frame_runs) */
+/* A run of compiled code from C: on its C stack, linked into this
+   thread's list from start to return (frames.c:frame_runs). Either the
+   real frame LeCode_Run runs, or, with 'frame' NULL, a frameless run
+   (eval_hook.c:le_run_frameless), whose own frame has a view only when
+   asked for (frames.c:keep_root). */
 typedef struct frame_runtime_s *FrameRuntime_list_t;
 typedef struct frame_runtime_s {
-    le_frame_t *frame; /* LeCode_Run's caller holds it */
+    le_frame_t *frame; /* LeCode_Run's caller holds it; NULL: frameless */
+    /* a frameless run's: the thread's current frame as it started, or
+       NULL; its frames come just inside that one's */
+    le_frame_t *back;
+    PyFunctionObject
+        *func; /* a frameless run's function; its caller holds it */
+    /* the key of a frameless run's own frame's kept frame (frames.c:
+       keep_root), or NULL while it has none */
+    struct stack_frame_info_s **root_own;
+    /* ceval ran the real frame on to its end and popped it
+       (psyco_resume_run) */
+    int popped;
     stack_frame_info_t ***psy_frames_start;
     PyCodeObject *psy_code;
     PyObject *psy_globals;
@@ -287,6 +301,21 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
 EXTERNFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start);
+/* the same for a frameless run of func's code */
+EXTERNFN void
+psyco_frame_start_register_frameless(FrameRuntime *fr, PyFunctionObject *func,
+                                     stack_frame_info_t ***psy_frames_start);
+/* the frameless run's own frame's frame object, made now if need be; a
+   new reference */
+EXTERNFN PyFrameObject *
+psyco_frameless_frame(FrameRuntime *fr);
+/* eval_hook.c: the compiled entry for a call of func, or NULL, and a run
+   of it with no real frame */
+EXTERNFN PyObject *
+le_function_entry(PyFunctionObject *func);
+EXTERNFN PyObject *
+le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
+                 PyObject *const *args, Py_ssize_t nargs);
 EXTERNFN void
 psyco_frame_start_unregister(FrameRuntime *fr);
 #ifdef PyFrameLocalsProxy_Check
