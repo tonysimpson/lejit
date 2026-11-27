@@ -244,12 +244,12 @@ def main():
                 line += ': ' + problem
             if xfail:
                 line += '  [xfail: %s]' % xfail
-            if repeated and not problem:
-                line += '  [%s]' % repeated
             if verbose and made == 'asks':
                 line += '  [objects not compared: the case asks lejit._core in its rounds]'
             elif verbose and object_counts and not problem:
                 line += '  [%s objects: %s]' % (made, object_counts)
+            if repeated and not problem:
+                line += '  [%s]' % repeated
             print(line)
     print(' '.join('%s=%d' % kv for kv in counts.items()))
     return 1 if counts['FAIL'] or counts['XPASS'] else 0
