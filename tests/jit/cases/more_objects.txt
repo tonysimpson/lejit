@@ -48,7 +48,7 @@ ctypes_threads.callback_from_c                     3.7,3.8,3.9,3.10,3.11,3.12,3.
 dead_virtual_locals.in_traceback                   3.11,3.12,3.13                     not looked at yet
 dead_virtual_locals.numeric                        3.11,3.12,3.13,3.14,3.15           not looked at yet
 dead_virtual_locals.seen_by_frame                  3.11,3.12,3.13,3.14,3.15           not looked at yet
-deep_unwind.deep_json                              3.14                               not looked at yet
+deep_unwind.deep_json                              3.14,3.15                          not looked at yet on 3.14; on 3.15 the walk that links the callers of the frame returned to makes one more frame object a round
 defining_class_methods.errors                      3.9                                not looked at yet
 dict_keyword_calls.errors                          3.15                               not looked at yet
 dict_watchers.builtin_deleted                      3.10,3.11,3.12,3.13,3.14,3.15      not looked at yet
