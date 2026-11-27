@@ -170,15 +170,17 @@ def stress_tiny_switch_interval():
         sys.setswitchinterval(old)
 
 
+TIMED = {'objects': 'runs until a timer or another thread stops it'}
+
 CASES = [] if api is None else [
     ('threads_calling_c', [()], {}),
-    ('python_runs_while_c_sleeps', [()], {}),
+    ('python_runs_while_c_sleeps', [()], TIMED),
     ('main_sleeps_in_c', [()], {}),
     ('callbacks_from_threads', [()], {}),
-    ('signal_during_calls', [()], {}),
-    ('async_exception_after_call', [()], {}),
+    ('signal_during_calls', [()], TIMED),
+    ('async_exception_after_call', [()], TIMED),
     ('stress_tiny_switch_interval', [()],
-     {'leaks': 'at this switch interval the eval_breaker paths after the '
-               'calls are first taken, and compiled, at rounds that depend on '
-               'the threads\' timing'}),
+     dict(TIMED, leaks='at this switch interval the eval_breaker paths after '
+                       'the calls are first taken, and compiled, at rounds that '
+                       'depend on the threads\' timing')),
 ]
