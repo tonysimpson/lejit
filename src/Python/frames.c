@@ -5667,6 +5667,12 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         }
 #endif
         st->root = run;
+        /* a frame made now was put in the word the call's end gives its
+           locals to (stand_for_call): ceval ends it with its own */
+        if (c == NULL && word != NULL && *word == (PyObject *)st->f) {
+            *word = NULL;
+            Py_DECREF(st->f);
+        }
         if (co->co_stacksize >= 2)
             le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
         le_frame_set_builtins(le_frame_of(st->f), builtins);

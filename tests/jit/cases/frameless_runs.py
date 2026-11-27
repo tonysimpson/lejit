@@ -230,6 +230,32 @@ def generators(n):
     return [run(_iterates, i) for i in range(n)]
 
 
+# tracing starts inside, so the frame goes on in ceval: its frame object,
+# made then, keeps the locals ceval ends it with
+def _traced_on(k):
+    a = [k]
+    try:
+        if k < 0:
+            raise ValueError
+    except ValueError:
+        pass
+    sys.settrace(lambda *x: None)
+    b = k + 1
+    a = [a, b]
+    sys.settrace(None)
+    return sys._getframe(), a
+
+
+def resumed_locals(n):
+    out = []
+    for i in range(n):
+        f, a = run(_traced_on, i)
+        del a
+        gc.collect()
+        out.append(f.f_locals['a'])
+    return out
+
+
 # subinterpreters run inside a frameless call from C with no frame out of
 # it (a thread's start), on the same OS thread: they never see its frames,
 # and what they make with their own allocator stays theirs
@@ -286,5 +312,6 @@ CASES = [
     ('clears', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('lines', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('generators', [(4,)], {'checked': 'needs lejit._core._run_frameless'}),
+    ('resumed_locals', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('subinterpreter', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
 ]
