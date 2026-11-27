@@ -16,7 +16,7 @@ caller_locals.calls_operators                      3.11,3.12,3.13,3.14,3.15     
 caller_locals.dead_values_in_loop                  3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 caller_locals.repercent                            3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
 caller_locals.traceback_frame                      3.11,3.12,3.13,3.14,3.15           not looked at yet
-caller_locals.with_args                            3.11,3.12,3.13,3.14,3.15           not looked at yet
+caller_locals.with_args                            3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 calls.endless_recursion                            3.11,3.12,3.13,3.14,3.15           not looked at yet
 calls.new_class_bases                              3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 catcher_locals.after_return                        3.14,3.15                          not looked at yet
@@ -313,6 +313,18 @@ megamorphic_resume.traceback_lines                 3.11,3.12,3.13,3.14,3.15     
 megamorphic_resume.traced_in_except                3.11,3.12,3.13,3.14,3.15           not looked at yet
 module_attributes.deleted                          3.11,3.12,3.13,3.14,3.15           not looked at yet
 module_attributes.module_getattr                   3.11,3.12,3.13,3.14,3.15           not looked at yet
+module_code.builtins_replaced_and_changed          3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.del_of_a_missing_name                  3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 a NameError from a compiled global load or delete costs one more allocation
+module_code.dict_written_by_another_module         3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.import_sees_its_locals                 3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.lazy_modules                           3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.missing_name                           3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 a NameError from a compiled global load or delete costs one more allocation
+module_code.star_import_all                        3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_dict                       3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_math                       3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_no_dict                    3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_not_str                    3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.traceback_lines                        3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
 monitoring_changes.callee_sets_local_events        3.14,3.15                          not looked at yet
 monitoring_changes.callee_turns_on_profiling       3.14,3.15                          not looked at yet
 monitoring_changes.on_off_on                       3.14,3.15                          not looked at yet
@@ -408,6 +420,8 @@ unbound_locals.read_all                            3.15                         
 unknown_type_methods.builtins                      3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 unknown_type_methods.changed_class                 3.11,3.12,3.13,3.14,3.15           not looked at yet
 unknown_type_methods.raising                       3.11,3.12,3.13,3.14,3.15           not looked at yet
+unpack_key_errors.call_twice                       3.15                               not looked at yet
+unpack_key_errors.merge_twice                      3.15                               not looked at yet
 unpack_messages.errors                             3.11,3.12,3.13,3.14,3.15           not looked at yet
 virtual_objects.tuples_tracked                     3.14,3.15                          not looked at yet
 warn_reimported.where                              3.11,3.12,3.13,3.14,3.15           not looked at yet

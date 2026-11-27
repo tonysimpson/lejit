@@ -152,15 +152,17 @@ struct fncall_arg_s {
 };
 
 /* What LeJIT's frames support, tested before anything is emitted: free
-   variables only when the caller has the cells (psyco_call_pyfunc). */
+   variables only when the caller has the cells (psyco_call_pyfunc), and
+   a function's code, not module code made into a function, whose frame
+   has its globals as its locals mapping */
 static bool
 fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co, int nfrees)
 {
-    if (le_code_nfrees(co) != nfrees) {
+    if (le_code_nfrees(co) != nfrees || !(co->co_flags & CO_OPTIMIZED)) {
         return false;
     }
     fncall->co = co;
-    fncall->merge_points = psyco_get_merge_points(co, 0);
+    fncall->merge_points = psyco_get_merge_points(co);
     return fncall->merge_points != Py_None;
 }
 
@@ -770,7 +772,7 @@ psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
     vinfo_xdecref(array->items[LOC_INLINE_FUNC], NULL);
     array_release(array);
 
-    pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));
+    pyc_data_build(po, psyco_get_merge_points(po->pr.co));
 
     /* leaving an inlined frame restores its (never inlining) parent; on
        entry the old locals were already moved out (psyco_save_inline_po) */
@@ -2505,7 +2507,7 @@ pending_runnable(PsycoObject *po, vinfo_t *v)
         return false;
     co = pending_code(v);
     nfrees = PyCode_GetNumFree(co);
-    if (psyco_get_merge_points(co, 0) == Py_None || nfrees > MAX_CALL_FREES)
+    if (psyco_get_merge_points(co) == Py_None || nfrees > MAX_CALL_FREES)
         return false;
     /* a virtual function's cells: its closure tuple's (load_frees) */
     if (nfrees > 0 && is_virtualtime(vfunc->source)) {
@@ -2538,8 +2540,8 @@ static int
 fuse_stopped(PsycoObject *po, vinfo_t *v)
 {
     PyCodeObject *co = pending_code(v);
-    vinfo_t *vslot = vinfo_new(CompileTime_New(
-        (long)psyco_fuse_stopped(psyco_get_merge_points(co, 0))));
+    vinfo_t *vslot = vinfo_new(
+        CompileTime_New((long)psyco_fuse_stopped(psyco_get_merge_points(co))));
     vinfo_t *vflag = psyco_get_field(po, vslot, INT_value);
     condition_code_t cc;
     vinfo_decref(vslot, po);

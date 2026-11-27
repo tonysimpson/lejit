@@ -1,5 +1,6 @@
 # Runs one test case in a fresh interpreter. Kept at module level on purpose:
-# LeJIT doesn't compile module-level code, so the harness itself isn't compiled.
+# this module's code is already running when lejit.start() is called, so the
+# harness itself isn't compiled.
 import sys, importlib
 sys.path.insert(0, sys.argv[1])          # repo root (for lejit)
 sys.path.insert(0, sys.argv[2])          # cases directory
@@ -57,7 +58,8 @@ for args in calls:
     except Exception as e:
         out.append('exc %s: %s' % (type(e).__name__, e))
 if checked:
-    info = lejit._core._code_info(fn.__code__)
+    # a case running module code names it as the code to check
+    info = lejit._core._code_info(getattr(fn, 'compiled_code', fn.__code__))
     out.append('compiled: yes' if info == 'compiled' else
                'compiled: no (%s)' % info)
 # leak check: after warm-up, run the calls 100 more times and report how

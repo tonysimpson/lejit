@@ -1364,7 +1364,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # gone from 3.15: yield from's is GET_ITER with an argument
            'GET_YIELD_FROM_ITER',
            # gone from 3.16: del is PUSH_NULL and the store
-           'DELETE_ATTR', 'DELETE_GLOBAL')
+           'DELETE_ATTR', 'DELETE_GLOBAL', 'DELETE_NAME')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1598,6 +1598,7 @@ EXPORTS = [
     ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
     ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
     ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
+    ('LAZY_IMPORT_NAME_LINKABLE', '_PyEval_LazyImportName'),
 ]
 
 

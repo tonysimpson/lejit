@@ -26,6 +26,9 @@ plain CPython's: for a language rule some CPython gets wrong),
 every call, so the leak check's rounds always compile and aren't repeated),
 'objects': reason (no objects check: what the case allocates in its
 rounds depends on timing).
+A case function with a 'compiled_code' attribute (a code object) has that
+code checked for being compiled, or interpreted, instead of its own: module
+code it runs with exec.
 
 --release tests a release build, which can't say what it compiled: results
 and leaks are checked, but not whether each function compiled or how many
