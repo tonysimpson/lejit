@@ -2088,16 +2088,85 @@ gen_step_tests(PsycoObject *po, const struct gen_layout *L, vinfo_t *vgen,
     return r;
 }
 
+/* whether iter() of an object of type 'tp' can't raise but for memory,
+   nor run Python: so that taking it in a generator expression's
+   consumer, not in the body before RETURN_GENERATOR, can't be seen */
+static bool
+iter_cannot_raise(PyTypeObject *tp)
+{
+    static PyTypeObject *const iterables[] = {
+        &PyList_Type,     &PyTuple_Type,      &PyRange_Type,
+        &PyDict_Type,     &PySet_Type,        &PyFrozenSet_Type,
+        &PyUnicode_Type,  &PyBytes_Type,      &PyByteArray_Type,
+        &PyDictKeys_Type, &PyDictValues_Type, &PyDictItems_Type};
+    size_t i;
+    if (tp->tp_iter == PyObject_SelfIter)
+        return true;
+    for (i = 0; i < sizeof(iterables) / sizeof(iterables[0]); i++)
+        if (tp->tp_iter == iterables[i]->tp_iter)
+            return true;
+    return false;
+}
+
 /* whether the pending generator 'vgen' of code 'co' can become virtual
    at its first step: a plain generator whose body runs compiled, bound
-   from its positional arguments alone */
+   from its positional arguments alone. One whose body takes the iterator
+   of its argument has it taken by the consumer instead, so only from an
+   iterable of a type known here (promoting it, a value inside the pending
+   generator, can loop at a megamorphic site) whose iter() can't be seen. */
 static bool
 vgen_startable(vinfo_t *vgen, PyCodeObject *co)
 {
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-    return pending_steppable(co) && args != NULL &&
-           PsycoTuple_Load(args) == co->co_argcount &&
-           le_gen_record_start_unit(co) >= 0;
+    bool takes_iter;
+    PyTypeObject *tp;
+    if (!pending_steppable(co) || args == NULL ||
+        PsycoTuple_Load(args) != co->co_argcount ||
+        le_gen_record_start_unit(co, &takes_iter) < 0)
+        return false;
+    if (!takes_iter)
+        return true;
+    tp = Psyco_KnownType(PsycoTuple_GET_ITEM(args, 0));
+    return tp != NULL && iter_cannot_raise(tp);
+}
+
+/* 'v' put in word 'k' of the record 'vrec', made real first, the word
+   taking a reference to it */
+static bool
+record_word_put(PsycoObject *po, vinfo_t *vrec, int k, vinfo_t *v)
+{
+    vinfo_t *w;
+    bool ok;
+    if (!compute_vinfo(v, po))
+        return false;
+#if LE_HAS_FRAME_STACKREFS
+    w = psyco_stackref_from_steal(po, v);
+#else
+    w = v;
+    vinfo_incref(w);
+#endif
+    ok = w != NULL && psyco_put_nth_field(po, vrec, REC_words, k, w);
+    vinfo_xdecref(w, po);
+    if (ok)
+        consume_reference(po, v);
+    return ok;
+}
+
+/* the free variables' cells of the function 'vfunc' of code 'co' put in
+   the words of its record 'vrec', as its COPY_FREE_VARS would (genrecord.c:
+   le_gen_record_start does it in C): 1, or 0 where the cells aren't
+   known, or -1 on error */
+static int
+record_frees_put(PsycoObject *po, vinfo_t *vrec, vinfo_t *vfunc,
+                 PyCodeObject *co)
+{
+    vinfo_t *freebuf[MAX_CALL_FREES], **frees = NULL;
+    int nfrees = co->co_nfreevars, ofs = le_code_nlocalsplus(co) - nfrees;
+    int i, r = load_frees(po, vfunc, nfrees, freebuf, &frees);
+    for (i = 0; r > 0 && i < nfrees; i++)
+        if (!record_word_put(po, vrec, ofs + i, frees[i]))
+            r = -1;
+    return r;
 }
 
 /* The first step of the pending generator 'vgen' of code 'co'
@@ -2113,8 +2182,10 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *vglobals = vgen->array->items[iGENEXPR_GLOBALS];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-    vinfo_t *vt, *vb, *vplace, *vrec;
-    long start = le_gen_record_start_unit(co);
+    vinfo_t *vt, *vb, *vplace, *vrec, *viter = NULL;
+    bool takes_iter;
+    long start = le_gen_record_start_unit(co, &takes_iter);
+    long nstack = takes_iter ? 1 + LE_HAS_GET_ITER_INDEX : 0;
     int r, i;
     if (callee_builtins(po, vfunc, vglobals, &vb) != 1)
         return 0;
@@ -2133,36 +2204,39 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     if (r <= 0)
         return r;
 
-    /* the record, which the virtual generator holds in place of its
-       arguments, then its words */
+    /* the iterator the body would take before RETURN_GENERATOR; then
+       the record, which the virtual generator holds in place of its
+       arguments, then its words, that iterator (and NULL) its stack */
+    if (takes_iter) {
+        viter = PsycoObject_GetIter(po, PsycoTuple_GET_ITEM(args, 0));
+        if (viter == NULL)
+            goto error;
+    }
     vrec = psyco_generic_call(po, le_gen_record_new, CfCommonNewRefPyObject,
-                              "vl", vfunc, start);
+                              "vll", vfunc, start, nstack);
     if (vrec == NULL)
         goto error;
     vinfo_incref(args);
     PsycoVgen_FromPending(po, vgen, vrec);
-    for (i = 0; i < co->co_argcount; i++) {
-        vinfo_t *v = PsycoTuple_GET_ITEM(args, i), *w;
-        bool ok;
-        if (!compute_vinfo(v, po)) {
+    for (i = 0; i < co->co_argcount; i++)
+        if (!record_word_put(po, vrec, i, PsycoTuple_GET_ITEM(args, i))) {
             vinfo_decref(args, po);
             goto error;
         }
-#if LE_HAS_FRAME_STACKREFS
-        w = psyco_stackref_from_steal(po, v);
-#else
-        w = v;
-        vinfo_incref(w);
-#endif
-        ok = w != NULL && psyco_put_nth_field(po, vrec, REC_words, i, w);
-        vinfo_xdecref(w, po);
-        if (!ok) {
-            vinfo_decref(args, po);
-            goto error;
-        }
-        consume_reference(po, v);
-    }
     vinfo_decref(args, po);
+    if (viter != NULL) {
+        if (!record_word_put(po, vrec, le_code_nlocalsplus(co), viter))
+            goto error;
+        vinfo_decref(viter, po);
+        viter = NULL;
+    }
+    if (co->co_ncellvars == 0 && co->co_nfreevars > 0) {
+        r = record_frees_put(po, vrec, vfunc, co);
+        if (r < 0)
+            goto error;
+        if (r > 0)
+            return 1;
+    }
     if ((co->co_ncellvars > 0 || co->co_nfreevars > 0) &&
         psyco_generic_call(po, le_gen_record_start,
                            CfReturnTypeInt | CfPyErrIfNeg, "v", vrec) == NULL)
@@ -2170,9 +2244,30 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     return 1;
 
 error:
+    vinfo_xdecref(viter, po);
     vinfo_decref(*ventry, po);
     *ventry = NULL;
     return -1;
+}
+
+/* whether the instruction being compiled is the FOR_ITER of a loop with
+   no yield in it, so that a generator it steps is dropped before the body
+   pauses, or made real at the pause if something still holds it */
+static bool
+loop_has_no_yield(PsycoObject *po)
+{
+    le_code_t c = le_code(po->pr.co);
+    le_instr_t in = le_instr(c, po->pr.next_instr);
+    int pos;
+    if (in.op != FOR_ITER)
+        return false;
+    for (pos = in.next; pos < in.target;) {
+        le_instr_t body = le_instr(c, pos);
+        if (body.op == YIELD_VALUE)
+            return false;
+        pos = body.next;
+    }
+    return true;
 }
 
 /* le_iter_send of the real generator of the record 'rec' a frame word
@@ -2241,11 +2336,13 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         co = pending_code(vgen);
         /* a generator's body pausing would make one it steps real at
            once, its record in the body's frame: such a one is made real
-           now and stepped as a real one. yield from's is kept in the
-           frame's word as a record (yield_resumable). */
+           now and stepped as a real one, unless a for loop with no yield
+           in it steps it. yield from's is kept in the frame's word as a
+           record (yield_resumable). */
         if (PsycoGenexpr_Check(vgen) &&
             (!vgen_startable(vgen, co) ||
-             (psyco_generator_mode(po) == GENEXPR_RESUMABLE && out == NULL))) {
+             (psyco_generator_mode(po) == GENEXPR_RESUMABLE && out == NULL &&
+              !loop_has_no_yield(po)))) {
             if (!compute_vinfo(vgen, po))
                 return NULL;
         }

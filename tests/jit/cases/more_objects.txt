@@ -123,6 +123,8 @@ gen_virtual_chains.raises                          3.12                         
 gen_virtual_chains.sends                           3.9,3.10                           not looked at yet
 gen_virtual_chains.traces                          3.12                               not looked at yet
 gen_yield_from.throws                              3.9,3.10                           not looked at yet
+genexpr_loops.many_kinds                           3.11,3.12,3.13,3.14,3.15           not looked at yet
+genexpr_loops.strings                              3.15                               compiled loops make a str or bytes iterator where 3.15's GET_ITER keeps an index
 globals_cache.builtins_subclass                    3.13,3.14,3.15                     not looked at yet
 globals_cache.deleted_global                       3.10,3.11,3.12,3.13,3.14,3.15      not looked at yet
 globals_cache.exec_namespaces                      3.13,3.14,3.15                     not looked at yet
