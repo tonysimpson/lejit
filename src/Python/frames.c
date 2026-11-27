@@ -4433,6 +4433,7 @@ capi_call_current(PyObject *(*fn)(void), int locals)
     return r;
 }
 
+#if LE_HAS_FRAME_FUNCOBJ
 /* types whose tp_new reads the current frame itself, for the module of
    the function that makes the object (typevarobject.c:caller,
    sentinelobject.c:caller), each with CPython's tp_new */
@@ -4490,6 +4491,7 @@ capi_replace_new(const char *module, const char *name)
     tp->tp_new = capi_new_with_frame;
     PyType_Modified(tp);
 }
+#endif
 
 static PyFrameObject *
 capi_eval_getframe(void)
@@ -4646,11 +4648,13 @@ capi_init(void)
     REPLACE("PyFrame_FastToLocals", capi_frame_fasttolocals,
             frame_fasttolocals_cpython);
 #undef REPLACE
+#if LE_HAS_FRAME_FUNCOBJ
     capi_replace_new("_typing", "TypeVar");
     capi_replace_new("_typing", "ParamSpec");
     capi_replace_new("_typing", "TypeVarTuple");
     capi_replace_new("_typing", "TypeAliasType");
     capi_replace_new("builtins", "sentinel");
+#endif
 }
 
 /* libunwind opens a pipe the first time it unwinds, to test the addresses
