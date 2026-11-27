@@ -164,16 +164,15 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack);
 
 /* Where a compiled frame's locals (co_nlocals, then cells and frees)
    are during a call it makes that may run Python: in its slot, as a note
-   ((index in psyco_locals_maps << 1) | 1) for a C call, or as the
-   callee's record's back_locals for a compiled one. A note stays after
-   its call (no store to clear it): its return address tells. Each value is
-   three longs, (LM_STACK, offset from data, 0), (LM_REG, register, 0) for a
-   callee-saved register at a C call, (LM_CONST, value, 0), (LM_NONE, 0, 0) or
-   (LM_VIRTUAL, source_virtual_t *, n) followed by its n items; data is the
-   slot's address minus 'below' (frames.c:slot_locals). */
-enum { LM_NONE, LM_STACK, LM_REG, LM_CONST, LM_VIRTUAL };
+   (LE_NOTE) for a C call, or as the callee's record's back_locals for a
+   compiled one. The C call's end marks its note returned, so a note not
+   marked is for the call the frame is in. Each value is three longs,
+   (LM_STACK, offset from data, 0), (LM_CONST, value, 0), (LM_NONE, 0, 0)
+   or (LM_VIRTUAL, source_virtual_t *, n) followed by its n items; data is
+   the slot's address minus 'below' (frames.c:slot_locals). */
+enum { LM_NONE, LM_STACK, LM_CONST, LM_VIRTUAL };
 struct locals_map_s {
-    code_t *retaddr; /* a C call's return address, to tell a stale note */
+    code_t *retaddr; /* a C call's return address */
     int lasti;       /* the call's instruction */
     int nvalues;
     long below;
@@ -187,9 +186,6 @@ struct locals_map_s {
     int func;
     long items[1];
 };
-
-/* what the glue from C into compiled code pushes to align the stack */
-#define LE_GLUE_PAD 0x4e49474cL
 
 /* to keep a trace of the Psyco stack frames */
 struct stack_frame_info_s {
@@ -229,9 +225,9 @@ struct stack_frame_info_s {
 
 /* the map of po's locals now, with lasti; while inlining, of the
    inlined frame's parent's, whose slot the call uses, unless 'own'. A
-   local only in a register is found there (LM_REG), or with reg_pos at
-   the position its register is pushed at for this call
-   (psyco_call_psyco). Nothing is emitted. After the locals, the
+   local only in a register is found with reg_pos at the position its
+   register is pushed at for this call (psyco_call_psyco); without
+   reg_pos, it is pushed now, for a C call. After the locals, the
    function of the frame called, if known only at run time: 'func', or
    for 'own' the inlined frame's (LOC_INLINE_FUNC). */
 EXTERNFN struct locals_map_s *
@@ -240,10 +236,13 @@ psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own,
 EXTERNVAR struct locals_map_s **psyco_locals_maps;
 EXTERNFN bool
 psyco_locals_map_reads(vinfo_t *vi, int level);
+/* the word of note 'index', which its call's end marks returned */
+#define LE_NOTE(index) (((long)(index) << 2) | 1)
+#define LE_NOTE_RETURNED 2
 PSY_INLINE struct locals_map_s *
 psyco_note_map(long note)
 {
-    return psyco_locals_maps[note >> 1];
+    return psyco_locals_maps[note >> 2];
 }
 
 PSY_INLINE stack_frame_info_t *

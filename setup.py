@@ -275,7 +275,7 @@ else:
                                extra_link_args = extra_link_args,
                                define_macros = macros,
                                include_dirs = [processor_dir],
-                               libraries = ['ffi', 'unwind'],
+                               libraries = ['ffi'],
         )],
         cmdclass={'build_ext': build_ext_generated},
     )

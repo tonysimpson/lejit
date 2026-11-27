@@ -105,7 +105,7 @@ le_stack_init(void)
 
 /* Calls fn(arg) with the stack pointer at 'top', returning to the caller's
    stack after. rbp keeps the caller's stack pointer, and the unwind
-   information says so, so that debuggers and libunwind walk from the
+   information says so, so that debuggers and profilers walk from the
    segment back to the caller. */
 extern void
 le_switch_call(void *arg, void (*fn)(void *), void *top);

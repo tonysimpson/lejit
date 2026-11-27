@@ -439,13 +439,14 @@ psyco_inline_enter(PsycoObject *po)
 }
 
 /* While the frame runs, its finfo slot holds an odd word: before a call
-   that may go through C, (lasti << 1) | 1, for f_lineno of its emulated
-   frame (frames.c:pvisitframes); a direct call to compiled code needs no
-   note. An inlined frame's slot holds its record. */
-/* every map a note names, by index: (index << 1) | 1 fits the 32-bit
-   immediate of one store. The map belongs to the owner of the code making
-   the call, which keeps the index and gives it back when it dies; only a
-   frame running that code reads its notes, so no live note names a reused
+   that may go through C, a note (frames.h:LE_NOTE), for f_lineno of its
+   emulated frame (frames.c:pvisitframes) and its locals during the call;
+   a direct call to compiled code needs no note. An inlined frame's slot
+   holds its record. */
+/* every map a note names, by index: a note fits the 32-bit immediate of
+   one store. The map belongs to the owner of the code making the call,
+   which keeps the index and gives it back when it dies; only a frame
+   running that code reads its notes, so no live note names a reused
    index. */
 DEFINEVAR struct locals_map_s **psyco_locals_maps = NULL;
 DEFINEVAR long le_notes_made = 0, le_notes_free = 0;
@@ -472,7 +473,7 @@ note_index(void)
         if ((i & (i - 1)) == 0) {
             void *p = PyMem_Realloc(psyco_locals_maps,
                                     2 * (i + 1) * sizeof(*psyco_locals_maps));
-            if (p == NULL || i >= (1L << 30))
+            if (p == NULL || i >= (1L << 29))
                 OUT_OF_MEMORY();
             psyco_locals_maps = p;
         }
@@ -502,6 +503,11 @@ psyco_release_notes(int *notes, int n)
     }
 }
 
+/* The call's end replaces what this stores in the slot with
+   po->pr.pending_after (x64/iencoding.c:run_time_call), so that what the
+   slot says of the frame's locals holds only while it is in the call: a
+   note marked returned, or for an inlined frame a copy of its record
+   with no maps. */
 DEFINEFN
 void
 psyco_note_call_site(PsycoObject *po, int lasti)
@@ -515,10 +521,13 @@ psyco_note_call_site(PsycoObject *po, int lasti)
         /* the slot keeps a record of the inlined frame, here with its place
            and its parent's locals, read as a note's (frames.c:slot_locals) */
         stack_frame_info_t *rec = psyco_finfo(NULL, po);
+        stack_frame_info_t *after = psyco_finfo(NULL, po);
         rec->own_lasti = lasti;
         rec->back_locals = map;
         rec->own_locals = psyco_locals_map(po, lasti, NULL, 1, NULL);
+        after->own_lasti = lasti;
         po->pr.pending_map = map;
+        po->pr.pending_after = (long)after;
         BEGIN_CODE
         ABOUT_TO_CALL_SUBFUNCTION((long)rec);
         END_CODE
@@ -528,8 +537,9 @@ psyco_note_call_site(PsycoObject *po, int lasti)
     i = note_index();
     psyco_locals_maps[i] = map;
     po->pr.pending_map = map;
+    po->pr.pending_after = LE_NOTE(i) | LE_NOTE_RETURNED;
     BEGIN_CODE
-    SAVE_IMMED_TO_EBP_BASE((i << 1) | 1, INITIAL_STACK_DEPTH);
+    SAVE_IMMED_TO_EBP_BASE(LE_NOTE(i), INITIAL_STACK_DEPTH);
     END_CODE
 }
 
@@ -586,13 +596,9 @@ lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi, const long *reg_pos,
                 if (reg_pos != NULL) {
                     pos = reg_pos[rg];
                 }
-                else if (callee_saved_reg_table[rg]) {
-                    /* the C callee keeps it: frames.c finds where */
-                    lm_add(b, LM_REG, rg, 0);
-                    return;
-                }
                 else {
-                    /* the call will move it (RAX, from a call just made) */
+                    /* the C call's frames may keep it anywhere: it gets a
+                       stack slot, which it keeps */
                     BEGIN_CODE
                     SAVE_REG_VINFO(vi, rg);
                     END_CODE
@@ -666,7 +672,8 @@ inlined_func_vinfo(PsycoObject *po)
     return a->items[TOTAL_LOC_INLINE + (f >> 1)];
 }
 
-/* whether run-time 'vi' can be mapped without emitting anything */
+/* whether run-time 'vi' can be mapped with no more than a callee-saved
+   register stored (lm_value) */
 static bool
 lm_func_found(vinfo_t *vi, const long *reg_pos)
 {

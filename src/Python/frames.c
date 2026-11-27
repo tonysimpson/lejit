@@ -19,10 +19,10 @@
  * (codegen.c:psyco_note_call_site); before its first, f_lineno is the
  * first line. The note and the record also name a map of where the
  * frame's locals are during that call (struct locals_map_s), read when
- * f_locals is asked for (slot_locals): a stack slot, a constant, a
- * virtual value's parts, or a callee-saved register, which the C frames
- * in between keep or saved; those are found by unwinding them with
- * libunwind (slot_registers). Code naming locals, vars, dir, eval or exec
+ * f_locals is asked for (slot_locals): a stack slot, a constant or a
+ * virtual value's parts. The call's end marks the note returned, so a
+ * note not marked is for the call the frame is in. Code naming locals,
+ * vars, dir, eval or exec
  * is not compiled; reached by another name, they run with the frame
  * emulated and current (cimpl_with_frame). Every read of a frame's
  * locals (f_locals, those builtins, gc.get_referents) writes them in
@@ -79,11 +79,8 @@
 #include "../processor.h"
 #include "../mechanisms/recursion.h"
 #include "../segments.h"
-/* after Python.h, for _GNU_SOURCE: ucontext_t's REG_* */
-#define UNW_LOCAL_ONLY
 #include <dlfcn.h>
 #include <ipatch.h>
-#include <libunwind.h>
 
 /***************************************************************/
 
@@ -240,17 +237,8 @@ runs_list(void)
     PyErr_Restore(t, v, tb);
 }
 
-/* at most this many runs of compiled code on one thread are unwound */
-#define MAX_RUNS 64
 /* the code objects of one compiled frame and the frames inlined in it */
 #define LE_FRAME_CODES_MAX 8
-static int
-runs_here(stack_frame_info_t **roots[MAX_RUNS],
-          stack_frame_info_t **inners[MAX_RUNS], stack_frame_info_t **upto);
-static int
-runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
-            code_t *ips[], long regs[REG_TOTAL]);
-
 /* the code objects of the compiled frame whose slot holds 'rec', a
    record of a compiled call it makes or its inlined frame's own: those of
    the frames inlined in it, after its own 'co' */
@@ -269,25 +257,31 @@ frame_codes(PyCodeObject *co, stack_frame_info_t *rec, PyCodeObject **cos)
     return n;
 }
 
+/* where the C call that the compiled frame whose slot is 'slot' is in
+   returns to, if its slot says: an unmarked note's, or that of the inlined
+   frame's record for the call (codegen.c:psyco_note_call_site); else
+   NULL */
+static code_t *
+slot_call_end(stack_frame_info_t **slot)
+{
+    long v = (long)*slot;
+    if (v == -1 || v == FINFO_RETURNING)
+        return NULL;
+    if ((v & 1) != 0)
+        return (v & LE_NOTE_RETURNED) != 0 ? NULL : psyco_note_map(v)->retaddr;
+    return (*slot)->back_locals != NULL ? (*slot)->back_locals->retaddr : NULL;
+}
+
 DEFINEFN int
 psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
                                   void *arg),
-                     void *arg, bool where)
+                     void *arg)
 {
-    PyThreadState *ts, *here = PyThreadState_GET();
-    stack_frame_info_t **roots[MAX_RUNS], **inners[MAX_RUNS];
-    code_t *ips[MAX_RUNS];
-    int nhere = 0, nfound = 0;
+    PyThreadState *ts;
     if (runs_lost)
         return -1;
     if (runs_key == NULL)
         return 0;
-    /* this thread's innermost frames are in C calls whose return
-       addresses only unwinding finds; another thread's are not known */
-    if (where) {
-        nhere = runs_here(roots, inners, NULL);
-        nfound = runs_unwind(roots, inners, nhere, ips, NULL);
-    }
     for (ts = PyInterpreterState_ThreadHead(PyInterpreterState_Main());
          ts != NULL; ts = PyThreadState_Next(ts)) {
         PyObject *c =
@@ -299,8 +293,6 @@ psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
              fr = fr->next) {
             stack_frame_info_t **f1;
             PyCodeObject *co = fr->psy_code, *cos[LE_FRAME_CODES_MAX];
-            code_t *at;
-            int i;
             if (fr->resumed) {
                 mark(&co, 1, NULL, arg);
                 continue;
@@ -313,16 +305,13 @@ psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
                 mark(cos, frame_codes(co, *f1, cos), (*f1)->ret_addr, arg);
                 co = (*f1)->co;
             }
-            /* the innermost, in a call to C */
-            at = NULL;
-            if (ts == here)
-                for (i = 0; i < nfound; i++)
-                    if (inners[i] == f1) {
-                        at = ips[i];
-                        break;
-                    }
+            /* the innermost, in a call to C, if its run is going on */
             mark(cos,
-                 frame_codes(co, (((long)*f1) & 1) == 0 ? *f1 : NULL, cos), at,
+                 frame_codes(co, (((long)*f1) & 1) == 0 ? *f1 : NULL, cos),
+                 fr->popped ||
+                         (fr->frame != NULL && !le_frame_executing(fr->frame))
+                     ? NULL
+                     : slot_call_end(f1),
                  arg);
         }
     }
@@ -686,172 +675,8 @@ psyco_gen_take_written(FrameRuntime *fr)
 }
 #endif
 
-/* adds run 'fr' to runs_here's lists; whether it is the one up to which
-   they go */
-static bool
-run_here(FrameRuntime *fr, stack_frame_info_t **roots[],
-         stack_frame_info_t **inners[], int *n, stack_frame_info_t **upto)
-{
-    stack_frame_info_t **f1;
-    roots[*n] = *fr->psy_frames_start;
-    for (f1 = roots[*n]; (((long)(*f1)) & 1) == 0;
-         f1 = psyco_next_stack_frame(f1))
-        if ((*f1)->link_stack_depth == 0)
-            break;
-    inners[*n] = f1;
-    return inners[(*n)++] == upto;
-}
-
-/* The runs of compiled code on this thread, innermost first (from the
-   real frame LeCode_Run runs, or the frame a frameless run is entered
-   at), up to 'upto' if it is one's innermost
-   slot: each one's first slot in roots[], its innermost compiled frame's
-   slot in inners[]; how many */
-static int
-runs_here(stack_frame_info_t **roots[MAX_RUNS],
-          stack_frame_info_t **inners[MAX_RUNS], stack_frame_info_t **upto)
-{
-    le_frame_t *f = le_frame_current(PyThreadState_GET());
-    FrameRuntime *run = frame_runs, *fr;
-    int n = 0;
-    for (;;) {
-        /* the frameless runs entered at f, innermost first, then f's own */
-        for (fr = frameless_at(run, f); fr != NULL && n < MAX_RUNS;
-             fr = frameless_next(fr)) {
-            run = fr->next;
-            if (run_here(fr, roots, inners, &n, upto))
-                return n;
-        }
-        if (f == NULL || n >= MAX_RUNS)
-            return n;
-        fr = psyco_frame_start_get(f);
-        if (fr != NULL) {
-            run = fr->next;
-            if (le_frame_executing(f) && run_here(fr, roots, inners, &n, upto))
-                return n;
-        }
-        f = le_frame_back(f);
-    }
-}
-
-/* whether 'ip' is in a loaded object, not compiled code. dladdr searches
-   the object's symbols, so the addresses found in one are remembered: the
-   same few return addresses come up in every unwinding. One remembered
-   is not trusted in a region of compiled code, where an object unloaded
-   since may have been. */
-#define LOADED_IPS 4096
-static bool
-in_loaded_object(unw_word_t ip)
-{
-    static unw_word_t loaded[LOADED_IPS];
-    unw_word_t *seen = &loaded[(ip ^ (ip >> 12)) % LOADED_IPS];
-    Dl_info info;
-    if (*seen == ip && !psyco_in_code_regions((void *)ip))
-        return true;
-    if (dladdr((void *)ip, &info) == 0)
-        return false;
-    *seen = ip;
-    return true;
-}
-
-/* Where the innermost compiled frame of each of the first 'n' runs
-   runs_here found called C, found by unwinding the C frames from here
-   down to it: the call's return address in ips[i], and for the last
-   run the callee-saved registers it called with, which C keeps or saves
-   in its frames. LeJIT's code has no unwind information, so each run is
-   stepped over from where its glue saved the registers of the C code
-   that called it (iprocessor.c:write_glue_run_code_fn). How many runs
-   were found, from the innermost: fewer if the walk doesn't come out
-   where expected. */
-static int
-runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
-            code_t *ips[], long regs[REG_TOTAL])
-{
-    static bool cached;
-    unw_context_t uc;
-    unw_cursor_t c;
-    int i, steps;
-    /* libunwind's global cache blocks signals around each use of it, a
-       system call each time */
-    if (!cached) {
-        unw_set_caching_policy(unw_local_addr_space, UNW_CACHE_PER_THREAD);
-        cached = true;
-    }
-    if (unw_getcontext(&uc) < 0 || unw_init_local(&c, &uc) < 0)
-        return 0;
-    for (i = 0; i < n; i++) {
-        unw_word_t sp, ip, v;
-        long *saved = (long *)roots[i], *ret;
-        /* the first frame outside every loaded object is compiled code */
-        for (steps = 0;; steps++) {
-            if (unw_get_reg(&c, UNW_REG_IP, &ip) < 0)
-                return i;
-            if (!in_loaded_object(ip))
-                break;
-            if (steps > 4096 || unw_step(&c) <= 0)
-                return i;
-        }
-        if (unw_get_reg(&c, UNW_X86_64_RSP, &sp) < 0 ||
-            sp >= (unw_word_t)inners[i] || (unw_word_t)inners[i] - sp > 65536)
-            return i;
-        ips[i] = (code_t *)ip;
-        if (i == n - 1) {
-            static const int nums[] = {UNW_X86_64_RBX, UNW_X86_64_RBP,
-                                       UNW_X86_64_R12, UNW_X86_64_R13,
-                                       UNW_X86_64_R14, UNW_X86_64_R15};
-            static const int regnums[] = {REG_X64_RBX, REG_X64_RBP,
-                                          REG_X64_R12, REG_X64_R13,
-                                          REG_X64_R14, REG_X64_R15};
-            int k;
-            if (regs == NULL)
-                return n;
-            for (k = 0; k < REG_TOTAL; k++) regs[k] = 0;
-            for (k = 0; k < 6; k++) {
-                if (unw_get_reg(&c, nums[k], &v) < 0)
-                    return i;
-                regs[regnums[k]] = (long)v;
-            }
-            return n;
-        }
-        /* above the slot: R15, R14, R13, R12, RBX, RBP, a copy of the
-           return address, [pad,] the return address */
-        ret = saved + 8;
-        if (*ret == LE_GLUE_PAD)
-            ret++;
-        uc.uc_mcontext.gregs[REG_R15] = saved[1];
-        uc.uc_mcontext.gregs[REG_R14] = saved[2];
-        uc.uc_mcontext.gregs[REG_R13] = saved[3];
-        uc.uc_mcontext.gregs[REG_R12] = saved[4];
-        uc.uc_mcontext.gregs[REG_RBX] = saved[5];
-        uc.uc_mcontext.gregs[REG_RBP] = saved[6];
-        uc.uc_mcontext.gregs[REG_RIP] = *ret;
-        uc.uc_mcontext.gregs[REG_RSP] = (long)(ret + 1);
-        if (unw_init_local2(&c, &uc, 0) < 0)
-            return i + 1;
-    }
-    return n;
-}
-
-/* The callee-saved registers of the compiled frame whose slot is
-   'slot', as it called C, and where that call returns to (runs_unwind).
-   False if that frame isn't the innermost of a run, or the walk doesn't
-   come out where expected. */
-static bool
-slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
-               code_t **ret_ip)
-{
-    stack_frame_info_t **roots[MAX_RUNS], **inners[MAX_RUNS];
-    code_t *ips[MAX_RUNS];
-    int n = runs_here(roots, inners, slot);
-    if (n == 0 || inners[n - 1] != slot ||
-        runs_unwind(roots, inners, n, ips, regs) < n)
-        return false;
-    *ret_ip = ips[n - 1];
-    return true;
-}
-
 static vinfo_t *
-lm_vinfo(long **p, const long *regs)
+lm_vinfo(long **p)
 {
     long *it = *p;
     vinfo_t *vi;
@@ -860,17 +685,12 @@ lm_vinfo(long **p, const long *regs)
     switch (it[0]) {
         case LM_STACK:
             return vinfo_new(RunTime_NewStack((int)it[1], false, false));
-        case LM_REG:
-            if (regs == NULL || it[1] < 0 || it[1] >= REG_TOTAL)
-                return NULL;
-            return vinfo_new(CompileTime_New(regs[it[1]]));
         case LM_CONST:
             return vinfo_new(CompileTime_New(it[1]));
         case LM_VIRTUAL:
             vi = vinfo_new(VirtualTime_New((source_virtual_t *)it[1]));
             vi->array = array_new((int)it[2]);
-            for (i = 0; i < it[2]; i++)
-                vi->array->items[i] = lm_vinfo(p, regs);
+            for (i = 0; i < it[2]; i++) vi->array->items[i] = lm_vinfo(p);
             return vi;
         default:
             return NULL;
@@ -888,7 +708,9 @@ n_locals_plus(PyCodeObject *co)
    unknown (unbound, dead, or a virtual value not computable here). False
    if the slot doesn't say: the frame is between calls that may run
    Python. Read while the frame is in that call. With 'own', the frame is
-   inlined in the frame whose slot it is, and its own record says. */
+   inlined in the frame whose slot it is, and its own record says. A
+   record with maps is in the slot only during its call
+   (codegen.c:psyco_note_call_site). */
 static bool
 slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
             int own)
@@ -896,14 +718,13 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
     long v = (long)*slot;
     struct locals_map_s *map;
     PyObject *t, *val, *tb;
-    long *p, regs[REG_TOTAL], *pregs = NULL;
+    long *p;
     char *data;
     int i, n = n_locals_plus(co);
     if (v == -1 || v == FINFO_RETURNING)
         return false;
     if (own) {
         stack_frame_info_t *rec = (stack_frame_info_t *)v, *in;
-        code_t *ip;
         if ((v & 1) != 0)
             return false;
         in = rec->link_stack_depth == 0 ? rec : rec + 1;
@@ -911,42 +732,22 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
         if ((rec->link_stack_depth != 0 && rec->link_stack_depth != -1) ||
             in->co != co || map == NULL || map->nvalues != n)
             return false;
-        /* at a call through C, as for its parent's (below) */
-        if (in == rec && rec->back_locals->retaddr != NULL) {
-            if (!slot_registers(slot, regs, &ip) ||
-                ip != rec->back_locals->retaddr)
-                return false;
-            pregs = regs;
-        }
     }
     else if ((v & 1) != 0) {
-        /* a note is for the call the frame is in only if that call returns
-           where the note's did */
-        code_t *ip;
         map = psyco_note_map(v);
-        if (map->nvalues != n || !slot_registers(slot, regs, &ip) ||
-            ip != map->retaddr)
+        if (map->nvalues != n || slot_call_end(slot) == NULL)
             return false;
-        pregs = regs;
     }
     else {
-        code_t *ip;
         map = ((stack_frame_info_t *)v)->back_locals;
         if (map == NULL || map->nvalues != n)
             return false;
-        /* an inlined frame's call through C, which may have left the
-           parent's locals in callee-saved registers, as for a note */
-        if (map->retaddr != NULL) {
-            if (!slot_registers(slot, regs, &ip) || ip != map->retaddr)
-                return false;
-            pregs = regs;
-        }
     }
     data = (char *)slot - map->below;
     p = map->items;
     PyErr_Fetch(&t, &val, &tb);
     for (i = 0; i < n; i++) {
-        vinfo_t *vi = lm_vinfo(&p, pregs);
+        vinfo_t *vi = lm_vinfo(&p);
         values[i] = NULL;
         if (vi == NULL)
             continue;
@@ -974,15 +775,13 @@ keeps_own_locals(PyCodeObject *co)
    code 'co' whose own slot is 'slot', while it is in the call its slot
    says, if its frame has one and it is free; else NULL. Any map the slot
    names places the word, which stays where the frame's header put it; a
-   note, which may be left from a call that has returned, is checked as
-   slot_locals checks it, by unwinding, only for a free word. */
+   note marked returned is not for a call the frame is in. */
 static PyObject **
 slot_word(stack_frame_info_t **slot, PyCodeObject *co)
 {
-    long v = (long)*slot, regs[REG_TOTAL];
+    long v = (long)*slot;
     struct locals_map_s *map;
     PyObject **word;
-    code_t *ip;
     if (v == -1 || v == FINFO_RETURNING || keeps_own_locals(co))
         return NULL;
     map = (v & 1) != 0 ? psyco_note_map(v)
@@ -992,8 +791,7 @@ slot_word(stack_frame_info_t **slot, PyCodeObject *co)
     word = (PyObject **)((char *)slot - map->below + map->word);
     if (*word != NULL)
         return NULL;
-    if ((v & 1) != 0 ? !slot_registers(slot, regs, &ip) || ip != map->retaddr
-                     : map->retaddr != NULL)
+    if ((v & 1) != 0 ? slot_call_end(slot) == NULL : map->retaddr != NULL)
         return NULL;
     return word;
 }
@@ -1921,7 +1719,7 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
    that makes the call holds it */
 static PyFunctionObject *
 map_function(stack_frame_info_t **slot, struct locals_map_s *map,
-             const long *regs, PyCodeObject *co)
+             PyCodeObject *co)
 {
     long *p;
     vinfo_t *vi;
@@ -1930,8 +1728,8 @@ map_function(stack_frame_info_t **slot, struct locals_map_s *map,
     if (map == NULL || !map->func)
         return NULL;
     p = map->items;
-    for (i = 0; i < map->nvalues; i++) vinfo_xdecref(lm_vinfo(&p, regs), NULL);
-    vi = lm_vinfo(&p, regs);
+    for (i = 0; i < map->nvalues; i++) vinfo_xdecref(lm_vinfo(&p), NULL);
+    vi = lm_vinfo(&p);
     if (vi == NULL)
         return NULL;
     PyErr_Fetch(&t, &val, &tb);
@@ -1956,28 +1754,19 @@ static PyFunctionObject *
 record_function(stack_frame_info_t **slot, long entry)
 {
     stack_frame_info_t *rec = *slot, *in;
-    long regs[REG_TOTAL];
-    code_t *ip;
     if (rec[entry].func != NULL)
         return rec[entry].func;
     if (entry == 0 && rec->nargs >= 0 && rec->link_stack_depth != 0)
         /* a compiled callee: its caller's map, at the call */
         return rec->back_locals == NULL || rec->back_locals->retaddr != NULL
                    ? NULL
-                   : map_function(slot, rec->back_locals, NULL, rec->co);
+                   : map_function(slot, rec->back_locals, rec->co);
     /* an inlined frame, in the compiled call it makes or in its own record
        (as slot_locals reads its locals) */
     in = rec->link_stack_depth == 0 ? rec : rec + 1;
     if (in != rec + entry || in->own_locals == NULL)
         return NULL;
-    if (in == rec && rec->back_locals != NULL &&
-        rec->back_locals->retaddr != NULL) {
-        if (!slot_registers(slot, regs, &ip) ||
-            ip != rec->back_locals->retaddr)
-            return NULL;
-        return map_function(slot, in->own_locals, regs, in->co);
-    }
-    return map_function(slot, in->own_locals, NULL, in->co);
+    return map_function(slot, in->own_locals, in->co);
 }
 
 /* the frame of the frameless run 'fr''s own frame, kept until the run
@@ -5508,19 +5297,6 @@ capi_init(void)
 #endif
 }
 
-/* libunwind opens a pipe the first time it unwinds, to test the addresses
-   it reads, and keeps it open. Opening it now takes its two file
-   descriptors as LeJIT loads, not during a later collection while the
-   program has its own files open, where it would shift their numbers. */
-static void
-unwind_pipe_init(void)
-{
-    unw_context_t uc;
-    unw_cursor_t c;
-    if (unw_getcontext(&uc) == 0 && unw_init_local(&c, &uc) == 0)
-        unw_step(&c);
-}
-
 /* sys._current_frames, replaced too: this thread's frame is the innermost
    one Python sees, linked by f_back as sys._getframe's is. Other threads'
    are CPython's. */
@@ -5594,7 +5370,6 @@ psyco_frames_init(void)
     Py_XDECREF(sysmod);
     warn_init();
     get_referents_init();
-    unwind_pipe_init();
     psyco_coro_suspended =
         PyObject_CallObject((PyObject *)&PyBaseObject_Type, NULL);
     if (psyco_coro_suspended == NULL)

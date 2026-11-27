@@ -1705,7 +1705,7 @@ scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
             push_alive(i);
     propagate();
     /* then the groups reached, until no more are */
-    if (scan.n > 0 && psyco_frames_running(mark_running, NULL, true) < 0)
+    if (scan.n > 0 && psyco_frames_running(mark_running, NULL) < 0)
         scan.unknown = true;
     do {
         changed = false;
@@ -1927,7 +1927,7 @@ sweep(void)
             x->cold++;
         n++;
     }
-    if (psyco_frames_running(sweep_running, NULL, false) < 0)
+    if (psyco_frames_running(sweep_running, NULL) < 0)
         return;
     for (x = le_code_extras; x != NULL; x = x->next)
         if (x->cold == SWEEP_COLD && sweep_may_release(x))

@@ -19,18 +19,17 @@ static glue_run_code_fn glue_run_code_aligned;
 
 static glue_run_code_fn glue_run_code_unaligned;
 
-/* The layout above the finfo slot is fixed, for frames.c:runs_unwind:
-   the saved R15, R14, R13, R12, RBX and RBP, a copy of the return address,
-   LE_GLUE_PAD if the stack needed aligning, then the return address.
-   RBP stays the glue's frame pointer while compiled code runs, which never
-   changes it, so frame-pointer unwinders go from compiled code to the
-   copy and on into the C that called it. */
+/* Above the finfo slot: the saved R15, R14, R13, R12, RBX and RBP, a
+   copy of the return address, a word if the stack needed aligning, then
+   the return address. RBP stays the glue's frame pointer while compiled code
+   runs, which never changes it, so frame-pointer unwinders go from compiled
+   code to the copy and on into the C that called it. */
 static void
 write_glue_run_code_fn(PsycoObject *po, bool aligned)
 {
     BEGIN_CODE
     if (!aligned) {
-        PUSH_I(LE_GLUE_PAD);
+        PUSH_I(0);
         PUSH_O(REG_X64_RSP, 8);
     }
     else {

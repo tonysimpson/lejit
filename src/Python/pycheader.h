@@ -146,6 +146,8 @@ typedef struct {
     int call_site; /* 1 + the CALL_* instruction being compiled, or 0 */
     struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                          which gives it its return address */
+    long pending_after;               /* the slot's word once that call returns
+                                         (codegen.c:psyco_note_call_site) */
     PyObject *changing_globals; /* names of globals detected to change: saved
                                    in snapshots, so a respawn replays the same
                                    LOAD_GLOBAL decisions; shared, so never

@@ -134,10 +134,10 @@ jobs:
         python: ${{ fromJSON(needs.changes.outputs.check) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi, libunwind, setuptools and cffi
+      - name: Install libffi, setuptools and cffi
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          apt-get install -y --no-install-recommends libffi-dev
           # the 3.12 images and later have no setuptools
           python -c 'import setuptools' 2>/dev/null || pip install setuptools
           # for tests/jit's cffi cases, which are skipped without it
@@ -172,10 +172,10 @@ jobs:
     container: python:3.10.16-bookworm
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi and libunwind
+      - name: Install libffi
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          apt-get install -y --no-install-recommends libffi-dev
       - name: make encoder-test
         run: make encoder-test PY=python GEN_PY=python
 
@@ -196,10 +196,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi, libunwind and setuptools
+      - name: Install libffi and setuptools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          apt-get install -y --no-install-recommends libffi-dev
           # the 3.12 images and later have no setuptools
           python -c 'import setuptools' 2>/dev/null || pip install setuptools
       - name: Build
@@ -225,10 +225,10 @@ jobs:
         python: ${{ fromJSON(needs.changes.outputs.build) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi, libunwind and setuptools
+      - name: Install libffi and setuptools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          apt-get install -y --no-install-recommends libffi-dev
           python -c 'import setuptools' 2>/dev/null || pip install setuptools
       - name: Checked build
         run: make checked-build PY=python && python tests/jit/build_info.py
@@ -249,10 +249,10 @@ jobs:
         python: ${{ fromJSON(needs.changes.outputs.install-newer) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi and libunwind
+      - name: Install libffi
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          apt-get install -y --no-install-recommends libffi-dev
       - name: Install
         run: |
           pip install .
@@ -282,12 +282,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v10.3.3
-      - name: Install libffi and libunwind
+      - name: Install libffi
         run: |
           # the runner's Microsoft package source sometimes refuses with 403
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          sudo apt-get install -y --no-install-recommends libffi-dev
       - name: Install
         run: |
           uv venv --python-preference only-managed --python ${{ matrix.python }} "$RUNNER_TEMP/venv"
@@ -393,10 +393,10 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi, libunwind and clang-tidy
+      - name: Install libffi and clang-tidy
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          apt-get install -y --no-install-recommends libffi-dev
           pip install clang-tidy==19.1.0
       - name: make lint
         run: make lint PY=python
@@ -416,9 +416,7 @@ jobs:
           CIBW_SKIP: "*-musllinux_*"
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BEFORE_ALL_LINUX: >-
-            dnf install -y epel-release &&
-            dnf install -y libffi-devel libunwind-devel
+          CIBW_BEFORE_ALL_LINUX: dnf install -y libffi-devel
           CIBW_TEST_COMMAND: >-
             python -c "import lejit; lejit.start(check=True, error=True); print(sorted(lejit.check()))"
       - uses: pypa/cibuildwheel@v4.3.5
@@ -427,9 +425,7 @@ jobs:
           CIBW_SKIP: "*-musllinux_*"
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BEFORE_ALL_LINUX: >-
-            dnf install -y epel-release &&
-            dnf install -y libffi-devel libunwind-devel
+          CIBW_BEFORE_ALL_LINUX: dnf install -y libffi-devel
           CIBW_TEST_COMMAND: >-
             python -c "import lejit; lejit.start(check=True, error=True); print(sorted(lejit.check()))"
       - uses: actions/upload-artifact@v4

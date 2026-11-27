@@ -147,12 +147,11 @@ psyco_owner_root_holding(vinfo_array_t *a);
 /* frames.c: calls 'mark' for every compiled frame running on any thread,
    with its code object and those of the frames inlined in it, and where
    its code goes on: the return address of the call it is in, or NULL
-   where that isn't known or 'where' is false; -1 if it can't tell which
-   frames run */
+   where that isn't known; -1 if it can't tell which frames run */
 EXTERNFN int
 psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
                                   void *arg),
-                     void *arg, bool where);
+                     void *arg);
 /* dispatcher.c: the site forgets the code it compiled for 'key', if any */
 EXTERNFN void
 psyco_promotion_forget(void *site, long key);

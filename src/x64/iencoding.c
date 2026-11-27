@@ -789,6 +789,9 @@ run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
         po->pr.pending_map->retaddr = po->call_end;
         LE_RELOC_SLOT_END(&po->pr.pending_map->retaddr);
         po->pr.pending_map = NULL;
+        BEGIN_CODE
+        SAVE_IMMED_TO_EBP_BASE(po->pr.pending_after, INITIAL_STACK_DEPTH);
+        END_CODE
     }
     vresult = run_time_result_check(po, flags);
     if (vresult != VINFO_OK) {

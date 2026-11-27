@@ -19,7 +19,7 @@ version number. A second detector reads CPython's source
 
 ## Use
 
-    make PY=python3.10                        # needs gcc, libffi, libunwind
+    make PY=python3.10                        # needs gcc and libffi
     python3.10 -c "import lejit; lejit.start(); ..."   # importing alone starts nothing
 
 `lejit.stop()` stops it. `lejit.check()` compares the features LeJIT was built with
