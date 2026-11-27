@@ -95,6 +95,14 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
    caller to fill and the caller to track */
 EXTERNFN PyObject *
 le_gen_make(PyFunctionObject *func);
+/* the type of a generator of the code 'co': generator, coroutine or async
+   generator, by its flags */
+EXTERNFN PyTypeObject *
+le_gen_type(PyCodeObject *co);
+/* gen's header but its exception state and state, as le_gen_make
+   writes it, for the function 'func' */
+EXTERNFN void
+le_gen_init_names(PyGenObject *gen, PyFunctionObject *func);
 #endif
 /* A new frame object for a call running 'co' in 'globals', of the function
    'func' where it is known (NULL: not known). Where frames are

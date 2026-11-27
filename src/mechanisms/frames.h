@@ -373,50 +373,40 @@ le_frame_gen(le_frame_t *f)
     (FRAME_CLEARED - FRAME_EXECUTING > 1 ? FRAME_EXECUTING + 1 : FRAME_CLEARED)
 /* A virtual generator's record (Python/genrecord.c): where a generator's
    body that compiled code runs before any generator object exists keeps
-   its paused state between runs. Its frame is an interpreter frame laid
-   out as a generator's, so that the body reads and writes either the same
-   way, and its state and exception state are as a generator's. It is
-   never in a thread's chain; a frame object asked for while its body runs
-   is a view of its frame, as of a generator's, until the record lets the
-   frame go. CPython's code tells a generator's frame by its owner, and
-   takes a frame owned by anything but the thread, a generator or a frame
-   object for one it has not started (3.14's _PyFrame_IsIncomplete), so a
-   record's frame is owned as a frame object's own frame is, and is told
-   from one by the record's type, read before the frame: a frame object's
-   own frame has the frame object there. */
-/* how far a generator's state is before its frame, which a record's is
-   too, so that one address serves either */
+   its paused state between runs. It is a generator object of the record's
+   type, untracked, so that the body reads and writes either the same way;
+   when it escapes it becomes the generator, in place. It is never in a
+   thread's chain; a frame object asked for while its body runs is a view
+   of its frame, as of a generator's, until the record lets the frame go.
+   CPython's code tells a generator's frame by its owner, and takes a frame
+   owned by anything but the thread, a generator or a frame object for one
+   it has not started (3.14's _PyFrame_IsIncomplete), so a record's frame
+   is owned as a frame object's own frame is, and is told from one by what
+   is where a frame object's type would be: never PyFrame_Type in a
+   generator's header. */
+typedef PyGenObject le_gen_record_t;
+#define LE_FRAME_OWNED_BY_RECORD FRAME_OWNED_BY_FRAME_OBJECT
+extern PyTypeObject le_gen_record_type; /* Python/genrecord.c */
+/* how far a generator's state is before its frame */
 #define LE_GEN_STATE_GAP \
     (offsetof(PyGenObject, gi_iframe) - offsetof(PyGenObject, gi_frame_state))
-typedef struct {
-    PyObject_HEAD
-        /* the real generator it has become, from then on (a reference) */
-        PyObject *escaped;
-    _PyErr_StackItem exc_state;
-    char before_state[(8 - LE_GEN_STATE_GAP % 8) % 8];
-    int8_t state; /* as a generator's gi_frame_state */
-    char after_state[LE_GEN_STATE_GAP - 1];
-    le_frame_t frame; /* last: its words follow */
-} le_gen_record_t;
-#define LE_FRAME_OWNED_BY_RECORD FRAME_OWNED_BY_FRAME_OBJECT
-_Static_assert(offsetof(PyFrameObject, _f_frame_data) >=
-                   offsetof(le_gen_record_t, frame),
-               "LeJIT: a frame object's own frame is too near its start");
-_Static_assert(offsetof(le_gen_record_t, frame) -
-                       offsetof(le_gen_record_t, state) ==
-                   LE_GEN_STATE_GAP,
-               "LeJIT: a record's state is not where a generator's is");
-extern PyTypeObject le_gen_record_type; /* Python/genrecord.c */
+static inline le_frame_t *
+le_record_frame(le_gen_record_t *r)
+{
+    return (le_frame_t *)&r->gi_iframe;
+}
 static inline le_gen_record_t *
 le_frame_record(le_frame_t *f)
 {
-    return (le_gen_record_t *)((char *)f - offsetof(le_gen_record_t, frame));
+    return (le_gen_record_t *)((char *)f - offsetof(PyGenObject, gi_iframe));
 }
 static inline int
 le_frame_is_record(le_frame_t *f)
 {
     return f->owner == LE_FRAME_OWNED_BY_RECORD &&
-           Py_TYPE(le_frame_record(f)) == &le_gen_record_type;
+           Py_TYPE((PyObject *)((char *)f -
+                                offsetof(PyFrameObject, _f_frame_data))) !=
+               &PyFrame_Type;
 }
 /* the state of the generator or record whose frame f is */
 static inline int8_t *

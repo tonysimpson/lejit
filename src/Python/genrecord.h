@@ -21,9 +21,9 @@ le_gen_record_new(PyObject *func, long start);
 EXTERNFN int
 le_gen_record_start(PyObject *rec);
 /* The real generator the record 'rec' stands for, of the function 'func'
-   (needed only once the record has finished): made now, in the state the
-   record is in, unless it has been made already. From then on the record
-   holds nothing but it. A new reference, or NULL with an exception. */
+   (needed only once the record has finished): the record becomes it now,
+   in the state it is in, unless it has already. A new reference, or NULL
+   with an exception. */
 EXTERNFN PyObject *
 le_gen_record_escape(PyObject *rec, PyObject *func);
 /* the same, for the record whose frame 'f' is, paused */
@@ -56,9 +56,8 @@ EXTERNFN bool
 le_gen_record_check(PyObject *o);
 /* the record whose frame 'f' is (a record's frame), made the real
    generator now, while its body runs, so that ceval can run the body on
-   (frames.c:psyco_resume_begin): the generator, borrowed (the record holds
-   it), running, its exception state linked in place of the record's; NULL
-   with an exception */
+   (frames.c:psyco_resume_begin): the generator, borrowed (it is the
+   record), running; NULL with an exception */
 EXTERNFN PyGenObject *
 le_gen_record_escape_running(le_frame_t *f);
 #endif
