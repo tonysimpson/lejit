@@ -962,29 +962,31 @@ static le_eval_frame_fn original_eval_frame = NULL;
 
 #if LE_HAS_EVAL_FRAME_POPS
 /* ceval runs a frame called from a compiled callee or inlined frame and
-   pops it, giving a frame object that outlives it the real frame as
-   f_back: the frame object is made first, so it is still at hand to be
-   given the callee instead */
+   pops it. A frame object made for it that outlives it gets from the pop
+   the frame it was called from as f_back: the real frame LeCode_Run runs,
+   which skips the callee. It is given the callee instead, emulated. The
+   pop is the last thing ceval does, and gives the frame object to the GC
+   (frame.c:take_ownership): it is the youngest object, if there is one. */
 static PyObject *
 eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 {
-    PyFrameObject *fo;
-    PyObject *result;
-    _Py_CODEUNIT *at = LE_FRAME_PLACE(f);
-    /* complete for the while, or it would have none */
-    le_frame_set_lasti(f, 0);
-    fo = le_frame_object(f);
-    LE_FRAME_PLACE(f) = at;
-    if (fo == NULL)
-        return original_eval_frame(ts, f, throwflag);
-    Py_INCREF(fo);
-    result = original_eval_frame(ts, f, throwflag);
-    if (Py_REFCNT(fo) > 1) {
-        PyFrameObject *back = psyco_frame_callee_back();
-        if (back != NULL)
-            Py_XSETREF(fo->f_back, back);
-    }
-    Py_DECREF(fo);
+    PyCodeObject *co = le_frame_code(f);
+    PyObject *before = le_gc_youngest(ts), *o;
+    PyObject *result = original_eval_frame(ts, f, throwflag);
+    le_frame_t *caller;
+    PyFrameObject *fo, *back;
+    if ((o = le_gc_youngest(ts)) == before || o == NULL || !PyFrame_Check(o))
+        return result;
+    fo = (PyFrameObject *)o;
+    caller = le_frame_current(ts);
+    while (caller != NULL && !le_frame_complete(caller))
+        caller = le_frame_back(caller);
+    if (le_pyframe_code(fo) != co || caller == NULL || fo->f_back == NULL ||
+        fo->f_back != caller->frame_obj)
+        return result;
+    back = psyco_frame_callee_back();
+    if (back != NULL)
+        Py_XSETREF(fo->f_back, back);
     return result;
 }
 #endif

@@ -335,6 +335,34 @@ def returned_back_names_interpreted():
     return out
 
 
+def own_frame_raises(_):              # locals(): never compiled
+    locals()
+    raise ValueError
+
+
+def raises_through_c():
+    return list(map(own_frame_raises, [0]))
+
+
+# the same for a frame the interpreter runs that an exception leaves,
+# whose f_back is the frame of the callee's traceback entry
+def raised_back_names_interpreted():
+    try:
+        raises_through_c()
+    except ValueError as e:
+        tb = e.__traceback__
+    entries = []
+    while tb is not None:
+        entries.append(tb.tb_frame)
+        tb = tb.tb_next
+    f = entries[-1]
+    out = []
+    while f is not None and len(out) < 3:
+        out.append(f.f_code.co_name)
+        f = f.f_back
+    return out, entries[-1].f_back is entries[-2]
+
+
 def module_names():
     getname = getattr(sys, '_getframemodulename', None)
     if getname is None:                  # before 3.12
@@ -465,6 +493,7 @@ CASES = [
     ('init_frames_caller', "[()]", {}),
     ('returned_back_names', "[()]", {}),
     ('returned_back_names_interpreted', "[()]", {}),
+    ('raised_back_names_interpreted', "[()]", {}),
     ('caller_module_name', "[()]", {}),
     ('module_of_made_objects', "[(), ()]", {}),
     ('raised_middle', "[()]", {}),

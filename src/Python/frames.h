@@ -120,6 +120,11 @@ le_gen_init_names(PyGenObject *gen, PyFunctionObject *func);
 EXTERNFN PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
                PyFunctionObject *func);
+#if LE_HAS_EVAL_FRAME_POPS
+/* the object the GC tracked last, or NULL */
+EXTERNFN PyObject *
+le_gc_youngest(PyThreadState *ts); /* pyruntime.c */
+#endif
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
 le_pyframe_new_by_cpython(PyThreadState *ts, PyCodeObject *co,

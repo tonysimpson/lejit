@@ -347,6 +347,19 @@ function_without_code(PyFrameObject *f)
 }
 #endif
 
+#if LE_HAS_EVAL_FRAME_POPS
+/* the object the GC tracked last, or NULL: the youngest generation's
+   last, which follows its GC header */
+PyObject *
+le_gc_youngest(PyThreadState *ts)
+{
+    PyGC_Head *gen0 = ts->interp->gc.generation0;
+    return gen0->_gc_prev == (uintptr_t)gen0
+               ? NULL
+               : (PyObject *)((PyGC_Head *)gen0->_gc_prev + 1);
+}
+#endif
+
 /* no function watcher is told of the function PyFrame_New makes, as a
    watcher called here would run Python code while compiled code's
    exception is set */
