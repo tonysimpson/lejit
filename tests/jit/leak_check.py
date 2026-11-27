@@ -10,7 +10,8 @@ REPEATED = 'code compiled during the rounds, so they were run 2 times'
 WANT = [
     ('pass  late.compiles_late  [', REPEATED + ']'),
     ('FAIL  late.compiles_late_and_leaks: leaks: ', '; ' + REPEATED),
-    ('FAIL  late.leaks: leaks: ', 'without LeJIT)'),
+    ('FAIL  late.leaks: leaks: ',
+     'without LeJIT); blocks every 10 rounds, then collected: '),
 ]
 
 out = subprocess.run([sys.executable, os.path.join(HERE, 'run.py'),
@@ -18,5 +19,5 @@ out = subprocess.run([sys.executable, os.path.join(HERE, 'run.py'),
                      stdout=subprocess.PIPE, universal_newlines=True).stdout
 lines = out.splitlines()
 for start, end in WANT:
-    if not any(l.startswith(start) and l.endswith(end) for l in lines):
+    if not any(l.startswith(start) and end in l for l in lines):
         sys.exit('expected a line like %r in:\n%s' % (start, out))
