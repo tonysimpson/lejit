@@ -396,6 +396,13 @@ msg('IMPORT_STAR_MODULE_NAME_NOT_STR', 'from m import * where m.__all__ '
     'm = newmod("LeStarNamed", __all__=[1])\nm.__name__ = args[0]()\n'
     'exec("from LeStarNamed import *", {})', [T()],
     requires=_STAR_CHECKS_STR)
+_SET_ADD_CHECKS = ('"is not a set" in says("__conditional_annotations__ = 0'
+                   '\\nx: int")')
+msg('SET_ADD_NOT_SET', 'a module annotation recorded once '
+    '__conditional_annotations__ is rebound to something not a set',
+    'TypeError',
+    'exec("__conditional_annotations__ = c()\\nx: int", {"c": args[0]})',
+    [Q()], requires=_SET_ADD_CHECKS)
 frag('UNKNOWN_MODULE_NAME', 'what an import error shows for a module without '
      'a name', 'IMPORT_NAME_UNKNOWN_LOCATION', 1, 'ImportError',
      'm = newmod("LeNoName")\ndel m.__name__\n'

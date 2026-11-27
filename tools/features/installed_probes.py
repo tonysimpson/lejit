@@ -211,7 +211,8 @@ for _feature, _function in [
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
         ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
         ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
-        ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify')]:
+        ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
+        ('LAZY_IMPORT_NAME_LINKABLE', '_PyEval_LazyImportName')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature

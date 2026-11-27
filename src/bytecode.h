@@ -626,14 +626,17 @@ le_op_flags(int op)
 #endif
 
 /* the index in co_names of the module IMPORT_NAME with argument arg
-   imports, and whether the import is lazy (a lazy import statement, at
-   module level only) */
+   imports, whether the import is lazy (a lazy import statement, at module
+   level only), and whether it is eager whatever the lazy imports mode and
+   __lazy_modules__ say (one in a function, a class body or a try) */
 #if LE_HAS_IMPORT_NAME_LAZY_BITS
 #define LE_IMPORT_NAME(arg) ((arg) >> 2)
 #define LE_IMPORT_LAZY(arg) ((arg) & 1)
+#define LE_IMPORT_EAGER(arg) ((arg) & 2)
 #else
 #define LE_IMPORT_NAME(arg) (arg)
 #define LE_IMPORT_LAZY(arg) 0
+#define LE_IMPORT_EAGER(arg) 1
 #endif
 
 /* the place CPython's frame gives the instruction that starts at pos (its

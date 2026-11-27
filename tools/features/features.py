@@ -1592,6 +1592,7 @@ EXPORTS = [
     ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
     ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
     ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
+    ('LAZY_IMPORT_NAME_LINKABLE', '_PyEval_LazyImportName'),
 ]
 
 

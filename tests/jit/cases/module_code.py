@@ -137,6 +137,23 @@ z: float = 2.0
 result = sorted(globals().get('__annotations__', {}))
 ''')
 
+# an annotation is recorded in __conditional_annotations__ (3.14+), which
+# the module may rebind to something not a set
+module('annotations_rebound', '''
+__conditional_annotations__ = {}
+x: int
+result = 'recorded'
+''')
+
+# an import the module names in __lazy_modules__ is lazy (3.15+): a proxy
+# until the name is used
+module('lazy_modules', '''
+__lazy_modules__ = ['colorsys']
+import colorsys
+import sys
+result = type(globals()['colorsys']).__name__, 'colorsys' in sys.modules
+''')
+
 module('del_of_a_global', '''
 a = 1
 b = 2
@@ -322,6 +339,8 @@ CASES = [
     ('star_import_no_dict', [()], {}),
     ('annotations', [()], {}),
     ('annotations_kept', [()], {}),
+    ('annotations_rebound', [()], {}),
+    ('lazy_modules', [()], {}),
     ('del_of_a_global', [()], {}),
     ('del_of_a_missing_name', [()], {}),
     ('missing_name', [()], {}),

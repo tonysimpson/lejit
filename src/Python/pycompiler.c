@@ -78,17 +78,22 @@ le_common_constant(int i); /* pyruntime.c */
 #if LE_HAS_DICT_MERGE_EX_LINKABLE
 /* some versions declare it only in an internal header */
 PyAPI_FUNC(int) _PyDict_MergeEx(PyObject *mp, PyObject *other, int override);
-#define le_dict_merge_unique(a, b) _PyDict_MergeEx(a, b, 2)
+/* a key of b already in a raises KeyError(key), and so may b itself */
+#define le_dict_merge_unique(a, b, dup) _PyDict_MergeEx(a, b, 2)
+#define LE_DUP_IS_KEYERROR 1
 #else
+#define LE_DUP_IS_KEYERROR 0
 PyAPI_FUNC(int)
     _PyDict_MergeUniq(PyObject *mp, PyObject *other, PyObject **dupkey);
-/* _PyDict_MergeEx(a, b, 2): a key of b already in a raises KeyError(key) */
+/* _PyDict_MergeEx(a, b, 2): a key of b already in a raises KeyError(key),
+   and sets '*dup'; a KeyError b raises is b's own */
 static int
-le_dict_merge_unique(PyObject *a, PyObject *b)
+le_dict_merge_unique(PyObject *a, PyObject *b, int *dup)
 {
     PyObject *dupkey = NULL, *args;
     int r = _PyDict_MergeUniq(a, b, &dupkey);
     if (r == -2) {
+        *dup = 1;
         args = PyTuple_Pack(1, dupkey);
         if (args != NULL) {
             PyErr_SetObject(PyExc_KeyError, args);
@@ -4026,9 +4031,10 @@ cimpl_dict_update(PyObject *dict, PyObject *update)
 }
 #endif
 
-/* ceval.c:format_kwargs_error, and what came before it inline */
+/* ceval.c:format_kwargs_error, and what came before it inline; 'dup': the
+   merge found a key twice */
 static void
-cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
+cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs, int dup)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
         if (!le_not_a_mapping(kwargs))
@@ -4052,7 +4058,11 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                      kwargs->ob_type->tp_name);
 #endif
     }
+#if LE_DUP_IS_KEYERROR
     else if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+#else
+    else if (dup) {
+#endif
 #if LE_HAS_CURRENT_EXCEPTION
         /* the KeyError is an instance: the key is in its args */
         PyObject *exc = PyErr_GetRaisedException();
@@ -4081,16 +4091,15 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                 Py_DECREF(funcstr);
             }
 #else
-        PyObject *key = PyTuple_GET_ITEM(args, 0);
-        if (!PyUnicode_Check(key)) {
-            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
-                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
-        }
-        else {
-            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
-                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
-                         key);
-        }
+    PyObject *key = PyTuple_GET_ITEM(args, 0);
+    if (!PyUnicode_Check(key)) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
+                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
+    }
+    else {
+        PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
+                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func), key);
+    }
 #endif
 #if LE_HAS_CURRENT_EXCEPTION
             Py_DECREF(exc);
@@ -4115,9 +4124,10 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 static int
 cimpl_dict_merge(PyObject *dict, PyObject *update, PyObject *func)
 {
-    int err = le_dict_merge_unique(dict, update);
+    int dup = 0;
+    int err = le_dict_merge_unique(dict, update, &dup);
     if (err < 0) {
-        cimpl_format_kwargs_error(func, update);
+        cimpl_format_kwargs_error(func, update, dup);
     }
     return err;
 }
@@ -4306,16 +4316,17 @@ cimpl_call_function_ex(PyObject *func, PyObject *callargs, PyObject *kwargs)
         if (d == NULL)
             goto error;
 #if LE_HAS_KWARGS_MERGE_EX
-        if (le_dict_merge_unique(d, kwargs) < 0) {
+        int dup = 0;
+        if (le_dict_merge_unique(d, kwargs, &dup) < 0) {
             Py_DECREF(d);
-            cimpl_format_kwargs_error(func, kwargs);
+            cimpl_format_kwargs_error(func, kwargs, dup);
             goto error;
         }
 #else
         if (PyDict_Update(d, kwargs) != 0) {
             Py_DECREF(d);
             if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-                cimpl_format_kwargs_error(func, kwargs);
+                cimpl_format_kwargs_error(func, kwargs, 0);
             }
             goto error;
         }
@@ -4967,6 +4978,24 @@ cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *locals,
     return x;
 }
 
+#if LE_HAS_LAZY_IMPORT_NAME_LINKABLE
+/* module code's import that the lazy imports mode or __lazy_modules__ may
+   make lazy (PEP 810), at place 'lasti' of code co: the proxy keeps where
+   the running frame is */
+static PyObject *
+cimpl_lazy_import_name(PyObject *globals, PyObject *builtins, PyObject *name,
+                       PyObject *fromlist, PyObject *level, PyCodeObject *co,
+                       long lasti)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    le_frame_t *f = le_frame_current(ts);
+    if (f != NULL && LE_FRAME_CODE(f) == co)
+        LE_FRAME_PLACE(f) = _PyCode_CODE(co) + lasti;
+    return _PyEval_LazyImportName(ts, builtins, globals, globals, name,
+                                  fromlist, level, 0);
+}
+#endif
+
 /* ceval's import_all_from, for module code's `from m import *` into its
    globals: the names of m.__all__, else those of m.__dict__ not starting
    with an underscore */
@@ -5052,6 +5081,18 @@ cimpl_import_star(PyObject *globals, PyObject *v)
     Py_DECREF(all);
     return err;
 }
+
+#ifdef LE_MSG_SET_ADD_NOT_SET
+static int
+cimpl_set_add(PyObject *set, PyObject *v)
+{
+    if (!PySet_CheckExact(set)) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_SET_ADD_NOT_SET, Py_TYPE(set));
+        return -1;
+    }
+    return PySet_Add(set, v);
+}
+#endif
 
 /* ceval's SETUP_ANNOTATIONS, for module code: an __annotations__ dict in
    its globals, unless there is one */
@@ -7050,8 +7091,15 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *v;
             v = NTOP(1);
             set = NTOP(oparg + 1);
-            err = psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv",
-                                     set, v);
+#ifdef LE_MSG_SET_ADD_NOT_SET
+            /* module code's __conditional_annotations__ may be rebound */
+            if (Psyco_KnownType(set) != &PySet_Type)
+                err = psyco_generic_call(po, cimpl_set_add, CfCommonIntZeroOk,
+                                         "vv", set, v);
+            else
+#endif
+                err = psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk,
+                                         "vv", set, v);
             if (err == NULL) {
                 break;
             }
@@ -9908,6 +9956,21 @@ compile_imports(PsycoObject *po, int opcode, int oparg, int target,
             PyObject *w = GETNAMEV(LE_IMPORT_NAME(oparg));
             v = TOP();
             u = NTOP(2);
+#if LE_HAS_LAZY_IMPORT_NAME_LINKABLE
+            if (!(co->co_flags & CO_OPTIMIZED) && !LE_IMPORT_EAGER(oparg)) {
+                x = psyco_generic_call(
+                    po, cimpl_lazy_import_name, CfCommonNewRefPyObject,
+                    "vvlvvll", LOC_GLOBALS, LOC_BUILTINS, w, v, u, (long)co,
+                    (long)le_lasti_of(
+                        le_place(le_code(co), po->pr.next_instr)));
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                POP_DECREF();
+                PUSH(x);
+                goto fine;
+            }
+#endif
             /* __import__ is given the frame's locals mapping: module
                code's is its globals */
             vinfo_t *none = psyco_vi_None();
