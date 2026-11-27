@@ -888,11 +888,10 @@ cimpl_push_exc_info(PyObject *target[], PyObject **word,
 /* The restoring half (ceval's UNWIND_EXCEPT_HANDLER), for POP_EXCEPT and for
    unwinding through an EXCEPT_HANDLER block. Doesn't consume its arguments
    (psyco_generic_call can't express that); the caller decrefs them. The
-   handled exception goes, and with it, as a rule, the last hold on the
-   frame in the catcher word 'word', which is then let go. */
+   frame in the catcher word stays until the call ends, as CPython's frame
+   object does, for the call's next traceback entries. */
 static void
-cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb,
-                   PyObject **word)
+cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb)
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyObject *otype, *ovalue, *otb;
@@ -904,8 +903,6 @@ cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb,
     Py_XDECREF(otype);
     Py_XDECREF(ovalue);
     Py_XDECREF(otb);
-    if (word != NULL)
-        psyco_frame_catcher_drop(word);
 }
 
 #if LE_HAS_EXCEPTION_TABLE
@@ -946,10 +943,9 @@ cimpl_push_exc_value(PyObject *value)
    again (not consumed: the caller decrefs it); None, for none, is stored as
    NULL, as from 3.13 ceval does: a generator's exception state then gives
    way to its caller's, which _PyErr_GetTopmostException finds past a NULL
-   but from 3.13 not past None. With it, as a rule, goes the last hold on
-   the frame in the catcher word 'word', as in cimpl_pop_exc_info. */
+   but from 3.13 not past None. */
 static void
-cimpl_pop_exc_value(PyObject *value, PyObject **word)
+cimpl_pop_exc_value(PyObject *value)
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyObject *old = le_exc_info_value(tstate);
@@ -958,8 +954,6 @@ cimpl_pop_exc_value(PyObject *value, PyObject **word)
     Py_XINCREF(value);
     le_exc_info_put_value(tstate, value);
     Py_XDECREF(old);
-    if (word != NULL)
-        psyco_frame_catcher_drop(word);
 }
 
 /* RERAISE: the exception value is raised again, with the traceback it has */
@@ -2310,15 +2304,14 @@ static void
 unwind_except_handler(PsycoObject *po, le_block_t *b, bool unwind)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    vinfo_t *type, *value, *tb, *word = catcher_word(po);
+    vinfo_t *type, *value, *tb;
     extra_assert(STACK_LEVEL() >= b->b_level + 3);
     while (unwind && STACK_LEVEL() > b->b_level + 3) POP_DECREF();
     POP(type);
     POP(value);
     POP(tb);
-    psyco_generic_call(po, cimpl_pop_exc_info, CfNoReturnValue,
-                       word != NULL ? "vvvr" : "vvvl", type, value, tb,
-                       (long)word);
+    psyco_generic_call(po, cimpl_pop_exc_info, CfNoReturnValue, "vvv", type,
+                       value, tb);
     vinfo_decref(tb, po);
     vinfo_decref(value, po);
     vinfo_decref(type, po);
@@ -9380,10 +9373,8 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
 #if LE_HAS_EXCEPTION_TABLE
         /* the handled exception PUSH_EXC_INFO saved is put back */
         case POP_EXCEPT: {
-            vinfo_t *word = catcher_word(po);
             if (psyco_generic_call(po, cimpl_pop_exc_value, CfNoReturnValue,
-                                   word != NULL ? "vr" : "vl", TOP(),
-                                   (long)word) == NULL)
+                                   "v", TOP()) == NULL)
                 break;
             POP_DECREF();
             goto fine;
