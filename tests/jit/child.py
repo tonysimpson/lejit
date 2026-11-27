@@ -108,6 +108,8 @@ while True:
                 pass
         gc.collect()
     buffers = lejit._core._stats()['code_buffers'] if checked else 0
+    sweeps = lejit._core._stats()['sweeps'] if checked else None
+    blocks = [0] * 10
     if counting:
         exec(COUNT_ALIVE, {'gc': gc}, counted)
         alive_before = counted['alive']
@@ -121,6 +123,8 @@ while True:
                 fn(*args)
             except Exception:
                 pass
+        if _ % 10 == 9:
+            blocks[_ // 10] = sys.getallocatedblocks()
     allocs = allocs_end() if allocs_end else -1
     asked = allocs_asked() if allocs_asked else 0
     gc.enable()
@@ -131,6 +135,22 @@ while True:
         break
     repeats += 1
 out.append('leak: %d %d' % (leak, repeats))
+# what the last rounds did, shown when the case fails the leak check:
+# blocks every 10 rounds, then after the collection at their end, and the
+# sweeps that ran from their start (codemanager.c: sweeps, code objects
+# released, bytes) and the change in code buffers; a leak grows steadily,
+# a compile or a release during them shows as one step
+# (no comprehension: LeJIT would compile it)
+rounds = ''
+for b in blocks:
+    rounds += '%d ' % (b - before)
+rounds += '%d' % leak
+if checked:
+    stats = lejit._core._stats()
+    rounds += '; sweeps %d %d %d; code buffers %+d' % (
+        stats['sweeps'][0] - sweeps[0], stats['sweeps'][1] - sweeps[1],
+        stats['sweeps'][2] - sweeps[2], stats['code_buffers'] - buffers)
+    del stats
 left = []
 if counting:
     exec(COUNT_ALIVE, {'gc': gc}, counted)
@@ -139,5 +159,6 @@ if counting:
                   for name in set(alive) | set(alive_before)
                   if alive.get(name, 0) != alive_before.get(name, 0))
 out.append('objects: %d %d %r' % (allocs, asked, left))
+out.append('rounds: ' + rounds)
 for line in out:
     print(line)
