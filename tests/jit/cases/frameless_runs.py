@@ -230,6 +230,40 @@ def generators(n):
     return [run(_iterates, i) for i in range(n)]
 
 
+# a frame entered through C from a run with no real frame, which was
+# entered where ceval runs the code (here an exec's), has the run's
+# frames as its callers
+def _names_to_module(f):
+    out = []
+    while f is not None and f.f_code.co_name != '<module>':
+        out.append(f.f_code.co_name)
+        f = f.f_back
+    return out
+
+
+def _through_c(k):
+    return _names_to_module(sys._getframe(0))
+
+
+def _maps(k):
+    return list(map(_through_c, [k]))[0]
+
+
+def _interpreted(n):
+    # the hook is called from the exec's code itself: no compiled frame
+    # holds the run
+    lejit = sys.modules.get('lejit')
+    call = ('_maps(i)' if lejit is None or not lejit._started else
+            'lejit._core._run_frameless(_maps, i)')
+    ns = {'lejit': lejit, '_maps': _maps, 'out': []}
+    exec('for i in range(%d):\n    out.append(%s)' % (n, call), ns)
+    return ns['out']
+
+
+def from_interpreted(n):
+    return _interpreted(n)
+
+
 # tracing starts inside, so the frame goes on in ceval: its frame object,
 # made then, keeps the locals ceval ends it with
 def _traced_on(k):
@@ -312,6 +346,7 @@ CASES = [
     ('clears', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('lines', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('generators', [(4,)], {'checked': 'needs lejit._core._run_frameless'}),
+    ('from_interpreted', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('resumed_locals', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('subinterpreter', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
 ]
