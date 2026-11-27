@@ -1098,9 +1098,12 @@ psyco_compile(PsycoObject *po, mergepoint_t *mp, bool continue_compilation)
         }
 
         /* a second block at this merge point: large int constants become
-           run-time objects first. Replay-safe for the same
+           run-time objects first, and at a loop head so do counters'
+           values, which a pass changes. Replay-safe for the same
            reasons as the cap. */
-        if (mp != NULL && mp->blocks > 0 && psyco_unpromote_large_ints(po))
+        if (mp != NULL && mp->blocks > 0 &&
+            (psyco_unpromote_large_ints(po) ||
+             (mp->loop_head && psyco_forget_counters(po))))
             return psyco_compile(po, mp, continue_compilation);
 
         if (mp_capped(mp) && psyco_forget_values(po, &mp->entries))
@@ -1276,7 +1279,8 @@ psyco_compile_code(PsycoObject *po, mergepoint_t *mp)
     po->code = insn_code_label(codebuf->codestart);
 
     if (compile_now && mp != NULL && mp->blocks > 0 &&
-        psyco_unpromote_large_ints(po))
+        (psyco_unpromote_large_ints(po) ||
+         (mp->loop_head && psyco_forget_counters(po))))
         code1 = psyco_compile(po, mp, false);
     else if (compile_now && mp_capped(mp) &&
              psyco_forget_values(po, &mp->entries))

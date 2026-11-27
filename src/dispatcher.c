@@ -32,8 +32,8 @@
  *  - Parked states: the state a coding pause or a promotion site compiles
  *    from stays live for the PARK_LIVE_MAX newest, and is frozen after,
  *    with what a snapshot leaves out kept beside it (psyco_park).
- * psyco_forget_dead_vars drops what is known about the dead locals that
- * mergepoints.c lists first in each fatlist, keeping their values;
+ * psyco_forget_dead_vars puts the dead locals that mergepoints.c lists
+ * first in each fatlist in one form, keeping their values;
  * psyco_make_dead_virtuals_real makes their virtual values real once a
  * merge point has reached its cap. State
  * is global and non-re-entrant (cmpinternal,
@@ -1938,13 +1938,20 @@ holds_reference(vinfo_array_t *a)
    Not a value something else holds too, nor a virtual one, whose fields
    are its contents, nor fields holding a reference, whose release would
    emit code (this runs before a function's first buffer, too).
-   With 'unfix', where code can be emitted, a dead local's constant object
-   (SkFlagPyObj, so never an unbound local's 0) becomes a run-time value,
-   promoted or not: otherwise a loop that binds a different constant to it
-   on each pass, such as a function promoted at a call, starts one block
-   per constant at its head, and the cap can't merge them, as it keeps
-   promoted values (psyco_forget_values). Nothing reads this one before it
-   is rebound. */
+   With 'unfix', at a merge point in the main loop, where code can be
+   emitted, every dead local that isn't virtual takes one form, so that
+   no state differs from a block there in its dead locals alone: a
+   run-time value owning its reference, neither non-negative nor
+   megamorphic, which may be NULL where the local may be unbound on one
+   path here and bound on another (psyco_dead_local), as an unbound one
+   becomes too. A constant object becomes run-time, promoted or not, as a
+   copy of its own if something else holds it: otherwise a loop that binds
+   a different constant to it on each pass, such as a function promoted
+   at a call, starts one block per constant at its head, and the cap can't
+   merge them, as it keeps promoted values (psyco_forget_values). Nothing
+   reads one of them before it is rebound, so no fact or flag is relied
+   on; a deletion reads it, so it isn't dead. Only loads of constants and
+   increfs are emitted. */
 DEFINEFN
 void
 psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
@@ -1954,20 +1961,44 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
     extra_assert(PyList_Check(plist));
     limit = PyList_GET_SIZE(plist);
     for (i = 0; i < limit; i++) {
-        vinfo_t *vi;
+        vinfo_t *vi, **slot;
         vinfo_array_t *a;
+        bool either;
         PyObject *o1 = PyList_GET_ITEM(plist, i);
         if (!PyLong_Check(o1))
             break;
-        vi = LOC_LOCALS_PLUS[PyLong_AS_LONG(o1)];
-        if (unfix && vi != NULL && is_compiletime(vi->source) &&
-            vi->refcount == 1 &&
-            (CompileTime_Get(vi->source)->refcount1_flags & SkFlagPyObj)) {
-            psyco_unfix(po, vi);
+        slot = &LOC_LOCALS_PLUS[psyco_dead_local(o1, &either)];
+        vi = *slot;
+        if (vi == NULL)
             continue;
+        if (unfix && is_compiletime(vi->source)) {
+            source_known_t *sk = CompileTime_Get(vi->source);
+            bool unbound =
+                sk->value == 0 && (sk->refcount1_flags & SkFlagFixed);
+            if (unbound ? !either : !(sk->refcount1_flags & SkFlagPyObj))
+                continue;
+            if (vi->refcount > 1) {
+                if (unbound)
+                    *slot = psyco_vi_Zero();
+                else {
+                    Py_INCREF((PyObject *)sk->value);
+                    *slot = vinfo_new(
+                        CompileTime_NewSk(sk_new(sk->value, SkFlagPyObj)));
+                }
+                vinfo_decref(vi, po);
+                vi = *slot;
+            }
+            psyco_unfix(po, vi);
         }
-        if (vi == NULL || !is_runtime(vi->source) || vi->refcount != 1 ||
-            vi->array == NullArray || holds_reference(vi->array))
+        if (!is_runtime(vi->source) || vi->refcount != 1)
+            continue;
+        if (unfix) {
+            need_reference(po, vi);
+            vi->source &= ~(RunTime_NonNeg | RunTime_Megamorphic);
+            if (either)
+                vi->source |= RunTime_MaybeNull;
+        }
+        if (vi->array == NullArray || holds_reference(vi->array))
             continue;
         a = vi->array;
         vi->array = NullArray;
@@ -2025,10 +2056,11 @@ psyco_make_dead_virtuals_real(PsycoObject *po, mergepoint_t *mp)
     limit = PyList_GET_SIZE(plist);
     for (i = 0; i < limit; i++) {
         vinfo_t *vi;
+        bool either;
         PyObject *o1 = PyList_GET_ITEM(plist, i);
         if (!PyLong_Check(o1))
             break;
-        vi = LOC_LOCALS_PLUS[PyLong_AS_LONG(o1)];
+        vi = LOC_LOCALS_PLUS[psyco_dead_local(o1, &either)];
         if (made_real_when_dead(vi, mp) && !compute_vinfo(vi, po))
             return false;
     }
@@ -2292,10 +2324,54 @@ widen_unbound(PsycoObject *po, global_entries_t *ge, int nlocals)
     return changed;
 }
 
+/* The value of each virtual int or bool in the locals that isn't fixed
+   becomes run-time, and not non-negative, so the counters' many
+   combinations of known values collapse into one block (at a loop head's
+   second block, vcompiler.c:psyco_compile, and at the cap). A value something else holds
+   too gets its own, for small ints only, which computing gives back as
+   the same object. Only loads of constants are emitted. Returns whether
+   anything changed. */
+DEFINEFN
+bool
+psyco_forget_counters(PsycoObject *po)
+{
+    bool changed = false;
+    int i;
+    for (i = 0; i < le_code_nlocals(po->pr.co); i++) {
+        vinfo_t *a = LOC_LOCALS_PLUS[i];
+        vinfo_t *w;
+        long value;
+        if (a == NULL || !PsycoLong_IsVirtual(a) ||
+            a->array->count <= iLONG_VALUE)
+            continue;
+        w = a->array->items[iLONG_VALUE];
+        if (w == NULL || !is_compiletime(w->source) ||
+            (CompileTime_Get(w->source)->refcount1_flags & SkFlagFixed))
+            continue;
+        value = CompileTime_Get(w->source)->value;
+        if ((a->refcount > 1 || w->refcount > 1) && -5 <= value &&
+            value <= 256) {
+            vinfo_t *b = vinfo_new(a->source);
+            b->array = array_new(LONG_TOTAL);
+            if ((b->array->items[iOB_TYPE] = a->array->items[iOB_TYPE]) !=
+                NULL)
+                vinfo_incref(b->array->items[iOB_TYPE]);
+            b->array->items[iLONG_VALUE] = w =
+                vinfo_new(CompileTime_New(value));
+            LOC_LOCALS_PLUS[i] = b;
+            vinfo_decref(a, po);
+        }
+        psyco_unfix(po, w);
+        w->source &= ~RunTime_NonNeg;
+        changed = true;
+    }
+    return changed;
+}
+
 /* The cap's generalisation (vcompiler.c:mp_capped), in the
    locals only.
-   - The value of each virtual int or bool becomes run-time, so the
-     counters' many combinations of known values collapse into one block.
+   - The value of each virtual int or bool becomes run-time
+     (psyco_forget_counters).
    - Each other constant that some block at this merge point doesn't share
      becomes run-time and forgotten (RunTime_Megamorphic): its promotions
      take the generic path (psyco_pyobj_atcompiletime_mega, the static-type
@@ -2327,38 +2403,10 @@ DEFINEFN
 bool
 psyco_forget_values(PsycoObject *po, global_entries_t *ge)
 {
-    bool changed = false;
+    bool changed = psyco_forget_counters(po);
     int i, nlocals;
     long *want;
     char *varies;
-    for (i = 0; i < le_code_nlocals(po->pr.co); i++) {
-        vinfo_t *a = LOC_LOCALS_PLUS[i];
-        vinfo_t *w;
-        long value;
-        if (a == NULL || !PsycoLong_IsVirtual(a) ||
-            a->array->count <= iLONG_VALUE)
-            continue;
-        w = a->array->items[iLONG_VALUE];
-        if (w == NULL || !is_compiletime(w->source) ||
-            (CompileTime_Get(w->source)->refcount1_flags & SkFlagFixed))
-            continue;
-        value = CompileTime_Get(w->source)->value;
-        if ((a->refcount > 1 || w->refcount > 1) && -5 <= value &&
-            value <= 256) {
-            vinfo_t *b = vinfo_new(a->source);
-            b->array = array_new(LONG_TOTAL);
-            if ((b->array->items[iOB_TYPE] = a->array->items[iOB_TYPE]) !=
-                NULL)
-                vinfo_incref(b->array->items[iOB_TYPE]);
-            b->array->items[iLONG_VALUE] = w =
-                vinfo_new(CompileTime_New(value));
-            LOC_LOCALS_PLUS[i] = b;
-            vinfo_decref(a, po);
-        }
-        psyco_unfix(po, w);
-        w->source &= ~RunTime_NonNeg;
-        changed = true;
-    }
     /* kept between calls, so that a compile abandoned on the way leaks
        nothing */
     static long *table = NULL;

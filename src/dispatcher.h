@@ -186,6 +186,8 @@ EXTERNFN void
 psyco_stabilize(vcompatible_t *lastmatch);
 EXTERNFN bool
 psyco_forget_values(PsycoObject *po, global_entries_t *ge);
+EXTERNFN bool
+psyco_forget_counters(PsycoObject *po);
 /* a block left 'ge', or 'ge' is freed: what psyco_forget_values kept
    about it is dropped */
 EXTERNFN void

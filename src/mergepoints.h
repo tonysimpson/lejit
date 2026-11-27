@@ -26,7 +26,20 @@ struct mergepoint_s {
        virtual values: ints, bools and floats, and anything else
        (vcompiler.c:mp_new_block; dispatcher.c:made_real_when_dead) */
     int virtual_numbers, virtual_objects;
+    /* a backward jump's target */
+    int loop_head;
 };
+
+/* a dead local's item at the start of a merge point's fatlist
+   (mergepoints.c): its index, and whether it may be bound on one path to
+   the merge point and unbound on another */
+PSY_INLINE int
+psyco_dead_local(PyObject *item, bool *either)
+{
+    long v = PyLong_AS_LONG(item);
+    *either = v < 0;
+    return v < 0 ? ~v : v;
+}
 
 /* 'bytecode_ptr' gives the position of the merge point in the bytecode.
    An array of mergepoint_t structures is sorted against this field.
