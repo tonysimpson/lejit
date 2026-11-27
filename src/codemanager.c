@@ -1416,7 +1416,6 @@ static long extras_since_scan = 0; /* records counted since the last scan */
 #define SCAN_MIN 512               /* records counted before the first scan */
 static long scan_after = SCAN_MIN; /* more after a scan too big */
 static bool scan_asked = false;    /* the pending call is queued */
-static PyObject *get_objects = NULL; /* gc.get_objects, once imported */
 static PyObject *gc_callbacks = NULL, *scan_callback = NULL;
 
 #define SCAN_MAX_NODES ((size_t)1 << 20)
@@ -1644,7 +1643,6 @@ static long
 scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
 {
     le_code_extra_t *x;
-    PyObject *all;
     PyObject *modules = le_modules_dict();
     Py_ssize_t pos = 0;
     PyObject *k, *m;
@@ -1658,33 +1656,10 @@ scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
             if (PyModule_GetDict(m) != NULL)
                 scan_node(PyModule_GetDict(m), NODE_PRUNED);
         }
-    /* every function is tracked by CPython's GC, so its code is found
-       here; one only something else holds is never a seed, which only
-       makes more look alive */
-    if (get_objects == NULL) {
-        /* not at start-up: importing runs Python code, which LeJIT compiles */
-        PyObject *gc = PyImport_ImportModule("gc");
-        if (gc != NULL) {
-            get_objects = PyObject_GetAttrString(gc, "get_objects");
-            Py_DECREF(gc);
-        }
-    }
-    all = get_objects != NULL ? PyObject_CallObject(get_objects, NULL) : NULL;
-    if (all == NULL || !PyList_Check(all)) {
-        PyErr_Clear();
-        Py_XDECREF(all);
-        return -1;
-    }
-    for (i = 0; i < (size_t)PyList_GET_SIZE(all); i++) {
-        PyObject *f = PyList_GET_ITEM(all, i);
-        if (PyFunction_Check(f)) {
-            PyObject *co = PyFunction_GET_CODE(f);
-            x = le_code_extra_get((PyCodeObject *)co);
-            if (x != NULL && (x->owner.npins > 0 || x->owner.groups != NULL))
-                scan_node(co, NODE_CODE);
-        }
-    }
-    Py_DECREF(all);
+    /* every code object whose code holds something */
+    for (x = le_code_extras; x != NULL; x = x->next)
+        if (x->owner.npins > 0 || x->owner.groups != NULL)
+            scan_node((PyObject *)le_code_extra_code(x), NODE_CODE);
     for (i = 0; i < scan.n && !scan.failed; i++) {
         scan_edges(i, visit_count);
         if (scan.nodes[i].kind == NODE_CODE) {
