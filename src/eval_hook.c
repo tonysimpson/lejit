@@ -741,8 +741,9 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
    (x64/iprocessor.c:le_function_gate_new), and runs its compiled code
    with no frame where the frame CPython would make would run the same
    code as the hook would: the hook is in, nothing traces, the globals and
-   builtins are the entry's, and the arguments bind with no error and no
-   name compared other than by identity. Anything else is the original's,
+   builtins are the entry's, and the arguments bind with no error and
+   every keyword is a parameter's name, or an exact str equal to one.
+   Anything else is the original's,
    which raises CPython's errors. The arguments are the caller's; the
    defaults filled in, and the *args tuple and **kwargs dict made, are
    held for the run, as a frame would hold them. */
@@ -779,7 +780,8 @@ frameless_builtins(PyThreadState *tstate, PyFunctionObject *func)
    it leaves to the words of a frame of 'func' (frameless_words) in
    'into': the number of objects made or taken for them, each a new
    reference in 'held', or -1 where CPython must bind them: an error, or a
-   keyword not found by identity */
+   keyword that isn't a parameter's name (for **kwargs) or is a str
+   subclass equal to none by identity */
 static int
 frameless_bind(PyFunctionObject *func, PyCodeObject *co, PyObject **into,
                PyObject *const *args, Py_ssize_t n, PyObject *kwnames,
@@ -797,6 +799,14 @@ frameless_bind(PyFunctionObject *func, PyCodeObject *co, PyObject **into,
             for (i = co->co_posonlyargcount; i < total; i++)
                 if (le_code_local_name(co, i) == name)
                     break;
+            /* as CPython, then by equality: an exact str's has no side
+               effects (C callers often name keywords with strings of
+               their own) */
+            if (i == total && PyUnicode_CheckExact(name))
+                for (i = co->co_posonlyargcount; i < total; i++)
+                    if (PyUnicode_Compare(le_code_local_name(co, i), name) ==
+                        0)
+                        break;
             if (i == total || into[i] != NULL)
                 return -1;
             into[i] = args[n + k];

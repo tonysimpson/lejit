@@ -1,9 +1,9 @@
 # Compiled functions called from C (map, sorted, functools.partial) with
 # keywords, defaults, keyword-only arguments and *args, which may run with no
-# frame (eval_hook.c:le_frameless_vectorcall), and the calls that must go
-# on as CPython's: argument errors, keywords that aren't the names
-# themselves, other globals or builtins, tracing, generators, defaults
-# replaced while the call runs.
+# frame (eval_hook.c:le_frameless_vectorcall), keywords named by equal
+# strings, and the calls that must go on as CPython's: argument errors,
+# keywords named by a str subclass, other globals or builtins, tracing,
+# generators, defaults replaced while the call runs.
 import functools, sys, types
 
 
@@ -45,9 +45,15 @@ def bind_errors(n):
     return out
 
 
+class Name(str):
+    pass
+
+
 def names_not_identical(n):
     y = ''.join(['y'])
-    return [functools.partial(f, **{y: 5})(i) for i in range(n)]
+    return ([functools.partial(f, **{y: 5})(i) for i in range(n)],
+            [functools.partial(f, **{Name('y'): 6})(i) for i in range(n)],
+            error(lambda: functools.partial(f, **{''.join(['x']): 1})(2)))
 
 
 def h(a, b=(1,), *, k=[2]):
