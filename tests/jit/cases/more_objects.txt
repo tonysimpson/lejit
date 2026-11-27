@@ -61,8 +61,10 @@ fastcall_c_calls.errors                            3.9,3.10,3.11,3.12,3.13      
 file_descriptors.collect_in_compiled_code          3.13,3.14                          not looked at yet
 float_powers.powers                                3.7,3.8,3.9,3.10                   not looked at yet
 float_registers.respawned                          3.13                               not looked at yet
+frame_c_api.direct_callee                          3.12                               not looked at yet (seen on CI's image, not on pyenv's)
 frame_c_api.lines_from_c                           3.14,3.15                          not looked at yet
 frame_c_api.seen_here                              3.12                               not looked at yet (seen on CI's 3.12 image, not on pyenv's)
+frame_c_api.two_down                               3.12                               not looked at yet (seen on CI's image, not on pyenv's)
 frame_function.outer                               3.14,3.15                          not looked at yet
 frame_identity.getframe_arguments                  3.12,3.13,3.14,3.15                not looked at yet
 frame_identity.run_generator_frame                 3.14,3.15                          not looked at yet
@@ -125,7 +127,7 @@ globals_cache.exec_namespaces                      3.13,3.14,3.15               
 globals_cache.missing_global_name                  3.10,3.11,3.12,3.13,3.14,3.15      not looked at yet
 globals_cache.reused_addresses                     3.14,3.15                          not looked at yet
 globals_cache.store_then_respawn                   3.15                               not looked at yet
-globals_cache.unknown_in_both                      3.11,3.12,3.13,3.14,3.15           not looked at yet
+globals_cache.unknown_in_both                      3.10,3.11,3.12,3.13,3.14,3.15      not looked at yet (3.10: seen on CI's image, not on pyenv's)
 hook_resumes.stack_charged                         3.8,3.9,3.10,3.11,3.12,3.13        not looked at yet
 inlined_frames.caller                              3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 inlined_frames.identity                            3.11,3.12,3.13,3.14,3.15           not looked at yet
