@@ -49,7 +49,8 @@ SKIPPED = {
         'test.test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
         'test.test_xml_etree_c.BugsTest.test_bug_xmltoolkit63 '
         'ctypes.test.test_refcounts.AnotherLeak.test_callback '
-        'test.test_ctypes.test_refcounts.AnotherLeak.test_callback',
+        'test.test_ctypes.test_refcounts.AnotherLeak.test_callback '
+        'test.test_os.FileTests.test_rename',
     "CPython doesn't specialise Python calls, __getitem__ and properties "
     'while a frame-evaluation hook is installed (specialize.c, '
     'SPEC_FAIL_CALL_PEP_523)':
@@ -205,6 +206,9 @@ SKIPPED = {
     'compiled code passes a constant to a C function without a reference '
     'of its own, so the function sees one fewer than in CPython':
         'test.test_capi.test_object.IsUniquelyReferencedTest.test_is_uniquely_referenced',
+    "counts the collector's young objects around one list, which compiled "
+    "code doesn't make the same way":
+        'test.test_gc.GCTests.test_get_count',
     "objects compiled code keeps virtual are never made, so the ref tracer "
     "doesn't see them destroyed":
         'test.test_capi.test_object.RefTracerTest.test_destroy_traced_for_trashcan_deferred_objects',
