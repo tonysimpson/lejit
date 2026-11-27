@@ -5294,15 +5294,42 @@ capi_threadstate_getframe(PyThreadState *ts)
     return top;
 }
 
+/* the function of the innermost compiled frame, where LeJIT knows it and
+   the frame's globals and builtins are its function's: they are read from
+   it, with no frame object made, as CPython makes none for them; else
+   NULL */
+static PyFunctionObject *
+capi_innermost_function(void)
+{
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
+    FrameRuntime *run;
+    stack_frame_info_t **slot;
+    if (!capi_compiled_innermost(PyThreadState_GET()))
+        return NULL;
+    slot = innermost_slot(&run);
+    if (slot != NULL)
+        return record_function(slot, 0);
+    return run != NULL && run->frame == NULL ? run->func : NULL;
+#else
+    return NULL;
+#endif
+}
+
 static PyObject *
 capi_eval_getglobals(void)
 {
+    PyFunctionObject *func = capi_innermost_function();
+    if (func != NULL)
+        return func->func_globals;
     return capi_call_current(eval_getglobals_cpython, 0);
 }
 
 static PyObject *
 capi_eval_getbuiltins(void)
 {
+    PyFunctionObject *func = capi_innermost_function();
+    if (func != NULL)
+        return func->func_builtins;
     return capi_call_current(eval_getbuiltins_cpython, 0);
 }
 
@@ -5321,12 +5348,22 @@ capi_eval_getframelocals(void)
 static PyObject *
 capi_eval_getframeglobals(void)
 {
+    PyFunctionObject *func = capi_innermost_function();
+    if (func != NULL) {
+        Py_INCREF(func->func_globals);
+        return func->func_globals;
+    }
     return capi_call_current(eval_getframeglobals_cpython, 0);
 }
 
 static PyObject *
 capi_eval_getframebuiltins(void)
 {
+    PyFunctionObject *func = capi_innermost_function();
+    if (func != NULL) {
+        Py_INCREF(func->func_builtins);
+        return func->func_builtins;
+    }
     return capi_call_current(eval_getframebuiltins_cpython, 0);
 }
 
