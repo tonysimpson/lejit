@@ -95,7 +95,8 @@ le_gen_record_new(PyObject *func, long start)
         return PyErr_NoMemory();
     memset(mem, 0, GC_HEAD_SIZE);
     r = (le_gen_record_t *)(mem + GC_HEAD_SIZE);
-    PyObject_InitVar((PyVarObject *)r, &le_gen_record_type, n);
+    PyObject_Init((PyObject *)r, &le_gen_record_type);
+    Py_SET_SIZE(r, n);
     LE_STAT(le_stat_gen_records[0]++);
     r->gi_exc_state.exc_value = NULL;
     r->gi_exc_state.previous_item = NULL;
@@ -520,20 +521,15 @@ record_dealloc(PyObject *self)
     PyObject_Free((char *)r - GC_HEAD_SIZE);
 }
 
-/* never tracked: only a generator it has become is */
-static int
-record_traverse(PyObject *self, visitproc visit, void *arg)
-{
-    return 0;
-}
-
 /* sized as a generator, for the generator it may become; the sizes are
-   set when the type is made ready (le_gen_record_start_unit) */
+   set when the type is made ready (le_gen_record_start_unit). Not a type
+   the collector tracks: a record never is, only the generator it becomes,
+   and compiled code drops an object of such a type through _Py_Dealloc
+   where it could call record_dealloc. */
 PyTypeObject le_gen_record_type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "generator record",
     .tp_dealloc = record_dealloc,
-    .tp_traverse = record_traverse,
-    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
 };
 
 /* the record's type made ready, as big as the biggest of the types a
