@@ -86,7 +86,8 @@ le_gen_record_new(PyObject *func, long start)
     if (r == NULL)
         return NULL;
     LE_STAT(le_stat_gen_records[0]++);
-    le_gen_init(r, (PyFunctionObject *)func);
+    r->gi_exc_state.exc_value = NULL;
+    r->gi_exc_state.previous_item = NULL;
     r->gi_frame_state = FRAME_CREATED;
     le_frame_init_gen(le_record_frame(r), (PyFunctionObject *)func, (int)start,
                       LE_FRAME_OWNED_BY_RECORD);
@@ -227,7 +228,7 @@ record_closes_unrun(le_gen_record_t *r)
 #endif
 
 static int
-record_escape(le_gen_record_t *r, int8_t state);
+record_escape(le_gen_record_t *r, PyFunctionObject *func, int8_t state);
 
 /* whether word k of the frame 'f' is a record: one its body steps by
    yield from, held there while it is paused (pycompiler.c:yield_resumable) */
@@ -278,21 +279,22 @@ le_gen_record_real(PyObject *rec)
         return Py_NewRef(Py_None);
     }
     LE_STAT(le_stat_gen_records[1]++);
-    if (record_escape(r, r->gi_frame_state) < 0)
+    if (record_escape(r, frame_func(le_record_frame(r)), r->gi_frame_state) < 0)
         return NULL;
     return Py_NewRef(rec);
 }
 
-/* The record 'r' becomes the generator it stands for, in the state
-   'state', in place: its header is a generator's already, and its frame,
-   and any frame object that is a view of it, stay where they are. -1 with
-   an exception. */
+/* The record 'r' becomes the generator of the function 'func' it stands
+   for, in the state 'state', in place: its header is written, and its
+   frame, and any frame object that is a view of it, stay where they are.
+   -1 with an exception. */
 static int
-record_escape(le_gen_record_t *r, int8_t state)
+record_escape(le_gen_record_t *r, PyFunctionObject *func, int8_t state)
 {
     le_frame_t *f = le_record_frame(r);
     if (words_escape(f) < 0)
         return -1;
+    le_gen_init_names(r, func);
     Py_SET_TYPE(r, le_gen_type(LE_FRAME_CODE(f)));
     f->owner = FRAME_OWNED_BY_GENERATOR;
     r->gi_frame_state = state;
@@ -322,7 +324,7 @@ le_gen_record_escape(PyObject *rec, PyObject *func)
 #endif
         state = LE_GEN_ENDED_STATE;
     }
-    if (record_escape(r, state) < 0)
+    if (record_escape(r, (PyFunctionObject *)func, state) < 0)
         return NULL;
     return Py_NewRef(rec);
 }
@@ -343,7 +345,7 @@ le_gen_record_escape_running(le_frame_t *f)
     LE_STAT(le_stat_gen_records[3]++);
     /* running, as gen_send_ex2 leaves it: its exception state is in the
        thread's chain already, and its stack still compiled code's */
-    if (record_escape(r, FRAME_EXECUTING) < 0)
+    if (record_escape(r, frame_func(f), FRAME_EXECUTING) < 0)
         return NULL;
     return r;
 }
@@ -476,7 +478,8 @@ record_dealloc(PyObject *self)
         int escaped;
         PyErr_Fetch(&t, &v, &tb);
         LE_STAT(le_stat_gen_records[2]++);
-        escaped = record_escape(r, r->gi_frame_state) == 0;
+        escaped = record_escape(r, frame_func(le_record_frame(r)),
+                                r->gi_frame_state) == 0;
         if (!escaped)
             PyErr_WriteUnraisable(self);
         PyErr_Restore(t, v, tb);
@@ -497,11 +500,6 @@ record_dealloc(PyObject *self)
     code = (PyObject *)le_record_frame(r)->f_code;
 #endif
     Py_XDECREF(code);
-#if LE_HAS_GEN_CODE_FIELD
-    Py_CLEAR(r->gi_code);
-#endif
-    Py_CLEAR(r->gi_name);
-    Py_CLEAR(r->gi_qualname);
     PyObject_GC_Del(r);
 }
 

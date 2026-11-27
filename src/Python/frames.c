@@ -1878,7 +1878,7 @@ le_gen_type(PyCodeObject *co)
 }
 
 DEFINEFN void
-le_gen_init(PyGenObject *gen, PyFunctionObject *func)
+le_gen_init_names(PyGenObject *gen, PyFunctionObject *func)
 {
 #if LE_HAS_GEN_CODE_FIELD
     gen->gi_code = (PyCodeObject *)Py_NewRef(func->func_code);
@@ -1886,13 +1886,10 @@ le_gen_init(PyGenObject *gen, PyFunctionObject *func)
     gen->gi_weakreflist = NULL;
     gen->gi_name = Py_NewRef(func->func_name);
     gen->gi_qualname = Py_NewRef(func->func_qualname);
-    gen->gi_exc_state.exc_value = NULL;
-    gen->gi_exc_state.previous_item = NULL;
     gen->gi_origin_or_finalizer = NULL;
     gen->gi_hooks_inited = 0;
     gen->gi_closed = 0;
     gen->gi_running_async = 0;
-    gen->gi_frame_state = FRAME_CLEARED;
 }
 
 DEFINEFN PyObject *
@@ -1903,7 +1900,10 @@ le_gen_make(PyFunctionObject *func)
         PyGenObject, le_gen_type(co), co->co_nlocalsplus + co->co_stacksize);
     if (gen == NULL)
         return NULL;
-    le_gen_init(gen, func);
+    le_gen_init_names(gen, func);
+    gen->gi_exc_state.exc_value = NULL;
+    gen->gi_exc_state.previous_item = NULL;
+    gen->gi_frame_state = FRAME_CLEARED;
     return (PyObject *)gen;
 }
 #endif

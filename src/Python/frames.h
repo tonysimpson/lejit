@@ -99,9 +99,10 @@ le_gen_make(PyFunctionObject *func);
    generator, by its flags */
 EXTERNFN PyTypeObject *
 le_gen_type(PyCodeObject *co);
-/* gen's header, as le_gen_make writes it, for the function 'func' */
+/* gen's header but its exception state and state, as le_gen_make
+   writes it, for the function 'func' */
 EXTERNFN void
-le_gen_init(PyGenObject *gen, PyFunctionObject *func);
+le_gen_init_names(PyGenObject *gen, PyFunctionObject *func);
 #endif
 /* A new frame object for a call running 'co' in 'globals', of the function
    'func' where it is known (NULL: not known). Where frames are
