@@ -225,6 +225,10 @@ Psyco_VerifyType(PsycoObject *po, vinfo_t *vi, PyTypeObject *tp)
         return -1;
     return PyType_TypeCheck(vtp, tp);
 }
+/* The type of 'obj' promoted, or 0 at a site that has seen too many
+   (pobject.c) */
+EXTERNFN int
+Psyco_NeedTypeMega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp);
 /* Return the type that the object is known to be of, or NULL if unknown.
    Never fails. */
 EXTERNFN PyTypeObject *

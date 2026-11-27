@@ -1508,18 +1508,22 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     return po;
 }
 
-#if LE_RESUMES_ON_FRAME
 /* A resumable generator's body entered at 'next_instr' (eval_hook.c:
    LeGen_Run), given its frame, borrowed, and the value sent, owned, which
    is on top of the 'nstack' stack items under it. Every local, cell, free
    variable and stack item starts as the frame's own word
    (pycompiler.c:psyco_frame_word), read where the code uses it, so the
-   frame may hold anything ceval or Python left in it. */
+   frame may hold anything ceval or Python left in it. 'blocks' are the
+   frame's 'nblocks' blocks, as (type, handler in bytes, level). A body
+   whose start has no instruction to pop the value sent (GEN_START) is
+   entered there with the value in '*unpushed' instead, for the caller to
+   let go (psyco_compile_code_dropping). */
 DEFINEFN
 PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          PyObject *builtins, PyObject *merge_points,
-                         int recursion, int next_instr, int nstack)
+                         int recursion, int next_instr, int nstack,
+                         const int *blocks, int nblocks, vinfo_t **unpushed)
 {
     int nplus = le_code_nlocalsplus(co);
     int count =
@@ -1527,6 +1531,7 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     int i;
     PsycoObject *po = PsycoObject_New(count);
     vinfo_t **stack_a = po->vlocals.items + count - co->co_stacksize;
+    vinfo_t *vsent;
     po->stack_depth = INITIAL_STACK_DEPTH;
     po->vlocals.count = count;
     INIT_PROCESSOR_PSYCOOBJECT(po);
@@ -1537,8 +1542,12 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
         vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
     /* the arguments, the last pushed first */
     po->stack_depth += sizeof(long);
-    stack_a[nstack] =
-        vinfo_new(RunTime_NewStack(po->stack_depth, true, false));
+    vsent = vinfo_new(RunTime_NewStack(po->stack_depth, true, false));
+    *unpushed = NULL;
+    if (next_instr == 0 && !LE_HAS_OPCODE_GEN_START)
+        *unpushed = vsent;
+    else
+        stack_a[nstack] = vsent;
     po->stack_depth += sizeof(long);
     po->vlocals.items[GENEXPR_SLOT_ACC(co)] =
         vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
@@ -1547,71 +1556,36 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     po->pr.co = co; /* borrowed, as in PsycoObject_FromCode */
     pyc_data_build(po, merge_points);
     po->pr.next_instr = next_instr;
+#if LE_HAS_EXCEPTION_TABLE
+    (void)blocks;
+    (void)nblocks;
     po->pr.iblock = 0;
-    po->stack_depth += sizeof(long);
-    LOC_CONTINUATION =
-        vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
-    return po;
-}
 #else
-/* A resumable generator's body entered at 'next_instr' (eval_hook.c:
-   LeGen_Run), on the words of its frame in this order: the locals, owned,
-   the cells and free variables, borrowed, the 'nstack' stack items, owned,
-   then the run's FrameRuntime (Python/frames.h), whose frame it is. A local or
-   stack item whose bit is set in 'nulls' (one for each word, in that
-   order) is NULL, and its word not used. 'blocks' are the frame's 'nblocks'
-   blocks, as (type, handler in bytes, level). */
-DEFINEFN
-PsycoObject *
-PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
-                         PyObject *builtins, PyObject *merge_points,
-                         int recursion, int next_instr, uint64_t nulls,
-                         int nstack, const int *blocks, int nblocks)
-{
-    int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
-    int count =
-        INDEX_LOC_LOCALS_PLUS + nplus + GENEXPR_SLOTS + co->co_stacksize;
-    int nwords = nplus + nstack + 1, i;
-    PsycoObject *po = PsycoObject_New(count);
-    vinfo_t **stack_a = po->vlocals.items + count - co->co_stacksize;
-    po->stack_depth = INITIAL_STACK_DEPTH;
-    po->vlocals.count = count;
-    INIT_PROCESSOR_PSYCOOBJECT(po);
-    po->pr.auto_recursion = AUTO_RECURSION(recursion);
-    frame_globals(po, globals, builtins);
-    /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
-    po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
-        vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
-#if LE_HAS_SUM_COMPENSATED
-    po->vlocals.items[GENEXPR_SLOT_COMP(co)] = psyco_vi_Zero();
-#endif
-    /* the last word is pushed first */
-    for (i = nwords - 1; i >= 0; i--) {
-        bool owned = i < nlocals || (i >= nplus && i < nplus + nstack);
-        bool null = owned && ((nulls >> i) & 1);
-        vinfo_t *v;
-        po->stack_depth += sizeof(long);
-        v = null ? psyco_vi_Zero()
-                 : vinfo_new(RunTime_NewStack(po->stack_depth, owned, false));
-        if (i == nwords - 1)
-            po->vlocals.items[GENEXPR_SLOT_ACC(co)] = v;
-        else if (i >= nplus)
-            stack_a[i - nplus] = v;
-        else
-            LOC_LOCALS_PLUS[i] = v;
-    }
-    po->pr.co = co; /* borrowed, as in PsycoObject_FromCode */
-    pyc_data_build(po, merge_points);
-    po->pr.next_instr = next_instr;
     for (i = 0; i < nblocks; i++) {
         po->pr.blockstack[i].b_type = blocks[3 * i];
         po->pr.blockstack[i].b_handler = blocks[3 * i + 1];
         po->pr.blockstack[i].b_level = blocks[3 * i + 2];
     }
     po->pr.iblock = nblocks;
+#endif
     po->stack_depth += sizeof(long);
     LOC_CONTINUATION =
         vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
     return po;
 }
-#endif
+
+/* As psyco_compile_code, for an entry that lets go of 'v' before the
+   code compiled from 'mp' */
+DEFINEFN
+CodeBufferObject *
+psyco_compile_code_dropping(PsycoObject *po, mergepoint_t *mp, vinfo_t *v)
+{
+    CodeBufferObject *codebuf =
+        psyco_new_code_buffer(po, NULL, &po->codelimit);
+    code_t *code1;
+    po->code = insn_code_label(codebuf->codestart);
+    vinfo_decref(v, po);
+    code1 = psyco_compile(po, mp, false);
+    CLOSE_CODE("block", codebuf->codestart, code1);
+    return codebuf;
+}

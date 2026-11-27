@@ -1,10 +1,9 @@
 #ifndef _GENRECORD_H
 #define _GENRECORD_H
 /* Virtual generators' records (genrecord.c, mechanisms/frames.h:
-   le_gen_record_t), for interpreters whose frames are interpreter frames */
+   le_gen_record_t) */
 #include "frames.h"
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 #if ALL_CHECKS
 /* records made, and escapes: of a paused or new one, of one dropped
    paused, of one running, of one ended (lejit._core._stats) */
@@ -12,9 +11,10 @@ EXTERNVAR long le_stat_gen_records[6];
 #endif
 /* A new record for a generator of the function 'func', paused as
    RETURN_GENERATOR leaves a new generator, which is at code unit 'start'
-   of its code: no words yet. A new reference, or NULL with an exception. */
+   of its code, with 'nstack' items on its stack: no words yet. A new
+   reference, or NULL with an exception. */
 EXTERNFN PyObject *
-le_gen_record_new(PyObject *func, long start);
+le_gen_record_new(PyObject *func, long start, long nstack);
 /* frame 'f' cleared as CPython clears a frame that ends, but its code,
    which the caller lets go: a frame object that outlives it takes it;
    else its locals go, then its function (a record's frame, as a
@@ -22,10 +22,10 @@ le_gen_record_new(PyObject *func, long start);
 EXTERNFN void
 le_frame_clear(le_frame_t *f);
 /* its arguments are in its words: its cells and free variables are made,
-   as the instructions before RETURN_GENERATOR make them. -1 with an
-   exception. */
+   as the instructions before RETURN_GENERATOR make them, or the call of
+   'func' where frames are frame objects. -1 with an exception. */
 EXTERNFN int
-le_gen_record_start(PyObject *rec);
+le_gen_record_start(PyObject *rec, PyObject *func);
 /* The real generator the record 'rec' stands for, of the function 'func'
    (needed only once the record has finished): the record becomes it now,
    in the state it is in, unless it has already. A new reference, or NULL
@@ -39,7 +39,9 @@ le_gen_record_escape_frame(le_frame_t *f);
    didn't pause there in the usual way: it ended, or paused with a frame
    object asked for (the record escapes then), or the record escaped while
    it ran. As eval_hook.c's le_gen_direct_end, le_gen_direct_send_end and
-   le_gen_direct_send_status do for a generator. */
+   le_gen_direct_send_status do for a generator; where a record holds a
+   frame object, those finish its runs too. */
+#if LE_HAS_INTERPRETER_FRAME
 EXTERNFN PyObject *
 le_gen_record_end(PyThreadState *ts, PyObject *rec, PyObject *result);
 EXTERNFN PyObject *
@@ -47,10 +49,12 @@ le_gen_record_send_end(PyThreadState *ts, PyObject *rec, PyObject *result);
 EXTERNFN int
 le_gen_record_send_status(PyThreadState *ts, PyObject *rec, PyObject *result,
                           PyObject *out[]);
+#endif
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
-   a record can't start there */
+   a record can't start there; '*takes_iter' if the code takes the
+   iterator of its argument first, which the record's maker does then */
 EXTERNFN long
-le_gen_record_start_unit(PyCodeObject *co);
+le_gen_record_start_unit(PyCodeObject *co, bool *takes_iter);
 /* The real generator of the record 'rec' that a frame's word holds
    (pycompiler.c:yield_resumable), made now unless it has been: a new
    reference, or NULL with an exception. An ended one, whose function has
@@ -66,5 +70,4 @@ le_gen_record_check(PyObject *o);
    record), running; NULL with an exception */
 EXTERNFN PyGenObject *
 le_gen_record_escape_running(le_frame_t *f);
-#endif
 #endif /* _GENRECORD_H */

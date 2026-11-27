@@ -216,7 +216,6 @@ static vinfo_t *
 run_time_result_check(PsycoObject *po, int flags)
 {
     condition_code_t error_cc;
-    int mark; /* TEMP_PUSH_R */
 #define CMP_RETURN_MINUS_1()                                 \
     do {                                                     \
         BEGIN_CODE                                           \
@@ -317,21 +316,37 @@ test_condition_and_pyerr_occured:
     if (!runtime_condition_f(po, error_cc)) {
         return VINFO_OK;
     }
-    /* PyErr_Occurred() while the result is still only in RAX: save RAX
-       around the call to PyThreadState_Get. Nothing between the PUSH and
-       the POP may go through the register allocator, which can spill with
-       a PUSH of its own, so that the POP restores the wrong value and the
-       spilled vinfo is left above the top of the stack.
-       The exception word (LE_EXC_OCCURRED_OFFSET) is read into the
-       scratch register instead. */
+    /* PyErr_Occurred() while the result is still only in RAX: the thread
+       state and its exception word (LE_EXC_OCCURRED_OFFSET) are read into
+       the scratch register. Where the state is only had from a call to
+       PyThreadState_Get, RAX is saved around it, and nothing between the
+       PUSH and the POP may go through the register allocator, which can
+       spill with a PUSH of its own, so that the POP restores the wrong
+       value and the spilled vinfo is left above the top of the stack. */
     BEGIN_CODE
     NEED_CC(); /* before the PUSH: it may take a register */
-    /* counted: the call's alignment and RSP-relative addressing use it */
-    TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
-    BEGIN_CALL(0);
-    END_CALL_I(PyThreadState_Get);
-    MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN, LE_EXC_OCCURRED_OFFSET);
-    TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
+#if LE_HAS_THREAD_LOCAL_TSTATE
+    {
+        long tstate_offset;
+        if (le_tstate_thread_offset(&tstate_offset)) {
+            MOV_R_FS(REG_TRANSIENT_1, tstate_offset);
+        }
+        else {
+            int mark;
+            /* counted: the call's alignment and RSP-relative addressing
+               use it */
+            TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
+            BEGIN_CALL(0);
+            END_CALL_I(PyThreadState_Get);
+            MOV_R_R(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN);
+            TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
+        }
+    }
+#else
+    MOV_R_I(REG_TRANSIENT_1, (long)le_tstate_current_address());
+    MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
+#endif
+    MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1, LE_EXC_OCCURRED_OFFSET);
     TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
     END_CODE
     error_cc = CC_NE;
@@ -961,7 +976,6 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     return vresult;
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* the word at run-time source 'src' pushed */
 #define PUSH_SOURCE(src)                                               \
     do {                                                               \
@@ -1064,7 +1078,6 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     return run_time_result(po, CfReturnTypePtr);
 }
 #undef PUSH_SOURCE
-#endif
 
 /* internal, see NEED_CC() */
 EXTERNFN condition_code_t

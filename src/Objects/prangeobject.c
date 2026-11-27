@@ -70,11 +70,20 @@ cimpl_range_len(long lo, long hi, long step)
     return 0;
 }
 
+/* the real range(start, stop, step) */
 static PyObject *
 cimpl_range_new(long start, long stop, long step)
 {
-    return PyObject_CallFunction((PyObject *)&PyRange_Type, "lll", start, stop,
-                                 step);
+    PyObject *args[3], *r = NULL;
+    int i;
+    args[0] = PyLong_FromLong(start);
+    args[1] = PyLong_FromLong(stop);
+    args[2] = PyLong_FromLong(step);
+    if (args[0] != NULL && args[1] != NULL && args[2] != NULL)
+        r = PyObject_CallFunctionObjArgs((PyObject *)&PyRange_Type, args[0],
+                                         args[1], args[2], NULL);
+    for (i = 0; i < 3; i++) Py_XDECREF(args[i]);
+    return r;
 }
 
 /* a range iterator as fast_range_iter gets one: from the free list where

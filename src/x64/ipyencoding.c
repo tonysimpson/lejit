@@ -119,22 +119,162 @@ xmm_restore_live(PsycoObject *po, code_t *code, int area)
     return code;
 }
 
-/* 'fn' is the dealloc to call, or NULL for the object's type's; with a ref
-   tracer that _Py_Dealloc reports to, _Py_Dealloc is called instead while
-   one is set: the word is compared with 0 before each call */
+#if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+/* Python/pyruntime.c */
+extern bool
+le_trashcan_words(long *tstate_at, long *soft_at, long *chain_at, long *room);
+
+_Static_assert(Py_TPFLAGS_HAVE_GC >> 8 < 256 &&
+                   (Py_TPFLAGS_HAVE_GC & 255) == 0,
+               "the GC flag is tested in tp_flags' second byte");
+
+/* a forward 8-bit jump, on 'cc' or always (CC_ALWAYS_TRUE), whose end is
+   put in '*end' for short_jump_land */
+static code_t *
+short_jump(code_t *code, condition_code_t cc, code_t **end)
+{
+    code[0] = cc == CC_ALWAYS_TRUE ? 0xEB : 0x70 | cc;
+    *end = code + 2;
+    return code + 2;
+}
+static void
+short_jump_land(code_t *code, code_t *end)
+{
+    long amount = (long)code - (long)end;
+    extra_assert(0 <= amount && amount < 128);
+    if (end[-2] == 0xEB)
+        le_trace_jump(end - 2, code);
+    else
+        le_trace_jump_cond(end - 2, end, code);
+    end[-1] = (code_t)amount;
+}
+
+/* Frees the object in RDI, at a stack aligned for a call, as _Py_Dealloc
+   would, given the ref tracer's word: 'fn' is the tp_dealloc of its type,
+   one the GC tracks, or NULL for a type known only at run time. With no
+   tracer set, a type the GC doesn't track is freed with tp_dealloc; one it
+   tracks, where _Py_Dealloc's trashcan test is known to be the one made
+   here (Python/pyruntime.c:le_trashcan_words), is freed with tp_dealloc
+   while the margin is 4 or more, and a delete_later chain left is then
+   emptied, as _Py_Dealloc does. The margin is measured at the call, a few
+   bytes above where _Py_Dealloc measures it. Everything else calls
+   _Py_Dealloc. Changes R10, R11 and what a C call changes. */
 DEFINEFN
 code_t *
-decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
+dealloc_testing_margin(code_t *code, PsycoObject *po, destructor fn,
+                       void *tracer)
 {
-    /* the tracer word, and what to call while a tracer is set */
-    void *tracer = NULL, *traced = NULL;
+    long tstate_at, soft_at, chain_at, room;
+    bool margin = le_trashcan_words(&tstate_at, &soft_at, &chain_at, &room);
+    reg_t tp = REG_TRANSIENT_1, ts = REG_TRANSIENT_2;
+    code_t *traced, *by_flag = NULL, *low = NULL, *no_chain = NULL,
+                    *chained = NULL, *untracked = NULL;
+    extra_assert(fn == NULL || margin);
+    MOV_R_I(ts, (long)tracer);
+    CMP_I8_A(0, ts);
+    code = short_jump(code, CC_NE, &traced);
+    if (fn == NULL) {
+        /* without the test here, a type the GC tracks is _Py_Dealloc's */
+        MOV_R_O8(tp, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
+        TEST_I8_BO(tp, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
+                   Py_TPFLAGS_HAVE_GC >> 8);
+        code = short_jump(code, margin ? CC_E : CC_NE, &by_flag);
+    }
+    if (margin) {
+        /* below a margin of 4: the C stack pointer under the soft limit
+           plus 'room' */
+        MOV_R_FS(ts, tstate_at);
+        MOV_R_O(ts, ts, soft_at);
+        ADD_R_I32(ts, room);
+        CMP_R_R(ts, REG_X64_RSP);
+        code = short_jump(code, CC_B, &low);
+        if (fn == NULL) {
+            MOV_R_O8(tp, tp, CPY_OFFSET(PyTypeObject, tp_dealloc));
+            CALL_R(tp);
+        }
+        else
+            CALL_I(fn);
+        MOV_R_FS(ts, tstate_at);
+        CMP_I8_O(0, ts, chain_at);
+        code = short_jump(code, CC_E, &no_chain);
+        MOV_R_R(REG_X64_RDI, ts);
+        CALL_I(_PyTrash_thread_destroy_chain);
+        code = short_jump(code, CC_ALWAYS_TRUE, &chained);
+    }
+    if (fn == NULL) {
+        if (margin)
+            short_jump_land(code, by_flag);
+        MOV_R_O8(tp, tp, CPY_OFFSET(PyTypeObject, tp_dealloc));
+        CALL_R(tp);
+        code = short_jump(code, CC_ALWAYS_TRUE, &untracked);
+    }
+    short_jump_land(code, traced);
+    if (by_flag != NULL && !margin)
+        short_jump_land(code, by_flag);
+    if (low != NULL)
+        short_jump_land(code, low);
+    CALL_I(_Py_Dealloc);
+    if (no_chain != NULL) {
+        short_jump_land(code, no_chain);
+        short_jump_land(code, chained);
+    }
+    if (untracked != NULL)
+        short_jump_land(code, untracked);
+    return code;
+}
+#endif
+
+/* What a decref of an object of 'type' (NULL where it is known only at run
+   time) calls at 0: '*fn', or NULL for its type's, read at run time; with a
+   ref tracer that _Py_Dealloc reports to, '*tracer' is its word, which is
+   compared with 0 before each call, and _Py_Dealloc is called instead
+   while one is set. Returns whether _Py_Dealloc may defer the free to the
+   trashcan, which dealloc_testing_margin tests. */
+static bool
+dealloc_choice(PyTypeObject *type, destructor *fn, void **tracer)
+{
+    bool trash = false;
+    *fn = type != NULL ? type->tp_dealloc : NULL;
+    *tracer = NULL;
+#if defined(Py_TRACE_REFS)
+    *fn = _Py_Dealloc;
+#elif LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+    if (type == NULL || (type->tp_flags & Py_TPFLAGS_HAVE_GC)) {
+        long unused;
+        trash = type == NULL ||
+                le_trashcan_words(&unused, &unused, &unused, &unused);
+        if (!trash)
+            *fn = _Py_Dealloc;
+    }
+#endif
+#if LE_HAS_DEALLOC_HOOKS
+    if (*fn != _Py_Dealloc && (*tracer = le_ref_tracer_word()) == NULL) {
+        *fn = _Py_Dealloc;
+        trash = false;
+    }
+#endif
+    return trash;
+}
+
+DEFINEFN
+bool
+decref_dealloc_long(PsycoObject *po, PyTypeObject *type)
+{
+    destructor fn;
+    void *tracer;
+    return xmm_live_count(po) > 0 || dealloc_choice(type, &fn, &tracer);
+}
+
+DEFINEFN
+code_t *
+decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg,
+                       PyTypeObject *type)
+{
+    destructor fn;
+    void *tracer;
+    bool trash = dealloc_choice(type, &fn, &tracer);
     char xmm_call = po->xmm_call;
     int xmm_live = xmm_live_count(po), xmm_area = 0;
-#if LE_HAS_DEALLOC_HOOKS
-    if (fn != _Py_Dealloc && (tracer = le_ref_tracer_word()) == NULL)
-        fn = _Py_Dealloc;
-    traced = (void *)_Py_Dealloc;
-#endif
     extra_assert(CPY_OFFSET(PyObject, ob_type) < 128);
     extra_assert(CPY_OFFSET(PyTypeObject, tp_dealloc) < 128);
 #if LE_HAS_IMMORTAL_OBJECTS
@@ -142,48 +282,34 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
        alone */
     NEED_CC_REG(rg);
     CMP_I8_DA(0, rg);
-    BEGIN_COND_JUMP_OF(1, CC_S, xmm_live > 0);
+    BEGIN_COND_JUMP_OF(1, CC_S, xmm_live > 0 || trash);
     LE_SUB_OB_REFCNT(rg);
 #else
     DEC_OB_REFCNT_NZ(rg);
 #endif
-    /* NE is the not zero flag; saving XMM registers makes the path too
-       long for an 8-bit jump */
-    BEGIN_COND_JUMP_OF(0, CC_NE, xmm_live > 0);
+    /* NE is the not zero flag; saving XMM registers or the trashcan's test
+       makes the path too long for an 8-bit jump */
+    BEGIN_COND_JUMP_OF(0, CC_NE, xmm_live > 0 || trash);
     if (xmm_live > 0) {
         code = xmm_save_live(po, code, &xmm_area);
         po->xmm_call = XMM_CALL_KEPT;
     }
 #if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
-    if (tracer != NULL && fn == NULL) {
-        /* the type is known only at run time: _Py_Dealloc for one the GC
-           tracks or while a tracer is set, else its tp_dealloc */
+    if (trash) {
         BEGIN_CALL(1);
         CALL_SET_ARG_FROM_REG(rg, 0);
-        MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
-        TEST_I8_BO(REG_TRANSIENT_1, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
-                   Py_TPFLAGS_HAVE_GC >> 8);
-        BEGIN_SHORT_COND_JUMP(3, CC_NE);
-        MOV_R_I(REG_TRANSIENT_2, (long)tracer);
-        CMP_I8_A(0, REG_TRANSIENT_2);
-        BEGIN_SHORT_COND_JUMP(4, CC_NE);
-        MOV_R_O8(REG_TRANSIENT_1, REG_TRANSIENT_1,
-                 CPY_OFFSET(PyTypeObject, tp_dealloc));
-        BEGIN_SHORT_JUMP(5);
-        END_SHORT_JUMP(3);
-        END_SHORT_JUMP(4);
-        MOV_R_I(REG_TRANSIENT_1, (long)traced);
-        END_SHORT_JUMP(5);
-        END_CALL_R(REG_TRANSIENT_1);
+        code = dealloc_testing_margin(code, po, fn, tracer);
+        END_CALLS();
     }
     else
 #endif
+#if LE_HAS_DEALLOC_HOOKS
         if (tracer != NULL) {
         BEGIN_CALL(1);
         CALL_SET_ARG_FROM_REG(rg, 0);
         MOV_R_I(REG_TRANSIENT_1, (long)tracer);
         CMP_I8_A(0, REG_TRANSIENT_1);
-        MOV_R_I(REG_TRANSIENT_1, (long)traced); /* keeps the flags */
+        MOV_R_I(REG_TRANSIENT_1, (long)_Py_Dealloc); /* keeps the flags */
         BEGIN_SHORT_COND_JUMP(2, CC_NE);
         if (fn == NULL) {
             MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
@@ -195,7 +321,9 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
         END_SHORT_JUMP(2);
         END_CALL_R(REG_TRANSIENT_1);
     }
-    else if (fn == NULL) {
+    else
+#endif
+        if (fn == NULL) {
         BEGIN_CALL(1);
         CALL_SET_ARG_FROM_REG(rg, 0);
         MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));

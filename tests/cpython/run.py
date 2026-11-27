@@ -208,6 +208,8 @@ SKIPPED = {
         'test.test_weakref.__test__.libreftest '
         'test.test_gc.GCTests.test_newinstance '
         'test.test_gc.GCCallbackTests.test_collect_garbage '
+        'test.test_gc.GCTests.test_saveall '
+        'test.test_gc.GCTests.test_resurrection_does_not_block_cleanup_of_other_objects '
         'test.test_capi.*CAPITest.*_decrefs_once '
         '*test_python_api.PythonAPITestCase.test_PyObj_FromPtr '
         '*test_python_api.PythonAPITestCase.test_PyString_FromString',
@@ -251,6 +253,9 @@ SKIPPED = {
         'test.test_gc.GCTests.test_get_objects_arguments '
         'test.test_gc.GCTests.test_heap_size '
         'test.test_sys.SysModuleTest.test_getallocatedblocks',
+    'compiling allocates objects the gc tracks, so automatic collections '
+    'come at other moments, and the test expects none between two lines':
+        'test.test_weakref.ReferencesTestCase.test_callbacks_on_callback',
     'marshal of a code object with one reference':
         'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_code_bad_* '
         'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_no_bytecode',
@@ -354,7 +359,7 @@ one_at_a_time = threading.Lock()
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
 # so CPython aborts at it, LeJIT's own callback makes these abort.
-GC_CALLBACK_ABORTS = 'test_functools test_json test_pickle'
+GC_CALLBACK_ABORTS = 'test_functools test_json test_pickle test_pickletools'
 GC_CALLBACK_PROBE = r'''
 import gc, sys
 gc.callbacks.append(lambda phase, info: None)

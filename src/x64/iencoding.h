@@ -1561,6 +1561,16 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
     } while (0);                                                         \
     }                                                                    \
     while (0)
+/* ends a BEGIN_CALL whose calls were written in it, each at its depth */
+#define END_CALLS()                                                      \
+    do {                                                                 \
+        extra_assert(_last_arg_index == 0); /* every argument was set */ \
+        STACK_CORRECTION(_initial_stack_depth - po->stack_depth);        \
+        po->stack_depth = _initial_stack_depth;                          \
+        (void)_last_arg_index; /* read only by extra_assert */           \
+    } while (0);                                                         \
+    }                                                                    \
+    while (0)
 /* END_CALL_I, or END_CALL_R(r) where immed is NULL */
 #define END_CALL_I_OR_R(immed, r)                                        \
     do {                                                                 \

@@ -170,7 +170,6 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     return p;
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* its globals are its frame's (pvisitframes) */
 DEFINEFN
 stack_frame_info_t *
@@ -191,7 +190,6 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co)
         finfo_inlined_caller(p + 1, caller);
     return p;
 }
-#endif
 
 /* Read and written at every entry into compiled code, so kept in the
    static TLS block (initial-exec), read straight off %fs, not looked up
@@ -558,14 +556,13 @@ psyco_frame_start_unregister(FrameRuntime *fr)
 #endif
     if (fr->entry_locals == NULL)
         return;
+    psyco_frames_written--;
     for (i = 0; i < fr->n_entry_locals; i++) Py_XDECREF(fr->entry_locals[i]);
     PyMem_Free(fr->entry_locals);
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 static PyObject ***
 gen_keep_of(le_frame_t *f, int **n);
-#endif
 
 /* where what the compiled code running the real frame 'f' borrows from it
    is kept alive (psyco_frame_write_locals): its FrameRuntime's, or the
@@ -579,12 +576,12 @@ run_keep_of(le_frame_t *f, int **n)
         *n = &fr->n_entry_locals;
         return &fr->entry_locals;
     }
-#if LE_RESUMES_GENERATORS_DIRECTLY
     if (le_frame_is_gen(f))
         return gen_keep_of(f, n);
-#endif
     return NULL;
 }
+
+DEFINEVAR int psyco_frames_written = 0;
 
 /* The real frame's f_localsplus holds what compiled code was started
    with, which it borrows (arguments, cells) until it returns: the first
@@ -612,6 +609,7 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
         }
         *kept = keep;
         *nkeep = n;
+        psyco_frames_written++;
     }
     for (i = 0; i < count && start + i < n; i++) {
         if (values[i] == LE_LOCAL_UNKNOWN)
@@ -626,7 +624,6 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
    (psyco_frame_write_locals) is released as the run ends
    (psyco_frame_start_unregister), not here, where it could run code: the
    slots take the compiled code's values after this. */
-#if LE_RESUMES_ON_FRAME
 DEFINEFN void
 psyco_gen_take_written(le_frame_t *f, const le_gen_taken_t *t)
 {
@@ -649,31 +646,6 @@ psyco_gen_take_written(le_frame_t *f, const le_gen_taken_t *t)
     if (keep != NULL)
         *kept = keep;
 }
-
-#else
-DEFINEFN void
-psyco_gen_take_written(FrameRuntime *fr)
-{
-    le_frame_t *f = fr->frame;
-    int i, n = le_code_nlocals(le_frame_code(f));
-    PyObject **keep;
-    if (fr->entry_locals == NULL)
-        return;
-    keep = PyMem_Realloc(fr->entry_locals,
-                         (fr->n_entry_locals + n) * sizeof(PyObject *));
-    for (i = 0; i < n; i++) {
-        PyObject *o = le_frame_word_take(f, i);
-        if (o == NULL)
-            continue;
-        if (keep != NULL)
-            keep[fr->n_entry_locals++] = o;
-        else
-            Py_DECREF(o); /* out of memory */
-    }
-    if (keep != NULL)
-        fr->entry_locals = keep;
-}
-#endif
 
 static vinfo_t *
 lm_vinfo(long **p)
@@ -1150,7 +1122,6 @@ activation_of(PyFrameObject *f)
     return NULL;
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 static activation_t *
 gen_activation_find(PyFrameObject *f);
 
@@ -1171,17 +1142,14 @@ gen_runs_direct(le_frame_t *f)
             return false;
     return true;
 }
-#endif
 
 /* a kept frame the compiled code still runs, not ceval */
 static activation_t *
 live_activation(PyFrameObject *f)
 {
     activation_t *a = activation_of(f);
-#if LE_RESUMES_GENERATORS_DIRECTLY
     if (a == NULL && gen_runs_direct(le_frame_of(f)))
         a = gen_activation_find(f);
-#endif
     return a != NULL && !a->resumed ? a : NULL;
 }
 
@@ -1450,7 +1418,6 @@ walked_returned(stack_frame_info_t **own, FrameRuntime **run)
     return ret;
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* the generator's frame the call whose record is in 'slot' runs on, if
    the record says it runs on one (on_gen_frame): the word above the
    callee's own slot, which its caller pushed (psyco_call_psyco_gen) */
@@ -1528,11 +1495,11 @@ static PyObject ***
 gen_keep_of(le_frame_t *f, int **n)
 {
     size_t i;
-    if (acts_count == 0 || f->frame_obj == NULL)
+    PyFrameObject *fo = le_frame_object_made(f);
+    if (acts_count == 0 || fo == NULL)
         return NULL;
     for (i = 0; i <= acts_mask; i++)
-        if (acts[i].own != NULL && acts[i].gen &&
-            acts[i].frame == f->frame_obj) {
+        if (acts[i].own != NULL && acts[i].gen && acts[i].frame == fo) {
             *n = &acts[i].nkeep;
             return &acts[i].keep;
         }
@@ -1562,11 +1529,6 @@ gen_activation_find(PyFrameObject *f)
     Py_DECREF(k);
     return activation_of(f);
 }
-#else
-#define gen_frame_at(slot) ((le_frame_t *)NULL)
-#define gen_kept_frame(slot, lasti) ((PyFrameObject *)NULL)
-#define visited_gen_frame(v) ((le_frame_t *)NULL)
-#endif
 
 /* a kept frame no call can see any more goes */
 static void
@@ -2169,6 +2131,7 @@ psyco_activation_returned(long *sp)
     PyErr_Fetch(&t, &v, &tb);
     if (keep != NULL) {
         int i;
+        psyco_frames_written--;
         for (i = 0; i < nkeep; i++) Py_XDECREF(keep[i]);
         PyMem_Free(keep);
     }
@@ -3355,23 +3318,23 @@ frame_clear(PyFrameObject *frame, PyObject *unused)
 {
     PyObject *result;
     int old = 0, mark;
-#if LE_RESUMES_GENERATORS_DIRECTLY
     le_frame_t *f = le_frame_of(frame);
     /* a record's frame: running, CPython's method refuses it as the
        thread's; paused, its generator's, which the clear closes */
+#if LE_HAS_INTERPRETER_FRAME
     if (le_frame_is_record(f) && le_frame_executing(f)) {
         f->owner = FRAME_OWNED_BY_THREAD;
         result = clear_cpython->ml_meth((PyObject *)frame, NULL);
         f->owner = LE_FRAME_OWNED_BY_RECORD;
         return result;
     }
-    if (le_frame_is_record(f)) {
+#endif
+    if (le_frame_is_record(f) && !le_frame_executing(f)) {
         PyObject *gen = le_gen_record_escape_frame(f);
         if (gen == NULL)
             return NULL;
         Py_DECREF(gen);
     }
-#endif
     mark = stands_for_running(frame);
     if (mark)
         old = le_pyframe_mark_running(frame);
@@ -5556,14 +5519,12 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         /* the generator's own frame, which ceval goes on with as it
            resumes it: it is linked and has its builtins already. A
            record's is made a generator's first. */
-#if LE_RESUMES_GENERATORS_DIRECTLY
         if (le_frame_is_record(le_frame_of(g)) &&
             le_gen_record_escape_running(le_frame_of(g)) == NULL) {
             Py_DECREF(g);
             PyMem_Free(st);
             return NULL;
         }
-#endif
         a = act_find(psyco_next_stack_frame(st->slot));
         a->resumed = 1;
 #ifdef PyFrameLocalsProxy_Check
@@ -5676,7 +5637,6 @@ psyco_resume_value(struct resume_s *st, long i, PyObject *v)
     /* a handler's lasti, as the frame holds it (pycompiler.c:offset_int) */
     object = object && ((uintptr_t)v & Py_INT_TAG) != Py_INT_TAG;
 #endif
-#if LE_RESUMES_GENERATORS_DIRECTLY
     /* a record yield from steps: ceval steps its real generator */
     if (object && le_gen_record_check(v)) {
         v = le_gen_record_real(v);
@@ -5684,7 +5644,6 @@ psyco_resume_value(struct resume_s *st, long i, PyObject *v)
             OUT_OF_MEMORY();
         object = false;
     }
-#endif
     if (object)
         Py_INCREF(v);
     st->values[i] = v;
@@ -6127,7 +6086,7 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack, long level,
     if (f == NULL)
         PyObject_GC_Track(coro); /* made whole */
     PyMem_Free(st);
-#if LE_RESUMES_COROUTINES
+#if !LE_HAS_INTERPRETER_FRAME
     if (psyco_trace_yield(f, value) < 0) {
         Py_DECREF(coro);
         return NULL;

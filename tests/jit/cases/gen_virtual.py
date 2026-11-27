@@ -5,7 +5,7 @@
 # every way a step ends, the order objects die in when it is dropped
 # paused or ends, frames and tracebacks from inside its body, and every way
 # it is made real (escapes) followed by each use of the real one.
-import dis, gc, sys, weakref
+import gc, sys, weakref
 
 LOG = []
 
@@ -129,9 +129,7 @@ def yield_from(n):
     out = []
     for x in delegating(n):
         out.append(x)
-    # without SEND a body with yield from runs interpreted
-    return out, compiled(*([delegating] if 'SEND' in dis.opmap else []),
-                         inner_gen)
+    return out, compiled(delegating, inner_gen)
 
 
 # how a run ends: StopIteration's value, an exception, PEP 479

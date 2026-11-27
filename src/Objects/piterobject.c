@@ -307,7 +307,6 @@ compute_seqiter(PsycoObject *po, vinfo_t *v)
 
 DEFINEVAR source_virtual_t psyco_computed_seqiter;
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* compiled code's step of a generator resumes it directly
    (psyfunc.c:psyco_gen_step) */
 static vinfo_t *
@@ -330,7 +329,6 @@ pgen_send(PsycoObject *po, vinfo_t *self, vinfo_t *arg)
     return psyco_generic_call(po, cfunc_gen_send, CfCommonNewRefPyObject, "vv",
                               self, arg);
 }
-#endif
 
 INITIALIZATIONFN
 void
@@ -338,11 +336,9 @@ psy_iterobject_init(void)
 {
     Psyco_DefineMeta(PySeqIter_Type.tp_iternext, &piter_iternext);
     Psyco_DefineMeta(PyListIter_Type.tp_iternext, &piter_iternext);
-#if LE_RESUMES_GENERATORS_DIRECTLY
     Psyco_DefineMeta(PyGen_Type.tp_iternext, &pgen_iternext);
     cfunc_gen_send =
         Psyco_DefineMethodFn(&PyGen_Type, "send", METH_O, &pgen_send);
-#endif
 
     /* iterator object are mutable;
        they must be forced out of virtual-time across function calls */
