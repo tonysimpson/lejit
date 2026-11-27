@@ -355,15 +355,12 @@ cimpl_check_two_levels(void)
     return -1;
 }
 
-/* counts 'levels' calls in thread state 'vts': the condition under which
-   the count's rare path must be taken */
+/* the condition under which the Python count 'vdepth', as a call leaves
+   it, is past the limit */
 static inline condition_code_t
-recursion_count_over(PsycoObject *po, vinfo_t *vts, int levels)
+count_over(PsycoObject *po, vinfo_t *vdepth)
 {
     condition_code_t cc = CC_ERROR;
-    vinfo_t *vdepth = add_to_depth(po, levels * LE_RECURSION_STEP, vts);
-    if (vdepth == NULL)
-        return CC_ERROR;
 #if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
     cc = integer_cmp_i(po, vdepth, 0, Py_LT);
 #else
@@ -383,6 +380,19 @@ recursion_count_over(PsycoObject *po, vinfo_t *vts, int levels)
         }
     }
 #endif
+    return cc;
+}
+
+/* counts 'levels' calls in thread state 'vts': the condition under which
+   the count's rare path must be taken */
+static inline condition_code_t
+recursion_count_over(PsycoObject *po, vinfo_t *vts, int levels)
+{
+    condition_code_t cc;
+    vinfo_t *vdepth = add_to_depth(po, levels * LE_RECURSION_STEP, vts);
+    if (vdepth == NULL)
+        return CC_ERROR;
+    cc = count_over(po, vdepth);
     vinfo_decref(vdepth, po);
     return cc;
 }
@@ -623,6 +633,63 @@ c_recursion_give(PsycoObject *po, vinfo_t *vts, int through_c)
 #else
 #define LE_C_RECURSION_CHECKED 0
 #endif
+
+/* The condition under which 'levels' Py_EnterRecursiveCall tests, each
+   inside the last, made by C that compiled code calls here could fail;
+   nothing is counted. In an inlined frame the Python count lacks that
+   frame's level, which psyco_enter_recursive_call adds only around a call.
+   Where the C test measures the stack, a level is taken as
+   C_LEVEL_STACK bytes, more than the C between here and a test uses. */
+#define C_LEVEL_STACK 1024
+static inline condition_code_t
+recursion_levels_over(PsycoObject *po, vinfo_t *vts, int levels)
+{
+    condition_code_t cc;
+    vinfo_t *v, *vcount;
+#if LE_HAS_PY_RECURSION_REMAINING
+#if LE_HAS_C_RECURSION_REMAINING
+    /* a test fails where the count is 0 or less before it takes one */
+    vcount = psyco_get_field(po, vts, TSTATE_c_count);
+    if (vcount == NULL)
+        return CC_ERROR;
+    cc = integer_cmp_i(po, vcount, levels, Py_LT);
+    vinfo_decref(vcount, po);
+    (void)v;
+#elif LE_HAS_C_STACK_SOFT_LIMIT
+    vcount = psyco_get_field_offset(po, vts, FMUT(DEF_ARRAY(long, 0)),
+                                    le_c_stack_soft_limit_at);
+    if (vcount == NULL)
+        return CC_ERROR;
+    v = integer_add_i(po, vcount, (long)levels * C_LEVEL_STACK, true);
+    vinfo_decref(vcount, po);
+    if (v == NULL)
+        return CC_ERROR;
+    vcount = psyco_stack_pointer(po);
+    if (vcount == NULL) {
+        vinfo_decref(v, po);
+        return CC_ERROR;
+    }
+    cc = integer_cmp(po, vcount, v, Py_LT | COMPARE_UNSIGNED);
+    vinfo_decref(vcount, po);
+    vinfo_decref(v, po);
+#else
+    (void)po, (void)vts, (void)levels, (void)v, (void)vcount;
+    cc = CC_ALWAYS_TRUE;
+#endif
+#else
+    levels += po->pr.is_inlining;
+    vcount = psyco_get_field(po, vts, TSTATE_depth);
+    if (vcount == NULL)
+        return CC_ERROR;
+    v = integer_add_i(po, vcount, levels * LE_RECURSION_STEP, true);
+    vinfo_decref(vcount, po);
+    if (v == NULL)
+        return CC_ERROR;
+    cc = count_over(po, v);
+    vinfo_decref(v, po);
+#endif
+    return cc;
+}
 
 #if LE_C_RECURSION_CHECKED
 /* cimpl_check_recursive_call_after_c for two levels at once: the second is

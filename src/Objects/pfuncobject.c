@@ -542,9 +542,10 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
             return NULL;
     }
 
-    /* keyword-only defaults, unless the call names them all: those
+    /* keyword-only defaults, unless the call names them all or reads them
+       at run time (a dict's keywords): those
        recorded, while f has that dict and it is unchanged */
-    if (co->co_kwonlyargcount > 0) {
+    if (co->co_kwonlyargcount > 0 && !psyco_dict_keywords(po, kw)) {
         vinfo_t **kwvalues;
         PyObject *kwnames =
             kw == NULL ? NULL : PsycoDict_PendingNames(kw, &kwvalues);
@@ -617,11 +618,13 @@ DEFINEFN
 vinfo_t *
 pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
 {
-    /* keyword arguments: only pending ones (pdictobject.c), which the
-       binder takes; a call with them always has them */
+    /* keyword arguments: pending ones (pdictobject.c) or an f(*a, **d)
+       call's dict, which the binder takes; a call with them always has
+       them */
     vinfo_t **kwvalues;
     bool keywords = !psyco_known_NULL(kw);
-    if (keywords && PsycoDict_PendingNames(kw, &kwvalues) == NULL)
+    if (keywords && PsycoDict_PendingNames(kw, &kwvalues) == NULL &&
+        !psyco_dict_keywords(po, kw))
         goto fallback;
 
     if (!is_virtualtime(func->source)) {

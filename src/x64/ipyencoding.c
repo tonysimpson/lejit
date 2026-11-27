@@ -441,8 +441,8 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         MOV_R_O(REG_X64_RAX, REG_X64_RDI, LE_MANAGED_DICT_OFFSET);
         TEST_R_R(REG_X64_RAX, REG_X64_RAX);
         JCC_MISS(CC_NE); /* a dict was made, which may be watched */
-        MOV_R_R(REG_X64_R8, REG_X64_RDI);
-        values_at = s->dictoffset + LE_VALUES_ARRAY;
+        LEA_R_O(REG_X64_R8, REG_X64_RDI, s->dictoffset);
+        values_at = LE_VALUES_ARRAY;
 #elif LE_HAS_TAGGED_DICT_OR_VALUES
         TEST_I8_BO(REG_X64_RDI, s->dictoffset, 1);
         JCC_PROBE(CC_E); /* the dict, or none */
@@ -864,8 +864,8 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
 #if LE_HAS_INLINE_VALUES
         TEST_I8_BO(ro, s->dictoffset + LE_VALUES_VALID, 1);
         NEAR_JCC(CC_E, jdict, ndict); /* no longer its attributes */
-        MOV_R_R(REG_X64_R8, ro);
-        values_at = s->dictoffset + LE_VALUES_ARRAY;
+        LEA_R_O(REG_X64_R8, ro, s->dictoffset);
+        values_at = LE_VALUES_ARRAY;
 #elif LE_HAS_TAGGED_DICT_OR_VALUES
         TEST_I8_BO(ro, s->dictoffset, 1);
         NEAR_JCC(CC_E, jdict, ndict); /* the dict, or none */
