@@ -15,6 +15,14 @@
  */
 #include "prangeobject.h"
 #include "plongobject.h"
+#if LE_HAS_RANGE_ITER_FREE_LIST
+/* _Py_FREELIST_POP, through the exported _PyThreadState_GetCurrent */
+#define Py_BUILD_CORE
+#define Py_BUILD_CORE_MODULE
+#include "internal/pycore_freelist.h"
+#undef Py_BUILD_CORE_MODULE
+#undef Py_BUILD_CORE
+#endif
 
 /* rangeobject and rangeiterobject, private to Objects/rangeobject.c, are
    copied from the source into psyco.h */
@@ -69,12 +77,25 @@ cimpl_range_new(long start, long stop, long step)
                                  step);
 }
 
+/* a range iterator as fast_range_iter gets one: from the free list where
+   rangeiter_dealloc keeps them, else new */
+static rangeiterobject *
+rangeiter_alloc(void)
+{
+#if LE_HAS_RANGE_ITER_FREE_LIST
+    rangeiterobject *it = _Py_FREELIST_POP(rangeiterobject, range_iters);
+    if (it != NULL)
+        return it;
+#endif
+    return PyObject_New(rangeiterobject, &PyRangeIter_Type);
+}
+
 #if LE_HAS_RANGE_ITER_INDEX
 /* rangeobject.c:fast_range_iter with the index already advanced */
 static PyObject *
 cimpl_rangeiter_new(long index, long start, long step, long len)
 {
-    rangeiterobject *it = PyObject_New(rangeiterobject, &PyRangeIter_Type);
+    rangeiterobject *it = rangeiter_alloc();
     if (it == NULL)
         return NULL;
     it->index = index;
@@ -88,7 +109,7 @@ cimpl_rangeiter_new(long index, long start, long step, long len)
 static PyObject *
 cimpl_rangeiter_new(long start, long step, long len)
 {
-    rangeiterobject *it = PyObject_New(rangeiterobject, &PyRangeIter_Type);
+    rangeiterobject *it = rangeiter_alloc();
     if (it == NULL)
         return NULL;
     it->start = start;

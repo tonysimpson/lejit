@@ -283,6 +283,18 @@ def tuples_tracked(n):
             gc.enable()
 
 
+def range_iterators_made(n):
+    """a virtual range iterator made real where it escapes: given away part
+    used, and held by a generator across its yields"""
+    def counting(k):
+        for i in range(k):
+            yield i
+    it = iter(range(n, 3 * n, 2))
+    next(it, None)
+    gens = [counting(n) for _ in range(8)]
+    return list(it), [list(g) for g in gens], sum(counting(n))
+
+
 CASES = [
     ('compare_virtual', [(1, 2, 3), ('a', 'b', 'a'), (2.5, 1, 1)], {}),
     ('compare_items', "[(Eq(1), Eq(1)), (Eq(1), Eq(2)), (Eq('raise'), Eq(1)), (1, 'x')]", {}),
@@ -324,4 +336,5 @@ CASES = [
     ('method_subclass', "[(C(1),), (D(2),)]", {}),
     ('method_compare', "[(C(1),), (D(2),)]", {}),
     ('tuples_tracked', [(1,), (5,)], {}),
+    ('range_iterators_made', [(0,), (1,), (7,)], {}),
 ]

@@ -509,13 +509,35 @@ made_add(le_owner_t *o, code_t *start, code_t *end)
     nmade++;
 }
 
-static void
-made_forget(le_owner_t *o)
+static bool
+in_owner(const le_owner_t *o, code_t *p)
 {
-    int i;
+    void **b;
+    int k;
+    for (k = 0; k < o->nextents; k++)
+        if (o->extents[k].start <= p && p < o->extents[k].end)
+            return true;
+    for (b = o->blocks; b != NULL; b = *b)
+        if ((code_t *)(b + 2) <= p && p < (code_t *)(b + 2) + (size_t)b[1])
+            return true;
+    return false;
+}
+
+/* 'o' died, and what it held ('dead''s code and records) is about to be
+   freed: its pieces stay, and the notes in what it held are dropped, since
+   that memory may be anything's by the time the compile ends */
+static void
+made_forget(le_owner_t *o, const le_owner_t *dead)
+{
+    long i;
     for (i = 0; i < nmade; i++)
         if (made[i].owner == o)
             made[i].owner = NULL;
+    if (le_compile_depth == 0)
+        return;
+    for (i = 0; i < nnotes; i++)
+        if (notes[i].at != NULL && in_owner(dead, notes[i].at))
+            notes[i].at = NULL;
 }
 
 DEFINEFN void
@@ -835,6 +857,8 @@ psyco_code_move_made(void)
     for (i = j = 0; i < nnotes; i++) {
         note_t *x = &notes[i];
         made_t *m;
+        if (x->at == NULL)
+            continue;
         if (x->kind != LE_RELOC_WORD) {
             dword_t v;
             if (!in_regions(x->at))
@@ -1061,27 +1085,32 @@ psyco_owner_pin(PyObject *p)
     psyco_owner_keep(p);
 }
 
-/* each block is a list link, then the record */
+/* each block is a list link, its size in checked builds, then the record
+ */
+#define BLOCK_HEAD (ALL_CHECKS ? 2 : 1)
 DEFINEFN void *
 psyco_owner_alloc(size_t size)
 {
     le_owner_t *o = psyco_owner;
-    void **p = PyMem_Malloc(sizeof(void *) + size);
+    void **p = PyMem_Malloc(BLOCK_HEAD * sizeof(void *) + size);
     if (p == NULL || LE_FAIL(LE_FAIL_OWNER))
         OUT_OF_MEMORY();
-    memset(p + 1, 0, size);
+    memset(p + BLOCK_HEAD, 0, size);
+#if ALL_CHECKS
+    p[1] = (void *)size;
+#endif
     if (o != NULL) {
         *p = o->blocks;
         o->blocks = p;
     }
-    return p + 1;
+    return p + BLOCK_HEAD;
 }
 
 static void
 codebuf_unlist(CodeBufferObject *b);
 #if ALL_CHECKS
 static void
-made_forget(le_owner_t *o);
+made_forget(le_owner_t *o, const le_owner_t *dead);
 #endif
 EXTERNFN void
 psyco_owner_release_records(le_owner_t *o); /* dispatcher.c */
@@ -1178,7 +1207,7 @@ owner_free(le_owner_t *o, PyObject *mergepoints, PyObject *entry_point)
         free_release_pages(s, e);
     }
 #if ALL_CHECKS
-    made_forget(o);
+    made_forget(o, &dead);
     PyMem_Free(dead.relocs);
 #endif
     PyMem_Free(dead.extents);
