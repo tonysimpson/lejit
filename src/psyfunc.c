@@ -2074,10 +2074,10 @@ static bool
 iter_cannot_raise(PyTypeObject *tp)
 {
     static PyTypeObject *const iterables[] = {
-        &PyList_Type,      &PyTuple_Type,   &PyRange_Type,
-        &PyDict_Type,      &PySet_Type,     &PyFrozenSet_Type,
-        &PyUnicode_Type,   &PyBytes_Type,   &PyByteArray_Type,
-        &PyDictKeys_Type,  &PyDictValues_Type, &PyDictItems_Type};
+        &PyList_Type,     &PyTuple_Type,      &PyRange_Type,
+        &PyDict_Type,     &PySet_Type,        &PyFrozenSet_Type,
+        &PyUnicode_Type,  &PyBytes_Type,      &PyByteArray_Type,
+        &PyDictKeys_Type, &PyDictValues_Type, &PyDictItems_Type};
     size_t i;
     if (tp->tp_iter == PyObject_SelfIter)
         return true;
@@ -2085,6 +2085,28 @@ iter_cannot_raise(PyTypeObject *tp)
         if (tp->tp_iter == iterables[i]->tp_iter)
             return true;
     return false;
+}
+
+/* 'v' put in word 'k' of the record 'vrec', made real first, the word
+   taking a reference to it */
+static bool
+record_word_put(PsycoObject *po, vinfo_t *vrec, int k, vinfo_t *v)
+{
+    vinfo_t *w;
+    bool ok;
+    if (!compute_vinfo(v, po))
+        return false;
+#if LE_HAS_FRAME_STACKREFS
+    w = psyco_stackref_from_steal(po, v);
+#else
+    w = v;
+    vinfo_incref(w);
+#endif
+    ok = w != NULL && psyco_put_nth_field(po, vrec, REC_words, k, w);
+    vinfo_xdecref(w, po);
+    if (ok)
+        consume_reference(po, v);
+    return ok;
 }
 
 /* the free variables' cells of the function 'vfunc' of code 'co' put in
@@ -2098,20 +2120,9 @@ record_frees_put(PsycoObject *po, vinfo_t *vrec, vinfo_t *vfunc,
     vinfo_t *freebuf[MAX_CALL_FREES], **frees = NULL;
     int nfrees = co->co_nfreevars, ofs = le_code_nlocalsplus(co) - nfrees;
     int i, r = load_frees(po, vfunc, nfrees, freebuf, &frees);
-    for (i = 0; r > 0 && i < nfrees; i++) {
-        vinfo_t *cell = frees[i], *w;
-#if LE_HAS_FRAME_STACKREFS
-        w = psyco_stackref_from_steal(po, cell);
-#else
-        w = cell;
-        vinfo_incref(w);
-#endif
-        if (w == NULL || !psyco_put_nth_field(po, vrec, REC_words, ofs + i, w))
+    for (i = 0; r > 0 && i < nfrees; i++)
+        if (!record_word_put(po, vrec, ofs + i, frees[i]))
             r = -1;
-        else
-            consume_reference(po, cell);
-        vinfo_xdecref(w, po);
-    }
     return r;
 }
 
@@ -2162,7 +2173,7 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
        arguments, then its words, that iterator (and NULL) its stack */
     if (takes_iter) {
         viter = PsycoObject_GetIter(po, PsycoTuple_GET_ITEM(args, 0));
-        if (viter == NULL || !compute_vinfo(viter, po))
+        if (viter == NULL)
             goto error;
     }
     vrec = psyco_generic_call(po, le_gen_record_new, CfCommonNewRefPyObject,
@@ -2171,43 +2182,15 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
         goto error;
     vinfo_incref(args);
     PsycoVgen_FromPending(po, vgen, vrec);
-    for (i = 0; i < co->co_argcount; i++) {
-        vinfo_t *v = PsycoTuple_GET_ITEM(args, i), *w;
-        bool ok;
-        if (!compute_vinfo(v, po)) {
+    for (i = 0; i < co->co_argcount; i++)
+        if (!record_word_put(po, vrec, i, PsycoTuple_GET_ITEM(args, i))) {
             vinfo_decref(args, po);
             goto error;
         }
-#if LE_HAS_FRAME_STACKREFS
-        w = psyco_stackref_from_steal(po, v);
-#else
-        w = v;
-        vinfo_incref(w);
-#endif
-        ok = w != NULL && psyco_put_nth_field(po, vrec, REC_words, i, w);
-        vinfo_xdecref(w, po);
-        if (!ok) {
-            vinfo_decref(args, po);
-            goto error;
-        }
-        consume_reference(po, v);
-    }
     vinfo_decref(args, po);
     if (viter != NULL) {
-        vinfo_t *w;
-        bool ok;
-#if LE_HAS_FRAME_STACKREFS
-        w = psyco_stackref_from_steal(po, viter);
-#else
-        w = viter;
-        vinfo_incref(w);
-#endif
-        ok = w != NULL && psyco_put_nth_field(po, vrec, REC_words,
-                                              le_code_nlocalsplus(co), w);
-        vinfo_xdecref(w, po);
-        if (!ok)
+        if (!record_word_put(po, vrec, le_code_nlocalsplus(co), viter))
             goto error;
-        consume_reference(po, viter);
         vinfo_decref(viter, po);
         viter = NULL;
     }
