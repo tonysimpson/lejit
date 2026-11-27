@@ -699,7 +699,11 @@ le_eval_breaker_handler(void)
     struct _ceval_runtime_state *ceval = &_PyRuntime.ceval;
     if (_Py_atomic_load_relaxed(&ceval->signals_pending) ||
         _Py_atomic_load_relaxed(&ceval->pending.calls_to_do)) {
-        if ((_Py_atomic_load_relaxed(&ceval->signals_pending)
+        /* handle_signals runs only in the main thread of the main
+           interpreter, though eval_breaker is set in every thread */
+        if ((_Py_atomic_load_relaxed(&ceval->signals_pending) &&
+                     PyThread_get_thread_ident() == _PyRuntime.main_thread &&
+                     tstate->interp == _PyRuntime.interpreters.main
                  ? le_with_frames_linked(le_pending_calls, NULL)
                  : Py_MakePendingCalls()) < 0)
             return -1;
@@ -785,9 +789,14 @@ int
 le_eval_breaker_handler(void)
 {
     PyThreadState *tstate = PyThreadState_GET();
-    /* a signal is a pending call: its handler is given the frame */
+    /* a signal is a pending call: its handler is given the frame. The
+       calls run only in the main thread (once there are threads), though
+       eval_breaker is set in every thread */
     if (_Py_atomic_load_relaxed(&_PyRuntime.ceval.pending.calls_to_do)) {
-        if (le_with_frames_linked(le_pending_calls, NULL) < 0)
+        unsigned long main = _PyRuntime.ceval.pending.main_thread;
+        if ((main == 0 || PyThread_get_thread_ident() == main
+                 ? le_with_frames_linked(le_pending_calls, NULL)
+                 : Py_MakePendingCalls()) < 0)
             return -1;
     }
     if (_Py_atomic_load_relaxed(&_PyRuntime.ceval.gil_drop_request))
