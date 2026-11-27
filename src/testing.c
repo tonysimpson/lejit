@@ -452,6 +452,7 @@ le_run_frameless_test(PyObject *self, PyObject *const *args, Py_ssize_t n)
     PyFunctionObject *func;
     PyCodeObject *co;
     PyObject *entry;
+    allocs_asked++;
     if (n < 1 || !PyFunction_Check(args[0])) {
         PyErr_SetString(PyExc_TypeError, "_run_frameless() needs a function");
         return NULL;
