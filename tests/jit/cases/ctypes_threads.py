@@ -216,16 +216,18 @@ def callback_from_c():
     return out
 
 
+TIMED = {'objects': 'runs until a timer or another thread stops it'}
+
 CASES = [
     ('threads_calling_c', [()], {}),
-    ('python_runs_while_c_sleeps', [()], {}),
-    ('main_sleeps_in_c', [()], {}),
-    ('signal_during_calls', [()], {}),
-    ('async_exception_after_call', [()], {}),
+    ('python_runs_while_c_sleeps', [()], TIMED),
+    ('main_sleeps_in_c', [()], TIMED),
+    ('signal_during_calls', [()], TIMED),
+    ('async_exception_after_call', [()], TIMED),
     ('stress_tiny_switch_interval', [()],
-     {'leaks': 'at this switch interval the eval_breaker paths after the '
-               'calls are first taken, and compiled, at rounds that depend on '
-               'the threads\' timing'}),
+     dict(TIMED, leaks='at this switch interval the eval_breaker paths after '
+                       'the calls are first taken, and compiled, at rounds that '
+                       'depend on the threads\' timing')),
     ('daemon_threads_at_shutdown', [()], {}),
     ('callback_from_c', [()], {}),
 ]

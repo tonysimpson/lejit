@@ -33,14 +33,15 @@ if use_lejit:
     if checked and not hasattr(lejit._core, '_stats'):
         sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
     lejit.start()
-# run at module level, so it is never compiled
+# run at module level, so it is never compiled; it names no object it
+# counts, as loading a name bound to a lazy import's object (3.15)
+# imports its module
 COUNT_ALIVE = compile('''
 alive = {}
-for o in gc.get_objects():
-    t = type(o)
+for t in map(type, gc.get_objects()):
     name = t.__qualname__ if t.__module__ == 'builtins' else '%s.%s' % (t.__module__, t.__qualname__)
     alive[name] = alive.get(name, 0) + 1
-del o, t, name
+del t, name
 ''', 'count_alive', 'exec')
 out = []
 for args in calls:
