@@ -212,6 +212,8 @@ def main():
             problem = err
         else:
             extra = [l for l in err if l not in ref_err]
+            expected.pop()
+            rounds = got.pop()[len('rounds: '):]
             made, object_counts = objects_compared(expected.pop(), got.pop())
             leak_ref = int(expected.pop().split()[1])
             leak_lejit, repeats = map(int, got.pop().split()[1:])
@@ -230,6 +232,7 @@ def main():
             elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
+                problem += '; blocks every 10 rounds, then collected: ' + rounds
                 if repeated:
                     problem += '; ' + repeated
             elif extra:
