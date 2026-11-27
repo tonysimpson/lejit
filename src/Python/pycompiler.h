@@ -13,6 +13,7 @@
 #include "pyver.h"
 #include "v_mem_mov.h"
 #include "../mechanisms/exc.h"
+#include "../mechanisms/tstate.h"
 
 /*#define MAX3(a,b,c)  ((a)>(b)?((a)>(c)?(a):(c)):(b)>(c)?(b):(c))*/
 
@@ -323,9 +324,7 @@ psyco_PyErr_Occurred(PsycoObject *po)
         /* inline PyErr_Occurred */
         vinfo_t *vtstate;
         vinfo_t *vcurexc;
-        /* XXX Can we get _PyThreadState_Current to make this quicker ? */
-        vtstate =
-            psyco_generic_call(po, PyThreadState_Get, CfReturnTypePtr, "");
+        vtstate = le_tstate_load(po);
         vcurexc = v_mem_mov(po, NULL, vtstate, NULL, LE_EXC_OCCURRED_OFFSET,
                             V_MEM_MOV_SCALE_POINTER, false);
         vinfo_decref(vtstate, po);
