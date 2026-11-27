@@ -2054,19 +2054,6 @@ gen_step_tests(PsycoObject *po, const struct gen_layout *L, vinfo_t *vgen,
     return r;
 }
 
-/* whether the pending generator 'vgen' of code 'co' can become virtual
-   at its first step: a plain generator whose body runs compiled, bound
-   from its positional arguments alone */
-static bool
-vgen_startable(vinfo_t *vgen, PyCodeObject *co)
-{
-    vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-    bool takes_iter;
-    return pending_steppable(co) && args != NULL &&
-           PsycoTuple_Load(args) == co->co_argcount &&
-           le_gen_record_start_unit(co, &takes_iter) >= 0;
-}
-
 /* whether iter() of an object of type 'tp' can't raise but for memory,
    nor run Python: so that taking it in a generator expression's
    consumer, not in the body before RETURN_GENERATOR, can't be seen */
@@ -2085,6 +2072,28 @@ iter_cannot_raise(PyTypeObject *tp)
         if (tp->tp_iter == iterables[i]->tp_iter)
             return true;
     return false;
+}
+
+/* whether the pending generator 'vgen' of code 'co' can become virtual
+   at its first step: a plain generator whose body runs compiled, bound
+   from its positional arguments alone. One whose body takes the iterator
+   of its argument has it taken by the consumer instead, so only from an
+   iterable of a type known here (promoting it, a value inside the pending
+   generator, can loop at a megamorphic site) whose iter() can't be seen. */
+static bool
+vgen_startable(vinfo_t *vgen, PyCodeObject *co)
+{
+    vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
+    bool takes_iter;
+    PyTypeObject *tp;
+    if (!pending_steppable(co) || args == NULL ||
+        PsycoTuple_Load(args) != co->co_argcount ||
+        le_gen_record_start_unit(co, &takes_iter) < 0)
+        return false;
+    if (!takes_iter)
+        return true;
+    tp = Psyco_KnownType(PsycoTuple_GET_ITEM(args, 0));
+    return tp != NULL && iter_cannot_raise(tp);
 }
 
 /* 'v' put in word 'k' of the record 'vrec', made real first, the word
@@ -2144,13 +2153,6 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     long start = le_gen_record_start_unit(co, &takes_iter);
     long nstack = takes_iter ? 1 + LE_HAS_GET_ITER_INDEX : 0;
     int r, i;
-    /* only where its type is known: promoting it here, a value inside the
-       pending generator, can loop at a megamorphic site */
-    if (takes_iter) {
-        PyTypeObject *tp = Psyco_KnownType(PsycoTuple_GET_ITEM(args, 0));
-        if (tp == NULL || !iter_cannot_raise(tp))
-            return 0;
-    }
     if (callee_builtins(po, vfunc, vglobals, &vb) != 1)
         return 0;
     vt = vinfo_new(CompileTime_New((long)t));
