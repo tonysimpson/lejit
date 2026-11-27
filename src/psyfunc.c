@@ -2144,11 +2144,11 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     long start = le_gen_record_start_unit(co, &takes_iter);
     long nstack = takes_iter ? 1 + LE_HAS_GET_ITER_INDEX : 0;
     int r, i;
+    /* only where its type is known: promoting it here, a value inside the
+       pending generator, can loop at a megamorphic site */
     if (takes_iter) {
-        PyTypeObject *tp = Psyco_NeedType(po, PsycoTuple_GET_ITEM(args, 0));
-        if (tp == NULL)
-            return -1;
-        if (!iter_cannot_raise(tp))
+        PyTypeObject *tp = Psyco_KnownType(PsycoTuple_GET_ITEM(args, 0));
+        if (tp == NULL || !iter_cannot_raise(tp))
             return 0;
     }
     if (callee_builtins(po, vfunc, vglobals, &vb) != 1)

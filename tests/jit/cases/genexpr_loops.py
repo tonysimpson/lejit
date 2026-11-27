@@ -129,9 +129,10 @@ def stops_early(n):
 
 def iterable_dies(n):
     # the iterable made only for the generator dies with it, as in CPython
+    # (the order its items die in is another matter, so the first is sorted)
     LOG.clear()
     out = [list(len(w.name) for w in [Noted('a'), Noted('b')][:n]),
-           list(LOG)]
+           sorted(LOG)]
     LOG.clear()
     out.append(any(True for w in [Noted('c'), Noted('d')]))
     out.append(list(LOG))
@@ -166,6 +167,15 @@ def in_generator(n):
     return [list(pairs(xs)), list(held_gen(xs))]
 
 
+# one generator expression's iterable of many types, past what its site
+# promotes
+KINDS = [type('Kind%d' % i, (list,), {}) for i in range(40)]
+
+
+def many_kinds(n):
+    return [any(x > n for x in k(range(i))) for i, k in enumerate(KINDS)]
+
+
 CASES = [
     ('consumers', [(0,), (1,), (3,)], {}),
     ('strings', [(0,), (3,)], {}),
@@ -176,4 +186,5 @@ CASES = [
     ('stops_early', [(3,)], {}),
     ('iterable_dies', [(2,)], {}),
     ('in_generator', [(3,)], {}),
+    ('many_kinds', [(5,)], {}),
 ]
