@@ -8893,14 +8893,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             }
 #else
             else if (mode == GENEXPR_SUM) {
-                /* as builtin_sum's generic loop (its fast paths give
-                   the same results as + on ints and floats) */
-                if (Psyco_KnownType(acc) != NULL)
-                    x = PsycoNumber_Add(po, acc, v);
-                else
-                    x = psyco_generic_call(po, PyNumber_Add,
-                                           CfCommonNewRefPyObject, "vv", acc,
-                                           v);
+                x = psyco_sum_add(po, acc, v);
                 if (x == NULL)
                     break;
                 po->vlocals.items[slot + 1] = x;
