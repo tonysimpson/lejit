@@ -773,6 +773,11 @@ def tstate_attach(s):
 
 
 
+def function_vectorcall(s):
+    """a function keeps the C function its calls go through (vectorcall)"""
+    return _field(s, 'PyFunctionObject', 'vectorcall')
+
+
 def tstate_holds_gil(s):
     """a thread state says whether it holds the GIL in a field of its own,
     holds_gil (else in its _status bits)"""
@@ -1113,6 +1118,12 @@ def range_iter_index(s):
     return _body_has(s, 'Objects/rangeobject.c', 'rangeiter_next', 'r->index')
 
 
+def range_iter_free_list(s):
+    """a range iterator is taken from the thread's free list where
+    rangeiter_dealloc keeps them (fast_range_iter), not always allocated"""
+    return _body_has(s, 'Objects/rangeobject.c', 'fast_range_iter', '_Py_FREELIST_POP')
+
+
 def inline_values(s):
     """a class with Py_TPFLAGS_INLINE_VALUES keeps its instances' values in
     the object, at its tp_basicsize (_PyObject_InlineValues): a PyDictValues
@@ -1358,7 +1369,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # gone from 3.15: yield from's is GET_ITER with an argument
            'GET_YIELD_FROM_ITER',
            # gone from 3.16: del is PUSH_NULL and the store
-           'DELETE_ATTR', 'DELETE_GLOBAL')
+           'DELETE_ATTR', 'DELETE_GLOBAL', 'DELETE_NAME')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1592,6 +1603,7 @@ EXPORTS = [
     ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
     ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
     ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
+    ('LAZY_IMPORT_NAME_LINKABLE', '_PyEval_LazyImportName'),
 ]
 
 
@@ -1725,6 +1737,7 @@ STATE = [
     ('TSTATE_STATUS', tstate_status),
     ('TSTATE_ATTACH', tstate_attach),
     ('TSTATE_HOLDS_GIL', tstate_holds_gil),
+    ('FUNCTION_VECTORCALL', function_vectorcall),
     ('TSTATE_GIL_REQUESTED', tstate_gil_requested),
     ('GENERATOR_RETURN_KIND', generator_return_kind),
     ('LAST_PROFILED_FRAME', last_profiled_frame),
@@ -1818,6 +1831,7 @@ OBJECTS = [
     ('DEALLOC_DEFERS_TO_TRASHCAN', dealloc_defers_to_trashcan),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
+    ('RANGE_ITER_FREE_LIST', range_iter_free_list),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),
 
 

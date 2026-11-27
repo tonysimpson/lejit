@@ -26,6 +26,11 @@ psyco_sum_step(PsycoObject *po, int *phase, vinfo_t **acc, vinfo_t **comp,
                vinfo_t *item);
 EXTERNFN vinfo_t *
 psyco_sum_result(PsycoObject *po, int phase, vinfo_t *acc, vinfo_t *comp);
+#else
+/* one item of a sum() where float sums aren't compensated: acc + item as
+   builtin_sum_impl gives it, a new reference */
+EXTERNFN vinfo_t *
+psyco_sum_add(PsycoObject *po, vinfo_t *acc, vinfo_t *item);
 #endif
 
 #endif /* _PSY_BLTINMODULE_H */
