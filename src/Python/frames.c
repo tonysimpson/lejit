@@ -26,7 +26,7 @@
  * is not compiled; reached by another name, they run with the frame
  * emulated and current (cimpl_with_frame). Every read of a frame's
  * locals (f_locals, those builtins, gc.get_referents) writes them in
- * first, as they are then (frame_sync_locals). A traceback's frame gets
+ * first, as they are then (view_sync). A traceback's frame gets
  * the locals when the exception leaves the frame (psyco_frame_write_locals);
  * the frame that catches it is held by its catcher word until its call
  * ends and reads them like an emulated frame (CATCHER_NOTE), and gets them
@@ -893,7 +893,7 @@ locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot, int own)
 }
 
 /* An emulated frame's locals are read from its compiled frame each time
-   they are asked for (frame_sync_locals), not made with it: most emulated
+   they are asked for (view_sync), not made with it: most emulated
    frames are walked over for their code and line. Its empty value stack
    holds LOCALS_NOTE and its tag meanwhile. Once the compiled frame no
    longer runs (its code and tag no longer in LeJIT's chain), the frame
@@ -1007,7 +1007,7 @@ psyco_build_pyframe(PyObject *co, PyObject *globals, PyThreadState *tstate)
    psyco_return_barrier, which lets the frame go when it returns
    (psyco_activation_returned): nothing is stored or tested while no frame
    is asked for. A kept frame's locals and line are read from the call
-   when asked for (frame_sync_locals, kept_lasti). Keyed by the callee's own
+   when asked for (view_sync, kept_lasti). Keyed by the callee's own
    slot, a stack address, unique among the calls running in every thread.
    An inlined frame has no call of its own whose return could be seen: its
    frame is kept until the code it is inlined in leaves it, which then
@@ -2525,7 +2525,7 @@ visit_back_frame(const visited_frame_t *v, void *data)
    empty value stack holds CATCHER_NOTE, the callee's own slot and the
    word's address. A read finds the callee among this thread's running
    compiled frames by its slot (catcher_slot), and takes its locals
-   (frame_sync_locals) and caller (frame_get_back) then, so that it shows
+   (view_sync) and caller (frame_get_back) then, so that it shows
    them as they are when read, as CPython's frame does. The note goes
    when the word lets the frame go, so it never outlives the call. */
 static char catcher_note;
@@ -2779,24 +2779,44 @@ exposed_flag(PyFrameObject *f)
 }
 #endif
 
-/* A frame's locals as they are now, for each way Python reads them
-   (frame.f_locals; locals and vars by another name, cimpl_with_frame;
-   gc.get_referents, le_get_referents): a real frame compiled code runs, a
-   kept frame, an emulated frame and a catching callee's traceback frame
-   read theirs from their compiled frame while it is in a call that says
-   where they are (slot_locals). Else they stay as last written. An
-   exposed frame's are its frame object's already (expose). */
-static void
-frame_sync_locals(PyFrameObject *f)
+/* A frame object that stands for a compiled frame, brought up to date
+   with it for each way Python reads it (its getters; locals and vars by
+   another name, cimpl_with_frame; gc.get_referents, le_get_referents; the
+   C API's readers). VIEW_PLACE: where the compiled frame is now (bytes),
+   returned, or -1 where it doesn't say or the frame is traced; a kept
+   frame's f_lasti is set there too, not the real frame's, which ceval
+   resumes from. VIEW_LOCALS: its locals, read while the compiled frame is
+   in a call that says where they are (slot_locals); a real frame compiled
+   code runs, a kept frame, an emulated frame and a catching callee's
+   traceback frame. Else they stay as last written. An exposed frame's are
+   its frame object's already (expose). */
+#define VIEW_PLACE 1
+#define VIEW_LOCALS 2
+static int
+root_lasti(PyFrameObject *frame);
+
+static int
+view_sync(PyFrameObject *f, int what)
 {
     activation_t *a;
     stack_frame_info_t **own;
     FrameRuntime *fr;
+    int lasti = -1;
 #ifdef PyFrameLocalsProxy_Check
     int *exposed = exposed_flag(f);
     if (exposed != NULL && *exposed)
-        return;
+        what &= ~VIEW_LOCALS;
 #endif
+    if (f->f_trace != NULL)
+        what &= ~VIEW_PLACE;
+    if ((what & VIEW_PLACE) && (a = live_activation(f)) != NULL) {
+        if ((lasti = kept_lasti(a)) >= 0)
+            le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
+    }
+    else if ((what & VIEW_PLACE) && runs_compiled(f))
+        lasti = root_lasti(f);
+    if (!(what & VIEW_LOCALS))
+        return lasti;
     if (runs_compiled(f)) {
         fr = psyco_frame_start_get(le_frame_of(f));
         if (fr->psy_code == le_pyframe_code(f))
@@ -2812,6 +2832,7 @@ frame_sync_locals(PyFrameObject *f)
     else {
         fill_noted_locals(f);
     }
+    return lasti;
 }
 
 #ifdef PyFrameLocalsProxy_Check
@@ -2828,7 +2849,7 @@ expose(PyFrameObject *f, int write)
     int *exposed = exposed_flag(f);
     if (exposed != NULL && *exposed)
         return;
-    frame_sync_locals(f);
+    view_sync(f, VIEW_LOCALS);
     if (write && exposed != NULL) {
         *exposed = 1;
         psyco_frames_exposed++;
@@ -3026,29 +3047,10 @@ line_object(int line)
     return PyLong_FromLong(line);
 }
 
-/* where compiled code running the frame is now (bytes), or -1: a kept
-   frame is placed there too */
-static int
-compiled_place(PyFrameObject *frame)
-{
-    activation_t *a;
-    int lasti = -1;
-    if (frame->f_trace != NULL)
-        return -1;
-    if ((a = live_activation(frame)) != NULL) {
-        lasti = kept_lasti(a);
-        if (lasti >= 0)
-            le_frame_set_lasti(le_frame_of(frame), le_lasti_of(lasti));
-    }
-    else if (runs_compiled(frame))
-        lasti = root_lasti(frame);
-    return lasti;
-}
-
 static PyObject *
 frame_get_lineno(PyFrameObject *frame, void *closure)
 {
-    int lasti = compiled_place(frame);
+    int lasti = view_sync(frame, VIEW_PLACE);
     if (lasti >= 0 && runs_compiled(frame))
         return line_object(PyCode_Addr2Line(le_pyframe_code(frame), lasti));
     return line_object(PyFrame_GetLineNumber(frame));
@@ -3069,7 +3071,7 @@ static PyGetSetDef *lasti_cpython;
 static PyObject *
 frame_get_lasti(PyFrameObject *frame, void *closure)
 {
-    int lasti = compiled_place(frame);
+    int lasti = view_sync(frame, VIEW_PLACE);
     if (lasti >= 0 && runs_compiled(frame))
         return PyLong_FromLong(lasti);
     return lasti_cpython->get((PyObject *)frame, lasti_cpython->closure);
@@ -3078,13 +3080,13 @@ frame_get_lasti(PyFrameObject *frame, void *closure)
 static PyGetSetDef lasti_getset = {NULL, (getter)frame_get_lasti};
 
 /* frame.f_locals, replaced too: PyFrame_FastToLocals
-   reads f_localsplus, which frame_sync_locals brings up to date */
+   reads f_localsplus, which view_sync brings up to date */
 static PyGetSetDef *locals_cpython;
 
 static PyObject *
 frame_get_locals(PyFrameObject *frame, void *closure)
 {
-    frame_sync_locals(frame);
+    view_sync(frame, VIEW_LOCALS);
     return locals_cpython->get((PyObject *)frame, locals_cpython->closure);
 }
 
@@ -3792,7 +3794,7 @@ cimpl_with_frame(long which, PyObject *self, PyObject *args)
         if (top != NULL && runs_compiled(top))
             top = root_copy(top);
         else if (top != NULL)
-            frame_sync_locals(top);
+            view_sync(top, VIEW_LOCALS);
         if (top != NULL && le_frame_of(top) != saved)
             le_pyframe_make_current(ts, top);
     }
@@ -4145,7 +4147,7 @@ le_get_referents(PyObject *self, PyObject *args)
         old[i] = INT_MIN; /* not marked */
         if (!PyFrame_Check(f))
             continue;
-        frame_sync_locals(f);
+        view_sync(f, VIEW_LOCALS);
         if (stands_for_running(f))
             old[i] = le_pyframe_mark_running(f);
     }
@@ -4580,7 +4582,7 @@ gen_guard_init(void)
    frame's locals, replaced at their entries (x64/ipatch.c) for every
    caller, extensions and CPython itself: the frame they find is the one
    Python sees (sys._getframe), not the nearest real one, and a frame's
-   locals are its compiled frame's now (frame_sync_locals). Each then runs
+   locals are its compiled frame's now (view_sync). Each then runs
    CPython's own function, with that frame current if need be, as
    le_warn_with_frames does for _warnings.warn. A function the build
    doesn't export, or whose entry can't be replaced, stays CPython's; so
@@ -4670,8 +4672,8 @@ capi_innermost(int linked, int locals)
     capi_finding = 1;
     f = linked ? linked_frame(0, NULL)
                : (PyFrameObject *)pvisitframes(visit_innermost, NULL);
-    if (f != NULL && locals)
-        frame_sync_locals(f);
+    if (f != NULL)
+        view_sync(f, VIEW_PLACE | (locals ? VIEW_LOCALS : 0));
     capi_finding = 0;
     PyErr_Restore(t, v, tb);
     return f;
@@ -4686,7 +4688,7 @@ capi_sync(PyFrameObject *f)
         return;
     PyErr_Fetch(&t, &v, &tb);
     capi_finding = 1;
-    frame_sync_locals(f);
+    view_sync(f, VIEW_PLACE | VIEW_LOCALS);
     capi_finding = 0;
     PyErr_Restore(t, v, tb);
 }
