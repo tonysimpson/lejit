@@ -481,6 +481,37 @@ def freed_lists_traced(n):
     return counts
 
 
+def _within(x, tol):
+    if x:
+        pass
+    return x <= tol
+
+
+def _within_star(*args):
+    # its arguments come as a virtual tuple of the constants
+    x, tol = args
+    if x:
+        pass
+    return x <= tol
+
+
+def callee_outlives_constants():
+    # module code passes its float constants to a callee compiled for them,
+    # then dies with them; the next module code's constants often get their
+    # addresses, and the callee's code must not take them for the old ones
+    out = []
+    ns = {'within': _within, 'within_star': _within_star}
+    for k in range(10):
+        exec(compile('r = within(%d.5, 2.0)' % (k % 2 * 2), 'a', 'exec'), ns)
+        out.append(ns['r'])
+    for f in ['within', 'within_star']:
+        for args in ['0.0002, 0.0003', '0.0002, 0.0001', '3.0, 2.0',
+                     '1.0, 2.0', '*(3.0, 2.0)', '*(1.0, 2.0)']:
+            exec(compile('r = %s(%s)' % (f, args), 'b', 'exec'), ns)
+            out.append(ns['r'])
+    return out
+
+
 FRESH = 'makes new code'
 
 CASES = [
@@ -503,4 +534,5 @@ CASES = [
     ('made_functions_free', [()], {'compiles_each_call': FRESH, 'checked': 'reads lejit._core._stats'}),
     ('promoted_reference_released', [()], {}),
     ('freed_lists_traced', [(50,)], {}),
+    ('callee_outlives_constants', [()], {'compiles_each_call': FRESH, 'interpreted': 'calls exec'}),
 ]
