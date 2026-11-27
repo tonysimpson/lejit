@@ -5327,9 +5327,11 @@ capi_eval_getglobals(void)
 static PyObject *
 capi_eval_getbuiltins(void)
 {
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
     PyFunctionObject *func = capi_innermost_function();
     if (func != NULL)
         return func->func_builtins;
+#endif
     return capi_call_current(eval_getbuiltins_cpython, 0);
 }
 
@@ -5359,11 +5361,13 @@ capi_eval_getframeglobals(void)
 static PyObject *
 capi_eval_getframebuiltins(void)
 {
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
     PyFunctionObject *func = capi_innermost_function();
     if (func != NULL) {
         Py_INCREF(func->func_builtins);
         return func->func_builtins;
     }
+#endif
     return capi_call_current(eval_getframebuiltins_cpython, 0);
 }
 
