@@ -3577,8 +3577,10 @@ frames_linked(linked_t *l, int how)
         l->top = linked_frame(0, l->undo);
     if (l->top != NULL && (how & LINK_COPY_ROOT) && runs_compiled(l->top))
         l->top = root_copy(l->top);
-    else if (l->top != NULL && (how & (LINK_LOCALS | LINK_COPY_ROOT)))
-        view_sync(l->top, VIEW_LOCALS);
+    else if (l->top != NULL)
+        view_sync(l->top, VIEW_PLACE | (how & (LINK_LOCALS | LINK_COPY_ROOT)
+                                            ? VIEW_LOCALS
+                                            : 0));
     if (l->top != NULL && le_frame_of(l->top) != l->saved)
         le_pyframe_make_current(ts, l->top);
     capi_finding = 0;
