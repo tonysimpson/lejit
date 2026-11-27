@@ -1219,7 +1219,12 @@ static const char stack_probe_source[] =
     "def next_(n):\n"
     "    yield sp() if n == 0 else next(next_(n - 1))\n"
     "def send_(n):\n"
-    "    yield sp() if n == 0 else send_(n - 1).send(None)\n";
+    "    yield sp() if n == 0 else send_(n - 1).send(None)\n"
+    "class Ex_:\n"
+    "    def m(self, n):\n"
+    "        return sp() if n == 0 else self.m(*(n - 1,))\n"
+    "def ex_(n):\n"
+    "    return Ex_().m(n)\n";
 
 /* the C stack pointer at the bottom of 'fn'(depth), a generator stepped
    once if 'gen'; 0 with an exception set */
@@ -1249,7 +1254,7 @@ stack_probe_level(PyObject *ns, const char *name)
 {
     PyObject *fn = PyDict_GetItemString(ns, name);
     uintptr_t one = 0, two = 0;
-    int gen = strcmp(name, "call_") != 0, round;
+    int gen = strcmp(name, "call_") != 0 && strcmp(name, "ex_") != 0, round;
     if (fn == NULL)
         return 0;
     for (round = 0; round < 3; round++) {
@@ -1317,6 +1322,7 @@ le_entry_install(void)
             plain_step[LE_C_CONSUMER] = stack_probe_level(probes, "sum_");
             plain_step[LE_C_NEXT] = stack_probe_level(probes, "next_");
             plain_step[LE_C_SEND] = stack_probe_level(probes, "send_");
+            plain_step[LE_C_EX_METHOD] = stack_probe_level(probes, "ex_");
         }
     }
 #endif

@@ -47,7 +47,9 @@ SKIPPED = {
     "sys.getrefcount counts a constant once for each compiled block that "
     'uses it, and the code compiled while a test counts holds more':
         'test.test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
-        'test.test_xml_etree_c.BugsTest.test_bug_xmltoolkit63',
+        'test.test_xml_etree_c.BugsTest.test_bug_xmltoolkit63 '
+        'ctypes.test.test_refcounts.AnotherLeak.test_callback '
+        'test.test_ctypes.test_refcounts.AnotherLeak.test_callback',
     "CPython doesn't specialise Python calls, __getitem__ and properties "
     'while a frame-evaluation hook is installed (specialize.c, '
     'SPEC_FAIL_CALL_PEP_523)':
