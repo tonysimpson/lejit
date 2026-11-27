@@ -152,6 +152,12 @@ psyco_frame_called_from_callee(le_frame_t *back);
    reference, or NULL) */
 EXTERNFN PyFrameObject *
 psyco_frame_callee_back(void);
+#if LE_HAS_EVAL_FRAME_POPS
+/* whether 'o' is the frame object, outliving it, of a frame of code 'co'
+   called from 'caller' that ceval has just popped */
+EXTERNFN int
+psyco_frame_popped_from(PyObject *o, PyCodeObject *co, le_frame_t *caller);
+#endif
 EXTERNFN PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack);
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */

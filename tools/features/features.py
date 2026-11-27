@@ -635,6 +635,13 @@ def gc_head_internal(s):
     return True, path + ':PyGC_Head'
 
 
+def gc_generation0(s):
+    """the GC's state points to its youngest generation's list, which
+    _PyObject_GC_TRACK appends to, as generation0, not only holding it (as
+    young.head)"""
+    return _field(s, '_gc_runtime_state', 'generation0', missing=False)
+
+
 def gc_head_two_words(fields):
     """PyGC_Head's fields are the words _gc_next and _gc_prev; _gc_next may
     be declared through _Py_ALIGNED_DEF(N, uintptr_t), which keeps its size
@@ -1750,6 +1757,7 @@ STATE = [
     ('CFRAME', cframe),
     ('GC_TRACKED_BY_NEXT', gc_tracked_by_next),
     ('GC_HEAD_INTERNAL', gc_head_internal),
+    ('GC_GENERATION0', gc_generation0),
     ('MONITORING', monitoring),
     ('INTERP_MONITORING_VERSION', interp_monitoring_version),
     ('THREAD_LOCAL_TSTATE', thread_local_tstate),

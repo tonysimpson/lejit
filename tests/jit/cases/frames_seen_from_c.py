@@ -2,9 +2,11 @@
 # an adversarial test's frames_logging: the f_back of a
 # frame a keyword call runs, warnings' stacklevel, which _warnings walks in
 # C from tstate->frame, and emulated frames' current lines.
+import gc
 import inspect
 import io
 import logging
+import operator
 import sys
 import traceback
 import warnings
@@ -363,6 +365,47 @@ def raised_back_names_interpreted():
     return out, entries[-1].f_back is entries[-2]
 
 
+def own_frame_or_none(keep, collect):  # locals(): never compiled
+    locals()
+    f = sys._getframe()
+    if collect:
+        gc.collect()
+    if keep:
+        return f
+    del f
+    return None
+
+
+# a C function that calls with no object of its own made
+_call = getattr(operator, 'call', lambda f, *a: f(*a))
+
+
+def drops_own_frame_through_c():
+    return _call(own_frame_or_none, False, False)
+
+
+def keeps_own_frame_through_c():
+    return _call(own_frame_or_none, True, True)
+
+
+# a frame that outlives its call from the frame itself keeps it as f_back,
+# though the next call through C from a compiled callee makes a frame
+# object of the same code and lets it go; one kept through a collection
+# keeps the callee
+def back_names_kept_and_dropped():
+    direct = own_frame_or_none(True, False)
+    drops_own_frame_through_c()
+    collected = keeps_own_frame_through_c()
+    out = []
+    for f, n in ((direct, 2), (collected, 3)):
+        names = []
+        while f is not None and len(names) < n:
+            names.append(f.f_code.co_name)
+            f = f.f_back
+        out.append(names)
+    return out
+
+
 def module_names():
     getname = getattr(sys, '_getframemodulename', None)
     if getname is None:                  # before 3.12
@@ -494,6 +537,7 @@ CASES = [
     ('returned_back_names', "[()]", {}),
     ('returned_back_names_interpreted', "[()]", {}),
     ('raised_back_names_interpreted', "[()]", {}),
+    ('back_names_kept_and_dropped', "[()]", {}),
     ('caller_module_name', "[()]", {}),
     ('module_of_made_objects', "[(), ()]", {}),
     ('raised_middle', "[()]", {}),

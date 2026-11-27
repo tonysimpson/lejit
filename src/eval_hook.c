@@ -965,28 +965,25 @@ static le_eval_frame_fn original_eval_frame = NULL;
    pops it. A frame object made for it that outlives it gets from the pop
    the frame it was called from as f_back: the real frame LeCode_Run runs,
    which skips the callee. It is given the callee instead, emulated. The
-   pop is the last thing ceval does, and gives the frame object to the GC
-   (frame.c:take_ownership): it is the youngest object, if there is one. */
+   pop gives the frame object to the GC (frame.c:take_ownership) last:
+   ceval tracks nothing more before it returns, and the GC doesn't collect
+   in between, so it is the youngest object then. One that was youngest
+   already, unchanged, is not it. */
 static PyObject *
 eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 {
     PyCodeObject *co = le_frame_code(f);
-    PyObject *before = le_gc_youngest(ts), *o;
-    PyObject *result = original_eval_frame(ts, f, throwflag);
-    le_frame_t *caller;
-    PyFrameObject *fo, *back;
-    if ((o = le_gc_youngest(ts)) == before || o == NULL || !PyFrame_Check(o))
-        return result;
-    fo = (PyFrameObject *)o;
-    caller = le_frame_current(ts);
-    while (caller != NULL && !le_frame_complete(caller))
-        caller = le_frame_back(caller);
-    if (le_pyframe_code(fo) != co || caller == NULL || fo->f_back == NULL ||
-        fo->f_back != caller->frame_obj)
+    le_frame_t *caller = le_frame_current(ts);
+    PyObject *before = le_gc_youngest(ts), *o, *result;
+    int was = psyco_frame_popped_from(before, co, caller);
+    PyFrameObject *back;
+    result = original_eval_frame(ts, f, throwflag);
+    o = le_gc_youngest(ts);
+    if ((o == before && was) || !psyco_frame_popped_from(o, co, caller))
         return result;
     back = psyco_frame_callee_back();
     if (back != NULL)
-        Py_XSETREF(fo->f_back, back);
+        Py_XSETREF(((PyFrameObject *)o)->f_back, back);
     return result;
 }
 #endif

@@ -3662,6 +3662,24 @@ complete_frame(le_frame_t *f)
     return f;
 }
 
+#if LE_HAS_EVAL_FRAME_POPS
+/* Whether 'o' (an object the GC tracks, or NULL) is a frame object made
+   for a frame of code 'co' called from 'caller', which ceval has popped
+   while the frame object outlives it: the pop gave it the first complete
+   frame out of 'caller' as f_back, as no other frame popped now has. A
+   frame object LeJIT keeps for a compiled call may have that f_back too,
+   as the frame out of the call; it isn't one. */
+DEFINEFN int
+psyco_frame_popped_from(PyObject *o, PyCodeObject *co, le_frame_t *caller)
+{
+    PyFrameObject *f = (PyFrameObject *)o;
+    caller = complete_frame(caller);
+    return o != NULL && PyFrame_Check(o) && le_pyframe_code(f) == co &&
+           caller != NULL && caller->frame_obj != NULL &&
+           f->f_back == caller->frame_obj && activation_of(f) == NULL;
+}
+#endif
+
 DEFINEFN
 void
 psyco_frame_back_stands(le_frame_t *back)

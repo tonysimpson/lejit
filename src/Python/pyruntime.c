@@ -353,7 +353,11 @@ function_without_code(PyFrameObject *f)
 PyObject *
 le_gc_youngest(PyThreadState *ts)
 {
+#if LE_HAS_GC_GENERATION0
     PyGC_Head *gen0 = ts->interp->gc.generation0;
+#else
+    PyGC_Head *gen0 = &ts->interp->gc.young.head;
+#endif
     return gen0->_gc_prev == (uintptr_t)gen0
                ? NULL
                : (PyObject *)((PyGC_Head *)gen0->_gc_prev + 1);
