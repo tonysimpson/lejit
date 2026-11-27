@@ -126,7 +126,7 @@ le_lookup_special_id(PyObject *self, _Py_Identifier *attrid)
 /* names looked up by the run-time helpers, interned at start-up
    (psyco_pycompiler_init) */
 static PyObject *s_initializing, *s_name, *s_spec, *s_match_args, *s_get,
-    *s_build_class, *s_keys;
+    *s_build_class, *s_keys, *s_all, *s_dict, *s_annotations;
 
 #if LE_HAS_IMPORT_FROM_SPEC
 /* moduleobject.c:_PyModuleSpec_IsInitializing: spec._initializing is
@@ -2121,9 +2121,13 @@ psyco_pycompiler_init(void)
     s_get = PyUnicode_InternFromString("get");
     s_build_class = PyUnicode_InternFromString("__build_class__");
     s_keys = PyUnicode_InternFromString("keys");
+    s_all = PyUnicode_InternFromString("__all__");
+    s_dict = PyUnicode_InternFromString("__dict__");
+    s_annotations = PyUnicode_InternFromString("__annotations__");
     if (s_builtin_object == NULL || s_initializing == NULL || s_name == NULL ||
         s_spec == NULL || s_match_args == NULL || s_get == NULL ||
-        s_build_class == NULL || s_keys == NULL)
+        s_build_class == NULL || s_keys == NULL || s_all == NULL ||
+        s_dict == NULL || s_annotations == NULL)
         Py_FatalError("lejit: no names for the compiler");
     load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
 
@@ -4943,8 +4947,8 @@ raise_error:
 }
 
 static PyObject *
-cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *name,
-                  PyObject *fromlist, PyObject *fitharg)
+cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *locals,
+                  PyObject *name, PyObject *fromlist, PyObject *fitharg)
 {
     PyObject *w;
     PyObject *x = PyDict_GetItemString(builtins, "__import__");
@@ -4953,14 +4957,119 @@ cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *name,
         return NULL;
     }
     if (PyLong_AsLong(fitharg) != -1 || PyErr_Occurred())
-        w = PyTuple_Pack(5, name, globals, Py_None, fromlist, fitharg);
+        w = PyTuple_Pack(5, name, globals, locals, fromlist, fitharg);
     else
-        w = Py_BuildValue("(OOOO)", name, globals, Py_None, fromlist);
+        w = Py_BuildValue("(OOOO)", name, globals, locals, fromlist);
     if (w == NULL)
         return NULL;
     x = PyObject_CallObject(x, w);
     Py_DECREF(w);
     return x;
+}
+
+/* ceval's import_all_from, for module code's `from m import *` into its
+   globals: the names of m.__all__, else those of m.__dict__ not starting
+   with an underscore */
+static int
+cimpl_import_star(PyObject *globals, PyObject *v)
+{
+    PyObject *all, *dict, *name, *value;
+    int skip_leading_underscores = 0;
+    Py_ssize_t pos;
+    int err;
+
+    if (le_lookup_attr(v, s_all, &all) < 0)
+        return -1;
+    if (all == NULL) {
+        if (le_lookup_attr(v, s_dict, &dict) < 0)
+            return -1;
+        if (dict == NULL) {
+            PyErr_SetString(PyExc_ImportError, LE_MSG_IMPORT_STAR_NO_ALL);
+            return -1;
+        }
+        all = PyMapping_Keys(dict);
+        Py_DECREF(dict);
+        if (all == NULL)
+            return -1;
+        skip_leading_underscores = 1;
+    }
+    for (pos = 0, err = 0;; pos++) {
+        name = PySequence_GetItem(all, pos);
+        if (name == NULL) {
+            if (!PyErr_ExceptionMatches(PyExc_IndexError))
+                err = -1;
+            else
+                PyErr_Clear();
+            break;
+        }
+#ifdef LE_MSG_IMPORT_STAR_NOT_STR
+        if (!PyUnicode_Check(name)) {
+            PyObject *modname = PyObject_GetAttr(v, s_name);
+            if (modname == NULL) {
+                Py_DECREF(name);
+                err = -1;
+                break;
+            }
+            if (!PyUnicode_Check(modname))
+                PyErr_Format(PyExc_TypeError,
+                             LE_MSG_IMPORT_STAR_MODULE_NAME_NOT_STR,
+                             Py_TYPE(modname)->tp_name);
+            else
+                PyErr_Format(PyExc_TypeError, LE_MSG_IMPORT_STAR_NOT_STR,
+                             skip_leading_underscores ? "Key" : "Item",
+                             modname,
+                             skip_leading_underscores ? "__dict__" : "__all__",
+                             Py_TYPE(name)->tp_name);
+            Py_DECREF(modname);
+            Py_DECREF(name);
+            err = -1;
+            break;
+        }
+#endif
+        /* a name that isn't a str (where that isn't an error here) fails
+           in the lookup */
+        if (skip_leading_underscores && PyUnicode_Check(name)) {
+            if (PyUnicode_READY(name) == -1) {
+                Py_DECREF(name);
+                err = -1;
+                break;
+            }
+            if (PyUnicode_READ_CHAR(name, 0) == '_') {
+                Py_DECREF(name);
+                continue;
+            }
+        }
+        value = PyObject_GetAttr(v, name);
+        if (value == NULL)
+            err = -1;
+        else
+            err = PyDict_SetItem(globals, name, value);
+        Py_DECREF(name);
+        Py_XDECREF(value);
+        if (err != 0)
+            break;
+    }
+    Py_DECREF(all);
+    return err;
+}
+
+/* ceval's SETUP_ANNOTATIONS, for module code: an __annotations__ dict in
+   its globals, unless there is one */
+static int
+cimpl_setup_annotations(PyObject *globals)
+{
+    int err;
+    PyObject *ann = PyDict_GetItemWithError(globals, s_annotations);
+    if (ann != NULL)
+        return 0;
+    if (PyErr_Occurred())
+        return -1;
+    ann = PyDict_New();
+    if (ann == NULL)
+        return -1;
+    err = PyDict_SetItem(globals, s_annotations, ann);
+    Py_DECREF(ann);
+    return err;
 }
 
 /***************************************************************/
@@ -5099,6 +5208,17 @@ cimpl_build_frozenset(PyObject *set)
 {
     return _PyIntrinsics_UnaryFunctions[INTRINSIC_BUILD_FROZENSET].func(
         PyThreadState_GET(), set);
+}
+#endif
+
+#ifdef INTRINSIC_ADD_CONDITIONAL_ANNOTATION
+/* the record of an annotation module code reaches, through CPython's own
+   intrinsic */
+static PyObject *
+cimpl_add_conditional_annotation(PyObject *annotations, PyObject *index)
+{
+    return _PyIntrinsics_BinaryFunctions[INTRINSIC_ADD_CONDITIONAL_ANNOTATION]
+        .func(PyThreadState_GET(), annotations, index);
 }
 #endif
 
@@ -6694,6 +6814,9 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        /* module code's names, whose locals mapping is its globals
+           (eval_hook.c:le_code_to_run): the same as the global forms */
+        case STORE_NAME:
         case STORE_GLOBAL: {
             vinfo_t *err;
             vinfo_t *name;
@@ -6718,6 +6841,7 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        case DELETE_NAME:
         case DELETE_GLOBAL: {
             vinfo_t *err;
             vinfo_t *name;
@@ -6837,9 +6961,12 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        case LOAD_NAME:
         case LOAD_GLOBAL: {
-            bool push_null = LE_GLOBAL_PUSHES_NULL(oparg);
-            PyObject *namev = GETNAMEV(LE_GLOBAL_NAME(oparg));
+            bool push_null =
+                opcode == LOAD_GLOBAL && LE_GLOBAL_PUSHES_NULL(oparg);
+            PyObject *namev = GETNAMEV(
+                opcode == LOAD_GLOBAL ? LE_GLOBAL_NAME(oparg) : oparg);
             if (!load_global_cached(po, namev, &v))
                 break;
             /* not cached: globals unknown, the name varying, not found or
@@ -8034,10 +8161,24 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
 #endif
             goto fine;
 
-        /* the one intrinsic mergepoints.c:compiled_intrinsic_2 allows: a
+        /* the intrinsics mergepoints.c:compiled_intrinsic_2 allows: a
            class pattern with no arguments, isinstance with
-           _PyEval_MatchClass's error for a pattern that is not a class */
+           _PyEval_MatchClass's error for a pattern that is not a class;
+           and module code's record of an annotation, which CPython's own
+           intrinsic makes */
         case CALL_INTRINSIC_2: {
+#ifdef INTRINSIC_ADD_CONDITIONAL_ANNOTATION
+            if (oparg == INTRINSIC_ADD_CONDITIONAL_ANNOTATION) {
+                x = psyco_generic_call(po, cimpl_add_conditional_annotation,
+                                       CfCommonNewRefPyObject, "vv", NTOP(2),
+                                       TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF_N(2);
+                PUSH(x);
+                goto fine;
+            }
+#endif
 #ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
             vinfo_t *is;
             PyTypeObject *tp_type;
@@ -9767,9 +9908,14 @@ compile_imports(PsycoObject *po, int opcode, int oparg, int target,
             PyObject *w = GETNAMEV(LE_IMPORT_NAME(oparg));
             v = TOP();
             u = NTOP(2);
-            x = psyco_generic_call(po, cimpl_import_name,
-                                   CfCommonNewRefPyObject, "vvlvv",
-                                   LOC_GLOBALS, LOC_BUILTINS, w, v, u);
+            /* __import__ is given the frame's locals mapping: module
+               code's is its globals */
+            vinfo_t *none = psyco_vi_None();
+            x = psyco_generic_call(
+                po, cimpl_import_name, CfCommonNewRefPyObject, "vvvlvv",
+                LOC_GLOBALS, LOC_BUILTINS,
+                co->co_flags & CO_OPTIMIZED ? none : LOC_GLOBALS, w, v, u);
+            vinfo_decref(none, po);
             if (x == NULL)
                 break;
             POP_DECREF();
@@ -9777,6 +9923,25 @@ compile_imports(PsycoObject *po, int opcode, int oparg, int target,
             PUSH(x);
             goto fine;
         }
+
+        /* from m import *, into module code's globals: no value is left
+           where it is CALL_INTRINSIC_1's, None */
+        case IMPORT_STAR:
+            if (!psyco_generic_call(po, cimpl_import_star, CfCommonIntZeroOk,
+                                    "vv", LOC_GLOBALS, TOP()))
+                break;
+            POP_DECREF();
+#if !LE_HAS_OPCODE_IMPORT_STAR
+            PUSH(psyco_vi_None());
+#endif
+            goto fine;
+
+        case SETUP_ANNOTATIONS:
+            if (!psyco_generic_call(po, cimpl_setup_annotations,
+                                    CfCommonIntZeroOk, "v", LOC_GLOBALS))
+                break;
+            mark_varying(po, s_annotations);
+            goto fine;
 
         default:
             return OPCODE_ELSEWHERE;

@@ -295,7 +295,7 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
         if (x->nresumes < 0)
             return NULL;
         if (mergepoints == NULL)
-            mergepoints = psyco_analyse_code(co, x, 0);
+            mergepoints = psyco_analyse_code(co, x);
         if (mergepoints == NULL) {
             PyErr_Clear(); /* out of memory */
             return NULL;
@@ -368,7 +368,7 @@ le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x)
     if (x->nresumes < 0 || !(co->co_flags & (CO_GENERATOR | CO_COROUTINE)) ||
         le_code_nlocalsplus(co) + co->co_stacksize > LE_FRAME_WORDS_MAX)
         return NULL;
-    mergepoints = psyco_get_merge_points(co, 0);
+    mergepoints = psyco_get_merge_points(co);
     if (mergepoints == Py_None ||
         !(psyco_mp_flags(mergepoints) & MP_FLAGS_RESUMABLE))
         return NULL;
@@ -613,9 +613,14 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
        code is invisible to them */
     if (le_tracing_now(tstate, co))
         return NULL;
-    /* only function frames, whose f_locals is NULL at entry. Module code,
-       class bodies and exec or eval with a locals mapping have one */
-    if (locals == NULL) {
+    /* function frames, whose f_locals is NULL at entry, and module code
+       (or exec's) whose locals mapping is its globals, an exact dict: its
+       names are compiled as globals. Class bodies, and exec or eval with
+       locals of their own, run interpreted. The test is made on every
+       entry, as the same code may run with other locals. */
+    if ((co->co_flags & CO_OPTIMIZED)
+            ? locals == NULL
+            : locals == globals && PyDict_CheckExact(globals)) {
         PyObject *mergepoints;
         le_code_extra_t *x = le_code_extra(co);
         if (x == NULL) {
@@ -624,7 +629,7 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
         }
         mergepoints = x->merge_points;
         if (mergepoints == NULL)
-            mergepoints = psyco_analyse_code(co, x, 0);
+            mergepoints = psyco_analyse_code(co, x);
         if (mergepoints != Py_None) {
             PyObject *entry_point;
             entry_point = x->entry_point;

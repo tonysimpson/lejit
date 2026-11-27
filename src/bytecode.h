@@ -147,7 +147,8 @@ le_binary_op_opcode(int nb)
    BINARY_OP with NB_SUBSCR is BINARY_SUBSCR,
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
-   UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0, LOAD_FAST_BORROW is
+   UNARY_POSITIVE (and INTRINSIC_IMPORT_STAR is IMPORT_STAR), FORMAT_SIMPLE
+   is FORMAT_VALUE 0, LOAD_FAST_BORROW is
    LOAD_FAST, GET_ITER with an argument is GET_YIELD_FROM_ITER); 'arg'
    with its EXTENDED_ARG prefixes folded in, and no longer holding what 'op'
    now says; 'raw' the opcode as CPython wrote it; 'target' a jump's target in
@@ -227,6 +228,8 @@ le_instr(le_code_t c, int pos)
                 in.op = LIST_TO_TUPLE;
             else if (in.arg == INTRINSIC_ASYNC_GEN_WRAP)
                 in.op = ASYNC_GEN_WRAP;
+            else if (in.arg == INTRINSIC_IMPORT_STAR)
+                in.op = IMPORT_STAR;
             break;
 #endif
         /* LeJIT holds its own reference to what a borrowed load loads */
@@ -503,10 +506,15 @@ le_op_flags(int op)
         case RETURN_VALUE:
         case RETURN_CONST:
             return LE_OPF_COMPILED | LE_OPF_LIGHT | LE_OPF_STOPS;
-        /* globals */
+        /* globals, and module code's names (mergepoints.c:module_code) */
         case LOAD_GLOBAL:
         case STORE_GLOBAL:
         case DELETE_GLOBAL:
+        case LOAD_NAME:
+        case STORE_NAME:
+        case DELETE_NAME:
+        case IMPORT_STAR:
+        case SETUP_ANNOTATIONS:
             return LE_OPF_COMPILED;
         /* calls and functions */
         case CALL_FUNCTION:

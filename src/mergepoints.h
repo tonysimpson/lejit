@@ -37,10 +37,10 @@ struct mergepoint_s {
 
 /* Get merge points (cached) */
 EXTERNFN PyObject *
-psyco_get_merge_points(PyCodeObject *co, int module);
+psyco_get_merge_points(PyCodeObject *co);
 /* the same where x->merge_points is NULL: analyses 'co' */
 EXTERNFN PyObject *
-psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x, int module);
+psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x);
 EXTERNFN int
 psyco_is_fusable_generator(PyCodeObject *co);
 EXTERNFN int
@@ -79,7 +79,6 @@ psyco_join_point(PyObject *mergepoints, int position);
 #define MP_FLAGS_HAS_EXCEPT 1   /* the code block has an 'except' clause */
 #define MP_FLAGS_HAS_FINALLY 2  /* the code block has a 'finally' clause */
 #define MP_FLAGS_INLINABLE 4    /* function could be inlined             */
-#define MP_FLAGS_MODULE 8       /* can only run as module top-level code */
 #define MP_FLAGS_CONTROLFLOW 16 /* can use early deletion of locals      */
 #define MP_FLAGS_RESUMABLE 32   /* psyco_is_resumable_generator          */
 #define MP_FLAGS_EXTRA (-256)

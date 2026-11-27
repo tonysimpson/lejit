@@ -376,6 +376,26 @@ msg('IMPORT_NAME_CIRCULAR', 'from m import x, without x, m still being '
     ' __spec__=types.SimpleNamespace(_initializing=True))\n'
     'exec("from %s import %s" % (args[1], args[0]), {})',
     [O('R'), O('R'), O('S')])
+msg('IMPORT_STAR_NO_ALL', 'from m import * of an m with neither __all__ nor '
+    '__dict__', 'ImportError',
+    'import sys\nsys.modules["LeStarless"] = 1\n'
+    'exec("from LeStarless import *", {})', text=True)
+_STAR_CHECKS_STR = ('"in LeStarCheck.__all__ must be str" in says("import sys, '
+                    'types\\nm = types.ModuleType(\'LeStarCheck\')\\n'
+                    'm.__all__ = [1]\\nsys.modules[\'LeStarCheck\'] = m\\n'
+                    'from LeStarCheck import *")')
+msg('IMPORT_STAR_NOT_STR', 'from m import * where m.__all__ holds a name that '
+    'is not a str', 'TypeError',
+    'newmod(args[1], __all__=[args[3]()])\n'
+    'exec("from %s import *" % args[1], {})',
+    [F('%s', 'Item'), O('U'), F('%s', '__all__'), T()],
+    requires=_STAR_CHECKS_STR)
+msg('IMPORT_STAR_MODULE_NAME_NOT_STR', 'from m import * where m.__all__ '
+    'holds a name that is not a str, and m.__name__ is not a str either',
+    'TypeError',
+    'm = newmod("LeStarNamed", __all__=[1])\nm.__name__ = args[0]()\n'
+    'exec("from LeStarNamed import *", {})', [T()],
+    requires=_STAR_CHECKS_STR)
 frag('UNKNOWN_MODULE_NAME', 'what an import error shows for a module without '
      'a name', 'IMPORT_NAME_UNKNOWN_LOCATION', 1, 'ImportError',
      'm = newmod("LeNoName")\ndel m.__name__\n'
