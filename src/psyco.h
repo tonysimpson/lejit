@@ -1061,6 +1061,10 @@ typedef struct {
     le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 
+/* A call of a Python function from C (_PyFunction_Vectorcall) may run
+   its compiled code with no frame (eval_hook.c:le_frameless_vectorcall) */
+#define LE_ENTERS_FUNCTIONS_FRAMELESS LE_HAS_FUNCTION_VECTORCALL
+
 typedef struct le_code_extra_s {
     PyObject *merge_points;   /* capsule, Py_None if unsupported, NULL if not
                                  built yet; owned */
@@ -1082,6 +1086,8 @@ typedef struct le_code_extra_s {
                                  (codemanager.c) */
     unsigned char releases;   /* times the sweep released its code */
     char swept;               /* being released by the sweep */
+    char frameless;           /* the entry point may be run with no frame,
+                                 by a call from C (eval_hook.c) */
     struct le_code_extra_s *prev, *next; /* in le_code_extras */
     int nresumes; /* a resumable generator's points, or -1: not resumable */
     le_resume_point_t *resumes;     /* one per yield and the start, or NULL */

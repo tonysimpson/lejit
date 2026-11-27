@@ -5,6 +5,7 @@
 #include "codemanager.h"
 #include "mergepoints.h"
 #include "Python/pycompiler.h"
+#include "x64/ipatch.h"
 #include <Python.h>
 /* how CPython's frames, tracing flag and recursion count are reached */
 #include "mechanisms/frames.h"
@@ -615,6 +616,39 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f,
 }
 #endif
 
+#if LE_ENTERS_FUNCTIONS_FRAMELESS
+/* the most words a frameless call binds */
+#define LE_FRAMELESS_ARGS 16
+
+/* the words a frameless entry of 'co' is given: its arguments, then
+   its *args tuple and **kwargs dict if it has them */
+static inline int
+frameless_words(PyCodeObject *co)
+{
+    return co->co_argcount + co->co_kwonlyargcount +
+           !!(co->co_flags & CO_VARARGS) + !!(co->co_flags & CO_VARKEYWORDS);
+}
+
+/* whether a call of a function of 'co' from C can be run frameless
+   (le_frameless_vectorcall): 0 if not, as with cells, whose cells would
+   have to be made, or a generator, which keeps its frame; 2 where only
+   positional arguments are taken, which a call that gives as many needs
+   nothing bound for, else 1 */
+static char
+frameless_suits(PyCodeObject *co)
+{
+    if ((co->co_flags & (CO_OPTIMIZED | CO_NEWLOCALS)) !=
+            (CO_OPTIMIZED | CO_NEWLOCALS) ||
+        (co->co_flags & (LE_GENERATOR_FLAGS | CO_ITERABLE_COROUTINE)) ||
+        le_code_ncells(co) != 0 || le_code_nfrees(co) != 0 ||
+        frameless_words(co) > LE_FRAMELESS_ARGS)
+        return 0;
+    return frameless_words(co) == co->co_argcount ? 2 : 1;
+}
+#else
+#define frameless_suits(co) 0
+#endif
+
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
    is the frame's locals mapping (NULL for a function). */
@@ -653,6 +687,7 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
                 x->entry_point = entry_point;
                 x->entry_globals = globals;
                 x->entry_builtins = builtins;
+                x->frameless = entry_point != Py_None && frameless_suits(co);
             }
             if (entry_point != Py_None && x->entry_globals == globals &&
                 x->entry_builtins == builtins) {
@@ -663,6 +698,205 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
     }
     return NULL;
 }
+
+#if LE_ENTERS_FUNCTIONS_FRAMELESS
+/* A call from C of a function whose code has a frameless entry
+   (frameless_suits) comes here from the patched _PyFunction_Vectorcall
+   (x64/iprocessor.c:le_function_gate_new), and runs its compiled code
+   with no frame where the frame CPython would make would run the same
+   code as the hook would: the hook is in, nothing traces, the globals and
+   builtins are the entry's, and the arguments bind with no error and no
+   name compared other than by identity. Anything else is the original's,
+   which raises CPython's errors. The arguments are the caller's; the
+   defaults filled in, and the *args tuple and **kwargs dict made, are
+   held for the run, as a frame would hold them. */
+static PyObject *(*function_vectorcall)(PyObject *, PyObject *const *, size_t,
+                                        PyObject *);
+static int frameless_on = 0;
+#if !LE_HAS_FRAME_BUILTINS_OF_FUNCTION
+static PyObject *str_builtins;
+#endif
+
+/* the builtins of the frame CPython would make for 'func', or NULL */
+static inline PyObject *
+frameless_builtins(PyThreadState *tstate, PyFunctionObject *func)
+{
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
+    (void)tstate;
+    return func->func_builtins;
+#else
+    /* as frameobject.c:_PyFrame_New_NoTrack */
+    PyFrameObject *back = tstate->frame;
+    PyObject *b;
+    if (back != NULL && back->f_globals == func->func_globals)
+        return back->f_builtins;
+    b = PyDict_GetItemWithError(func->func_globals, str_builtins);
+    if (b != NULL && PyModule_Check(b))
+        b = PyModule_GetDict(b);
+    return b;
+#endif
+}
+
+/* binds the call's 'n' positional arguments, keywords and the defaults
+   it leaves to the words of a frame of 'func' (frameless_words) in
+   'into': the number of objects made or taken for them, each a new
+   reference in 'held', or -1 where CPython must bind them: an error, or a
+   keyword not found by identity */
+static int
+frameless_bind(PyFunctionObject *func, PyCodeObject *co, PyObject **into,
+               PyObject *const *args, Py_ssize_t n, PyObject *kwnames,
+               PyObject **held)
+{
+    int argc = co->co_argcount, total = argc + co->co_kwonlyargcount;
+    int i, k, nheld = 0, npos = n < argc ? (int)n : argc;
+    if (n > argc && !(co->co_flags & CO_VARARGS))
+        return -1;
+    for (i = 0; i < npos; i++) into[i] = args[i];
+    for (; i < total; i++) into[i] = NULL;
+    if (kwnames != NULL)
+        for (k = 0; k < PyTuple_GET_SIZE(kwnames); k++) {
+            PyObject *name = PyTuple_GET_ITEM(kwnames, k);
+            for (i = co->co_posonlyargcount; i < total; i++)
+                if (le_code_local_name(co, i) == name)
+                    break;
+            if (i == total || into[i] != NULL)
+                return -1;
+            into[i] = args[n + k];
+        }
+    for (i = npos; i < total; i++) {
+        PyObject *d;
+        if (into[i] != NULL)
+            continue;
+        if (i < argc) {
+            PyObject *defs = func->func_defaults;
+            Py_ssize_t first =
+                argc - (defs != NULL ? PyTuple_GET_SIZE(defs) : 0);
+            if (i < first)
+                goto unbound;
+            d = PyTuple_GET_ITEM(defs, i - first);
+        }
+        else if (func->func_kwdefaults == NULL ||
+                 (d = PyDict_GetItem(func->func_kwdefaults,
+                                     le_code_local_name(co, i))) == NULL)
+            goto unbound;
+        Py_INCREF(d);
+        into[i] = held[nheld++] = d;
+    }
+    if (co->co_flags & CO_VARARGS) {
+        PyObject *t = PyTuple_New(n - npos);
+        if (t == NULL)
+            goto unbound;
+        for (k = npos; k < n; k++) {
+            Py_INCREF(args[k]);
+            PyTuple_SET_ITEM(t, k - npos, args[k]);
+        }
+        into[i++] = held[nheld++] = t;
+    }
+    if (co->co_flags & CO_VARKEYWORDS) {
+        PyObject *d = PyDict_New();
+        if (d == NULL)
+            goto unbound;
+        into[i++] = held[nheld++] = d;
+    }
+    return nheld;
+unbound:
+    while (nheld > 0) Py_DECREF(held[--nheld]);
+    return -1;
+}
+
+/* PROVISIONAL, replaced by the frameless runs of frames.c: no frame
+   walk finds this run */
+static PyObject *
+le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
+                 PyObject *const *args, Py_ssize_t nargs)
+{
+    PyThreadState *tstate = PyThreadState_GET();
+    stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
+    stack_frame_info_t **finfo = &no_frames;
+    PyObject *result;
+    (void)nargs;
+    if (le_recursion_enter(tstate))
+        return NULL;
+    if (le_eval_breaker_at_entry(tstate, (PyCodeObject *)func->func_code) < 0)
+        result = NULL;
+    else
+        result = psyco_processor_run((CodeBufferObject *)codebuf, (long *)args,
+                                     &finfo);
+    le_recursion_leave(tstate);
+    return result;
+}
+
+static PyObject *
+le_frameless_vectorcall(PyObject *callable, PyObject *const *args,
+                        size_t nargsf, PyObject *kwnames)
+{
+    PyFunctionObject *func = (PyFunctionObject *)callable;
+    PyCodeObject *co = (PyCodeObject *)func->func_code;
+    le_code_extra_t *x = le_code_extra_get(co);
+    PyThreadState *tstate = PyThreadState_GET();
+    Py_ssize_t n = PyVectorcall_NARGS(nargsf);
+    PyObject *bound[LE_FRAMELESS_ARGS], *held[LE_FRAMELESS_ARGS], *result;
+    int nheld = 0, k;
+    if (!frameless_on || le_tracing_now(tstate, co) ||
+#if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
+        le_ex_callee != NULL ||
+#endif
+        func->func_globals != x->entry_globals ||
+        frameless_builtins(tstate, func) != x->entry_builtins)
+        goto cpython;
+    if (x->frameless != 2 || kwnames != NULL || n != co->co_argcount) {
+        nheld = frameless_bind(func, co, bound, args, n, kwnames, held);
+        if (nheld < 0)
+            goto cpython;
+        args = bound;
+    }
+    result = le_run_frameless(x->entry_point, func, args, frameless_words(co));
+    for (k = 0; k < nheld; k++) Py_DECREF(held[k]);
+    return result;
+cpython:
+    PyErr_Clear(); /* frameless_builtins' lookup: the original raises it */
+    return function_vectorcall(callable, args, nargsf, kwnames);
+}
+
+/* patches _PyFunction_Vectorcall, the first time: a failure leaves every
+   call CPython's */
+static void
+frameless_install(void)
+{
+    static int tried = 0;
+    void *fn, *gate, **original;
+    if (tried)
+        return;
+    tried = 1;
+#if !LE_HAS_FRAME_BUILTINS_OF_FUNCTION
+    if ((str_builtins = PyUnicode_InternFromString("__builtins__")) == NULL) {
+        PyErr_Clear();
+        return;
+    }
+#endif
+    /* a function's own: libpython need not export it */
+    {
+        PyObject *co = Py_CompileString("0", "<lejit>", Py_eval_input);
+        PyObject *g = PyDict_New(), *func = NULL;
+        if (co != NULL && g != NULL)
+            func = PyFunction_New(co, g);
+        fn = func != NULL ? (void *)((PyFunctionObject *)func)->vectorcall
+                          : NULL;
+        Py_XDECREF(func);
+        Py_XDECREF(g);
+        Py_XDECREF(co);
+        if (fn == NULL) {
+            PyErr_Clear();
+            return;
+        }
+    }
+    gate = le_function_gate_new((void *)le_frameless_vectorcall, &original);
+    /* no other thread runs Python before the address goes in, the GIL
+       being held */
+    if ((*original = le_patch_entry_jump(fn, gate)) != NULL)
+        function_vectorcall = *original;
+}
+#endif
 
 /* how CPython hands calls to LeJIT: LeEval_EvalFrame and le_entry_install */
 #if LE_HAS_EVAL_HOOK_TSTATE
@@ -1335,6 +1569,10 @@ le_entry_install(void)
         return -1;
 #endif
     find_async_gen_wrapper();
+#if LE_ENTERS_FUNCTIONS_FRAMELESS
+    frameless_install();
+    frameless_on = 1;
+#endif
     if (now != LeEval_EvalFrame) {
         original_eval_frame = now;
         set_eval_frame(LeEval_EvalFrame);
@@ -1378,5 +1616,8 @@ le_entry_remove(void)
         set_eval_frame(original_eval_frame);
     else if (now != original_eval_frame)
         return -1;
+#if LE_ENTERS_FUNCTIONS_FRAMELESS
+    frameless_on = 0;
+#endif
     return 0;
 }
