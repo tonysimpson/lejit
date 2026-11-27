@@ -221,6 +221,14 @@ SKIPPED = {
         'test.test_ctypes.test_refcounts.RefcountTestCase.test_1 '
         'test.test_ctypes.test_refcounts.RefcountTestCase.test_refcount '
         'test.test_ctypes.test_stringptr.StringPtrTestCase.test__POINTER_c_char',
+    "a dead test's __del__ runs its event loop until a queue is joined, "
+    'which a task finalised before it never does; plain 3.9 hangs the same '
+    'when full collections come at other moments (gc.set_threshold(200, 3, 3))':
+        'unittest.test.test_async_case.TestAsyncCase.test_exception_in_*',
+    'compiled code released after a full collection drops the references '
+    'it held, while the test counts them':
+        'ctypes.test.test_refcounts.AnotherLeak.test_callback '
+        'test.test_ctypes.test_refcounts.AnotherLeak.test_callback',
     'compiling allocates memory and objects the gc tracks, while the test '
     'counts them':
         'test.test_descr.ClassPropertiesAndMethods.test_slots '
