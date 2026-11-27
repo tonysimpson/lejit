@@ -49,15 +49,8 @@ function_return(PsycoObject *po, Source retval, int nframelocal, long retpos)
     }
 
     pre_return_stack_correction = retpos - po->stack_depth;
-    if (RBP_IS_RESERVED) {
-        pre_return_stack_correction += sizeof(long);
-    }
     STACK_CORRECTION(pre_return_stack_correction);
     po->stack_depth += pre_return_stack_correction;
-    if (RBP_IS_RESERVED) {
-        POP_R(REG_X64_RBP);
-        psyco_dec_stackdepth(po);
-    }
     post_return_stack_depth = po->stack_depth - return_depth;
     if (post_return_stack_depth >= 0x8000) {
         POP_R(REG_TRANSIENT_1);

@@ -273,11 +273,6 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
 /* called by psyco_emit_header() */
 #define INITIALIZE_FRAME_LOCALS(nframelocal)                              \
     do {                                                                  \
-        if (RBP_IS_RESERVED) {                                            \
-            PUSH_R(REG_X64_RBP);                                          \
-            psyco_inc_stackdepth(po);                                     \
-            MOV_R_R(REG_X64_RBP, REG_X64_RSP);                            \
-        }                                                                 \
         STACK_CORRECTION(sizeof(long) * ((nframelocal) - 1));             \
         PUSH_IMMED(0); /* the catcher word (pycompiler.c:catcher_word) */ \
     } while (0)
@@ -311,15 +306,8 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
         int post_return_stack_depth = 0;                            \
         int pre_return_stack_correction = retpos - po->stack_depth; \
         int return_depth = sizeof(long) + INITIAL_STACK_DEPTH;      \
-        if (RBP_IS_RESERVED) {                                      \
-            pre_return_stack_correction += sizeof(long);            \
-        }                                                           \
         STACK_CORRECTION(pre_return_stack_correction);              \
         po->stack_depth += pre_return_stack_correction;             \
-        if (RBP_IS_RESERVED) {                                      \
-            POP_R(REG_X64_RBP);                                     \
-            psyco_dec_stackdepth(po);                               \
-        }                                                           \
         post_return_stack_depth = po->stack_depth - return_depth;   \
         if (post_return_stack_depth >= 0x8000) {                    \
             POP_R(REG_TRANSIENT_1);                                 \

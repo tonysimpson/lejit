@@ -20,20 +20,25 @@ static glue_run_code_fn glue_run_code_aligned;
 
 static glue_run_code_fn glue_run_code_unaligned;
 
-/* The layout above the finfo slot is fixed, for frames.c:slot_registers:
-   the saved R15, R14, R13, R12, RBX and RBP, then LE_GLUE_PAD if the stack
-   needed aligning, then the return address. */
+/* The layout above the finfo slot is fixed, for frames.c:runs_unwind:
+   the saved R15, R14, R13, R12, RBX and RBP, a copy of the return address,
+   LE_GLUE_PAD if the stack needed aligning, then the return address.
+   RBP stays the glue's frame pointer while compiled code runs, which never
+   changes it, so frame-pointer unwinders go from compiled code to the
+   copy and on into the C that called it. */
 static void
 write_glue_run_code_fn(PsycoObject *po, bool aligned)
 {
     BEGIN_CODE
     if (!aligned) {
         PUSH_I(LE_GLUE_PAD);
+        PUSH_O(REG_X64_RSP, 8);
+    }
+    else {
+        PUSH_O(REG_X64_RSP, 0);
     }
     PUSH_R(REG_X64_RBP);
-#if RBP_IS_RESERVED
     MOV_R_R(REG_X64_RBP, REG_X64_RSP);
-#endif
     PUSH_R(REG_X64_RBX);
     PUSH_R(REG_X64_R12);
     PUSH_R(REG_X64_R13);
@@ -56,9 +61,7 @@ write_glue_run_code_fn(PsycoObject *po, bool aligned)
     POP_R(REG_X64_R12);
     POP_R(REG_X64_RBX);
     POP_R(REG_X64_RBP);
-    if (!aligned) {
-        ADD_R_I8(REG_X64_RSP, 8);
-    }
+    ADD_R_I8(REG_X64_RSP, aligned ? 8 : 16);
     RET();
     END_CODE
 }
@@ -71,7 +74,7 @@ psyco_processor_run(CodeBufferObject *codebuf, long initial_stack[],
     int argc = RUN_ARGC(codebuf);
     int regs_saved = 6;
     int finfo_pushed = 1;
-    int return_address = 1;
+    int return_address = 2; /* and its copy */
     /* we need to work out if the call to psyco code would be made with the
      * stack 16 bytes aligned and adjust accordingly - we assume everything
      * pushed to the stack is 8 bytes wide and the call from C will be aligned
