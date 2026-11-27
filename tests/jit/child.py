@@ -38,9 +38,9 @@ if use_lejit:
     if checked and not hasattr(lejit._core, '_stats'):
         sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
     lejit.start()
-# run at module level, so it is never compiled; it names no object it
-# counts, as loading a name bound to a lazy import's object (3.15)
-# imports its module
+# run with locals apart from its globals, so LeJIT never compiles it; it
+# names no object it counts, as loading a name bound to a lazy import's
+# object (3.15) imports its module
 COUNT_ALIVE = compile('''
 alive = {}
 for t in map(type, gc.get_objects()):
@@ -48,6 +48,7 @@ for t in map(type, gc.get_objects()):
     alive[name] = alive.get(name, 0) + 1
 del t, name
 ''', 'count_alive', 'exec')
+counted = {}
 out = []
 for args in calls:
     try:
@@ -103,8 +104,8 @@ while True:
         gc.collect()
     buffers = lejit._core._stats()['code_buffers'] if checked else 0
     if counting:
-        exec(COUNT_ALIVE)
-        alive_before = alive
+        exec(COUNT_ALIVE, {'gc': gc}, counted)
+        alive_before = counted['alive']
     before = sys.getallocatedblocks()
     gc.disable()
     if allocs_begin:
@@ -127,7 +128,8 @@ while True:
 out.append('leak: %d %d' % (leak, repeats))
 left = []
 if counting:
-    exec(COUNT_ALIVE)
+    exec(COUNT_ALIVE, {'gc': gc}, counted)
+    alive = counted['alive']
     left = sorted((name, alive.get(name, 0) - alive_before.get(name, 0))
                   for name in set(alive) | set(alive_before)
                   if alive.get(name, 0) != alive_before.get(name, 0))
