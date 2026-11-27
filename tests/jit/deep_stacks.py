@@ -80,13 +80,21 @@ class Bound:
     def down(self, n, **kw):
         return self.down(n - 1, **kw) + 1 if n else 0
 
+    def star(self, n):
+        return self.star(*(n - 1,)) + 1 if n else 0
+
 
 def through_c_still_limited():
     sys.setrecursionlimit(10 ** 6 + 100)
-    try:
-        return Bound().down(3 * 10 ** 5, k=1)
-    except RecursionError:
-        return 'RecursionError'
+    out = []
+    for call in (lambda: Bound().down(3 * 10 ** 5, k=1),
+                 lambda: Bound().down(3 * 10 ** 5),
+                 lambda: Bound().star(3 * 10 ** 5)):
+        try:
+            out.append(call())
+        except RecursionError:
+            out.append('RecursionError')
+    return out
 
 
 def limit_raised_then_reached():

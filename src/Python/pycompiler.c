@@ -888,11 +888,10 @@ cimpl_push_exc_info(PyObject *target[], PyObject **word,
 /* The restoring half (ceval's UNWIND_EXCEPT_HANDLER), for POP_EXCEPT and for
    unwinding through an EXCEPT_HANDLER block. Doesn't consume its arguments
    (psyco_generic_call can't express that); the caller decrefs them. The
-   handled exception goes, and with it, as a rule, the last hold on the
-   frame in the catcher word 'word', which is then let go. */
+   frame in the catcher word stays until the call ends, as CPython's frame
+   object does, for the call's next traceback entries. */
 static void
-cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb,
-                   PyObject **word)
+cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb)
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyObject *otype, *ovalue, *otb;
@@ -904,8 +903,6 @@ cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb,
     Py_XDECREF(otype);
     Py_XDECREF(ovalue);
     Py_XDECREF(otb);
-    if (word != NULL)
-        psyco_frame_catcher_drop(word);
 }
 
 #if LE_HAS_EXCEPTION_TABLE
@@ -946,10 +943,9 @@ cimpl_push_exc_value(PyObject *value)
    again (not consumed: the caller decrefs it); None, for none, is stored as
    NULL, as from 3.13 ceval does: a generator's exception state then gives
    way to its caller's, which _PyErr_GetTopmostException finds past a NULL
-   but from 3.13 not past None. With it, as a rule, goes the last hold on
-   the frame in the catcher word 'word', as in cimpl_pop_exc_info. */
+   but from 3.13 not past None. */
 static void
-cimpl_pop_exc_value(PyObject *value, PyObject **word)
+cimpl_pop_exc_value(PyObject *value)
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyObject *old = le_exc_info_value(tstate);
@@ -958,8 +954,6 @@ cimpl_pop_exc_value(PyObject *value, PyObject **word)
     Py_XINCREF(value);
     le_exc_info_put_value(tstate, value);
     Py_XDECREF(old);
-    if (word != NULL)
-        psyco_frame_catcher_drop(word);
 }
 
 /* RERAISE: the exception value is raised again, with the traceback it has */
@@ -2096,6 +2090,9 @@ struct varying_global_s;
 static PyObject *
 cimpl_load_global_miss(struct varying_global_s *vg);
 static code_t *load_global_miss_glue;
+static PyObject *
+cimpl_module_attr_miss(struct varying_global_s *vg);
+static code_t *module_attr_miss_glue;
 
 /* the builtin super, called with no arguments before an attribute load
    (super_call_known), holding the class and first argument
@@ -2126,6 +2123,7 @@ psyco_pycompiler_init(void)
         s_build_class == NULL || s_keys == NULL)
         Py_FatalError("lejit: no names for the compiler");
     load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
+    module_attr_miss_glue = psyco_aligned_call_glue(cimpl_module_attr_miss);
 
     psyco_skZero.refcount1_flags = SkFlagFixed;
     psyco_skZero.value = (long)0;
@@ -2310,15 +2308,14 @@ static void
 unwind_except_handler(PsycoObject *po, le_block_t *b, bool unwind)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    vinfo_t *type, *value, *tb, *word = catcher_word(po);
+    vinfo_t *type, *value, *tb;
     extra_assert(STACK_LEVEL() >= b->b_level + 3);
     while (unwind && STACK_LEVEL() > b->b_level + 3) POP_DECREF();
     POP(type);
     POP(value);
     POP(tb);
-    psyco_generic_call(po, cimpl_pop_exc_info, CfNoReturnValue,
-                       word != NULL ? "vvvr" : "vvvl", type, value, tb,
-                       (long)word);
+    psyco_generic_call(po, cimpl_pop_exc_info, CfNoReturnValue, "vvv", type,
+                       value, tb);
     vinfo_decref(tb, po);
     vinfo_decref(value, po);
     vinfo_decref(type, po);
@@ -2472,7 +2469,9 @@ typedef struct {
     PyObject *value; /* the value compiled in, or NULL */
     PyObject *globals;
     PyObject *builtins; /* the frame's (LOC_BUILTINS), which a new
-                           globals['__builtins__'] doesn't change */
+                           globals['__builtins__'] doesn't change; NULL
+                           for a module's attribute */
+    PyObject *module;   /* the module whose dict 'globals' is, or NULL */
     global_guard_t *guard;
     code_t *resume; /* after the guard's jump */
     char form;
@@ -2558,12 +2557,26 @@ do_changed_global(changed_global_t *cg)
     return psyco_dont_respawn(cg, sizeof(*cg));
 }
 
+/* o is a lazy import's proxy (PEP 810), which only a load at run time
+   may replace with its module */
+static inline bool
+le_lazy_import(PyObject *o)
+{
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    return PyLazyImport_CheckExact(o);
+#else
+    (void)o;
+    return false;
+#endif
+}
+
 /* A varying global's load (psyco_global_load) and its miss, which moves
    the code's entry to where globals now hold the name. All borrowed; the
    owner holds name and builtins. */
 typedef struct varying_global_s {
     global_patch_t entry;
     PyObject *globals, *builtins, *name;
+    PyObject *module; /* as changed_global_t's */
 } varying_global_t;
 
 static PyObject *
@@ -2580,11 +2593,31 @@ cimpl_load_global_miss(varying_global_t *vg)
     return x;
 }
 
+/* A module attribute's miss: the value with a new reference, its entry
+   moved to where the dict now holds it, or NULL with no exception, for
+   which the compiled code calls PyObject_GetAttr (the name gone, or a lazy
+   import's proxy) */
+static PyObject *
+cimpl_module_attr_miss(varying_global_t *vg)
+{
+    long shape, offset;
+    PyObject *x = PyDict_GetItem(vg->globals, vg->name);
+    if (x == NULL || le_lazy_import(x) ||
+        !global_entry_find(vg->globals, vg->name, x, &shape, &offset))
+        return NULL;
+    psyco_global_guard_move(&vg->entry, shape, offset);
+    Py_INCREF(x);
+    return x;
+}
+
 /* Emitted whether or not globals hold the name now (a shape of -1 never
-   matches), so that a replay changes the compiler's state the same way. */
+   matches), so that a replay changes the compiler's state the same way.
+   For a module's attribute ('module' set, 'builtins' NULL) a miss the
+   dict doesn't answer is PyObject_GetAttr. */
 static bool
 load_global_varying(PsycoObject *po, PyObject *globals, PyObject *builtins,
-                    PyObject *name, varying_global_t **vgp, vinfo_t **result)
+                    PyObject *module, PyObject *name, varying_global_t **vgp,
+                    vinfo_t **result)
 {
     static varying_global_t respawn_vg; /* written for trashed code only */
     varying_global_t *vg;
@@ -2599,16 +2632,28 @@ load_global_varying(PsycoObject *po, PyObject *globals, PyObject *builtins,
         vg = psyco_owner_alloc(sizeof(varying_global_t));
         vg->globals = globals;
         vg->builtins = builtins;
-        psyco_owner_pin(builtins);
+        vg->module = module;
+        psyco_owner_pin(module != NULL ? module : builtins);
         vg->name = name;
         psyco_owner_pin(name);
         if (vgp != NULL)
             *vgp = vg;
     }
-    v = psyco_global_load(po, globals, name, &vg->entry, shape, offset,
-                          load_global_miss_glue, vg);
+    v = psyco_global_load(
+        po, globals, name, &vg->entry, shape, offset,
+        module != NULL ? module_attr_miss_glue : load_global_miss_glue, vg);
     if (runtime_condition_f(po, CC_E)) {
         vinfo_decref(v, po);
+        if (module != NULL) {
+            vinfo_t *vm = vinfo_new(CompileTime_New((long)module));
+            vinfo_t *vn = vinfo_new(CompileTime_New((long)name));
+            v = psyco_generic_call(po, PyObject_GetAttr,
+                                   CfCommonNewRefPyObject, "vv", vm, vn);
+            vinfo_decref(vn, po);
+            vinfo_decref(vm, po);
+            *result = v;
+            return v != NULL;
+        }
         PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)), NULL);
         return false;
     }
@@ -2666,66 +2711,64 @@ load_global_rearmed(PsycoObject *po, changed_global_t *cg, vinfo_t **result)
                        stub);
     sg->varying = po->code;
     LE_RELOC_SLOT(&sg->varying);
-    return load_global_varying(po, cg->globals, cg->builtins, cg->name,
-                               &sg->vg, result);
+    return load_global_varying(po, cg->globals, cg->builtins, cg->module,
+                               cg->name, &sg->vg, result);
 }
 
-/* o is a lazy import's proxy (PEP 810), which only a load at run time
-   may replace with its module */
-static inline bool
-le_lazy_import(PyObject *o)
-{
-#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
-    return PyLazyImport_CheckExact(o);
-#else
-    (void)o;
-    return false;
-#endif
-}
-
-/* Returns true with *result a new vinfo for the global, or with *result
-   NULL if it isn't cached here (the caller loads it at run time); false
-   on error. */
+/* The value at 'name' in 'globals', then 'builtins', cached; or, with
+   'module' set and 'builtins' NULL, a module's attribute from its dict
+   'globals', whose guard is always the entry form, which reads no tags:
+   for a name the dict holds in no entry, one that never matches, so the
+   first run makes it varying. A name varying in one is marked by itself,
+   in the other by (module, name).
+   Returns true with *result a new vinfo, or with *result NULL if it isn't
+   cached here (the caller loads it at run time); false on error. */
 static bool
-load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
+load_cached(PsycoObject *po, PyObject *globals, PyObject *builtins,
+            PyObject *module, PyObject *name, vinfo_t **result)
 {
     static global_guard_t respawn_guard; /* written for trashed code only */
-    PyObject *globals, *builtins, *value;
+    PyObject *value, *key = name;
     global_guard_t *guard, tags;
     condition_code_t cc;
     changed_global_t *cg;
     global_absent_t absent;
     long shape = 0, offset = 0;
     char form = GLOBAL_TAGS;
+    bool varying;
 
     *result = NULL;
-    if (!is_compiletime(LOC_GLOBALS->source) ||
-        !is_compiletime(LOC_BUILTINS->source))
-        return true;
-    globals = (PyObject *)CompileTime_Get(LOC_GLOBALS->source)->value;
-    builtins = (PyObject *)CompileTime_Get(LOC_BUILTINS->source)->value;
-    if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins))
-        return true;
-    if (po->pr.changing_globals != NULL &&
-        PyDict_GetItem(po->pr.changing_globals, name) != NULL)
-        return load_global_varying(po, globals, builtins, name, NULL, result);
+    if (module != NULL && (key = PyTuple_Pack(2, module, name)) == NULL)
+        OUT_OF_MEMORY();
+    varying = po->pr.changing_globals != NULL &&
+              PyDict_GetItem(po->pr.changing_globals, key) != NULL;
+    if (module != NULL)
+        Py_DECREF(key);
+    if (varying)
+        return load_global_varying(po, globals, builtins, module, name, NULL,
+                                   result);
 
     value = PyDict_GetItem(globals, name);
     if (value != NULL) {
         if (global_entry_find(globals, name, value, &shape, &offset))
             form = GLOBAL_ENTRY;
     }
-    else {
+    else if (module == NULL) {
         value = PyDict_GetItem(builtins, name);
         if (value != NULL && psyco_global_absent(globals, name, &absent))
             form = GLOBAL_ABSENT;
+    }
+    if (module != NULL && form != GLOBAL_ENTRY) {
+        form = GLOBAL_ENTRY;
+        shape = -1; /* never matches: the first run respawns */
     }
 #if !LE_HAS_DICT_VERSION_TAG
     /* the other forms compare the counts of LeJIT's dict watcher */
     if (form != GLOBAL_ENTRY &&
         (le_dict_counter((PyDictObject *)globals) == NULL ||
          le_dict_counter((PyDictObject *)builtins) == NULL))
-        return load_global_varying(po, globals, builtins, name, NULL, result);
+        return load_global_varying(po, globals, builtins, NULL, name, NULL,
+                                   result);
 #endif
 
     /* A respawn replays compilation from the block's snapshot with the
@@ -2741,7 +2784,10 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
     else {
         guard = psyco_owner_alloc(sizeof(global_guard_t));
     }
-    global_tags_set(&tags, globals, builtins);
+    if (module != NULL)
+        memset(&tags, 0, sizeof(tags));
+    else
+        global_tags_set(&tags, globals, builtins);
     if (form == GLOBAL_TAGS)
         *guard = tags;
     cc = psyco_global_guard(po, globals, builtins, name, value,
@@ -2756,11 +2802,21 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
         /* the guard failed and the value really changed: from here on this
            name is loaded at run time */
         changed_global_t *rg = respawning_global;
-        mark_varying(po, name);
+        if (module != NULL) {
+            key = PyTuple_Pack(2, module, name);
+            if (key == NULL)
+                OUT_OF_MEMORY();
+            mark_varying(po, key);
+            Py_DECREF(key);
+        }
+        else
+            mark_varying(po, name);
         if (rg != NULL && !is_respawning(po) && rg->name == name &&
-            rg->globals == globals && rg->builtins == builtins)
+            rg->globals == globals && rg->builtins == builtins &&
+            rg->module == module)
             return load_global_rearmed(po, rg, result);
-        return load_global_varying(po, globals, builtins, name, NULL, result);
+        return load_global_varying(po, globals, builtins, module, name, NULL,
+                                   result);
     }
     cg = (changed_global_t *)psyco_prepare_respawn_ex(
         po, cc, &do_changed_global, sizeof(changed_global_t));
@@ -2774,7 +2830,8 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
         psyco_owner_pin(value);
         cg->globals = globals;
         cg->builtins = builtins;
-        psyco_owner_pin(builtins);
+        cg->module = module;
+        psyco_owner_pin(module != NULL ? module : builtins);
         cg->guard = guard;
         cg->form = form;
     }
@@ -2787,6 +2844,35 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
             vinfo_new(CompileTime_NewSk(sk_new((long)value, SkFlagPyObj)));
     }
     return true;
+}
+
+/* LOAD_GLOBAL's (load_cached) */
+static bool
+load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
+{
+    PyObject *globals, *builtins;
+    *result = NULL;
+    if (!is_compiletime(LOC_GLOBALS->source) ||
+        !is_compiletime(LOC_BUILTINS->source))
+        return true;
+    globals = (PyObject *)CompileTime_Get(LOC_GLOBALS->source)->value;
+    builtins = (PyObject *)CompileTime_Get(LOC_BUILTINS->source)->value;
+    if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins))
+        return true;
+    return load_cached(po, globals, builtins, NULL, name, result);
+}
+
+DEFINEFN
+bool
+psyco_module_attr_cached(PsycoObject *po, PyObject *module, PyObject *name,
+                         vinfo_t **result)
+{
+    PyObject *dict = PyModule_GetDict(module); /* borrowed */
+    *result = NULL;
+    if (dict == NULL || !PyDict_CheckExact(dict))
+        return true;
+    psyco_owner_pin(module); /* the run-time load names it */
+    return load_cached(po, dict, NULL, module, name, result);
 }
 
 /* CALL_FUNCTION (oparg positional arguments), CALL_FUNCTION_KW (oparg
@@ -4107,6 +4193,16 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 }
 
 #if LE_HAS_OPCODE_DICT_MERGE || LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
+/* the callable a ** error names: for a bound method not made yet, its
+   function, whose name, qualified name and module the method's are */
+static vinfo_t *
+named_callable(vinfo_t *f)
+{
+    if (f->source == VirtualTime_New(&psyco_computed_method))
+        return vinfo_getitem(f, iMETHOD_IM_FUNC);
+    return f;
+}
+
 /* ceval.c DICT_MERGE, and each mapping of BUILD_MAP_UNPACK_WITH_CALL */
 static int
 cimpl_dict_merge(PyObject *dict, PyObject *update, PyObject *func)
@@ -4448,9 +4544,10 @@ ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
    [kwargs], args, and the callable beside its NULL. The kwargs slot is
    there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
-   (a NULL there for a call with none). f(*tuple), and f(*tuple, **k)
-   while k is empty, go straight to PsycoObject_Call, which can specialise
-   the call; anything else runs CPython's whole case at run time (its copy
+   (a NULL there for a call with none). f(*tuple), f(*tuple, **k) while k
+   is empty, and f(*tuple, **d) of a Python function or method with d an
+   exact dict, go straight to PsycoObject_Call, which can specialise the
+   call; anything else runs CPython's whole case at run time (its copy
    cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
@@ -4460,6 +4557,7 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
     vinfo_t *callargs = stack_top[-1 - slot];
     vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
+    vinfo_t **kwvalues;
     PyTypeObject *t;
 #if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
     vinfo_t *result;
@@ -4471,6 +4569,13 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
 
     t = Psyco_NeedType(po, callargs);
     if (t == NULL)
+        return NULL;
+    /* what ex_call tests for a dict's keywords, promoted before anything is
+       emitted */
+    if (kwargs != NULL && t == &PyTuple_Type &&
+        PsycoDict_PendingNames(kwargs, &kwvalues) == NULL &&
+        (Psyco_NeedType(po, kwargs) == NULL ||
+         Psyco_NeedType(po, func) == NULL))
         return NULL;
 #if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
     /* ceval's specialised call of a Python function counts its frame
@@ -4502,6 +4607,19 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     return ex_call(po, func, callargs, kwargs, t);
 }
 
+/* PsycoObject_Call for ex_call: CPython runs a bound method's frame from
+   C (PyObject_Call), as the direct call then counts it */
+static vinfo_t *
+ex_direct_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs,
+               vinfo_t *kwargs)
+{
+    vinfo_t *result;
+    po->pr.ex_method = Psyco_KnownType(func) == &PyMethod_Type;
+    result = PsycoObject_Call(po, func, callargs, kwargs);
+    po->pr.ex_method = 0;
+    return result;
+}
+
 /* psyco_ext_do_call_ex's call, once callargs' type 't' is known */
 static vinfo_t *
 ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
@@ -4519,14 +4637,25 @@ ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
             return NULL;
         if (ft == &PyFunction_Type || ft == &PyMethod_Type)
             kwargs = zero = psyco_vi_Zero();
-        result = PsycoObject_Call(po, func, callargs, kwargs);
+        result = ex_direct_call(po, func, callargs, kwargs);
         goto done;
     }
     if (t == &PyTuple_Type && zero != NULL) {
         /* f(*args): the call can be specialised. With **kwargs it goes to the
            run-time helper, which holds a reference to the dict as ceval does
          */
-        result = PsycoObject_Call(po, func, callargs, kwargs);
+        result = ex_direct_call(po, func, callargs, kwargs);
+        goto done;
+    }
+    if (t == &PyTuple_Type && PsycoTuple_Load(callargs) >= 0 &&
+        Psyco_KnownType(kwargs) == &PyDict_Type &&
+        (Psyco_KnownType(func) == &PyFunction_Type ||
+         Psyco_KnownType(func) == &PyMethod_Type)) {
+        /* f(*args, **d) of a Python function, d an exact dict: its keywords
+           bind at run time (psyfunc.c:psyco_dict_keywords) */
+        po->pr.ex_keywords = 1;
+        result = ex_direct_call(po, func, callargs, kwargs);
+        po->pr.ex_keywords = 0;
         goto done;
     }
     result = psyco_generic_call(po, cimpl_call_function_ex_maybe_direct,
@@ -7251,14 +7380,25 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *err;
             vinfo_t *sum;
             int i;
+            /* the types PsycoDict_MergeEmpty reads, promoted first */
+            for (i = oparg; i > 0; i--)
+                if (Psyco_NeedType(po, NTOP(i)) == NULL)
+                    break;
+            if (i > 0)
+                break;
             sum = PsycoDict_New(po);
             if (sum == NULL) {
                 break;
             }
             for (i = oparg; i > 0; i--) {
-                err = psyco_generic_call(po, cimpl_dict_merge,
-                                         CfCommonIntBoolOrError, "vvv", sum,
-                                         NTOP(i), NTOP(2 + oparg));
+                int empty = PsycoDict_MergeEmpty(po, sum, NTOP(i));
+                if (empty < 0)
+                    break;
+                if (empty > 0)
+                    continue;
+                err = psyco_generic_call(
+                    po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv", sum,
+                    NTOP(i), named_callable(NTOP(2 + oparg)));
                 if (err == NULL) {
                     break;
                 }
@@ -7298,7 +7438,8 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
                 x = psyco_generic_call(
                     po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
                     NTOP(oparg + 1), TOP(),
-                    NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
+                    named_callable(
+                        NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL)));
                 if (x == NULL)
                     break;
                 vinfo_decref(x, po);
@@ -9380,10 +9521,8 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
 #if LE_HAS_EXCEPTION_TABLE
         /* the handled exception PUSH_EXC_INFO saved is put back */
         case POP_EXCEPT: {
-            vinfo_t *word = catcher_word(po);
             if (psyco_generic_call(po, cimpl_pop_exc_value, CfNoReturnValue,
-                                   word != NULL ? "vr" : "vl", TOP(),
-                                   (long)word) == NULL)
+                                   "v", TOP()) == NULL)
                 break;
             POP_DECREF();
             goto fine;

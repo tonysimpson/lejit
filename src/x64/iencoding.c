@@ -697,6 +697,7 @@ run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
             }
             else
                 SAVE_REG_TO_EBP_BASE(getreg(src), at);
+            CODE_ROOM_IN_BLOCK();
         }
         args[i] = (long)RunTime_NewStack(stackbase, false, false);
     }
@@ -906,6 +907,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
             PUSH_R(getreg(source));
         }
         psyco_inc_stackdepth(po);
+        CODE_ROOM_IN_BLOCK();
     }
     po->stack_depth += stack_correction;
 
@@ -1020,7 +1022,10 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     finfo_last(finfo)->link_stack_depth =
         po->stack_depth - INITIAL_STACK_DEPTH;
     initial_stack_depth = po->stack_depth;
-    for (i = 0; i < argcount; i++) PUSH_SOURCE(argsources[i]);
+    for (i = 0; i < argcount; i++) {
+        PUSH_SOURCE(argsources[i]);
+        CODE_ROOM_IN_BLOCK();
+    }
     /* every register is saved and still holds what it did */
     if (RSOURCE_REG_IS_NONE(sentry)) {
         MOV_R_O(REG_X64_RAX, REG_X64_RSP,
