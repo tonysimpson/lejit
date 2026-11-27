@@ -41,18 +41,6 @@ def exceptions(n):
     return out, made <= out.count(-1) + 1
 
 
-def _interpreter_frames():
-    try:
-        import lejit._core
-    except ImportError:
-        return False
-    return bool(dict(lejit._core._build['features']).get(
-        'LE_HAS_INTERPRETER_FRAME'))
-
-
 CASES = [
-    ('exceptions', [(20,)],
-     dict(CHECKED, xfail="looking up the innermost compiled frame makes the"
-                         " root frame's frame object") if _interpreter_frames()
-     else CHECKED),
+    ('exceptions', [(20,)], CHECKED),
 ]

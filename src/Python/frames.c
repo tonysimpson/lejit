@@ -2570,7 +2570,7 @@ catcher_slot(PyFrameObject *f, FrameRuntime **run)
 static PyFrameObject *
 innermost_caller(stack_frame_info_t **own, bool *found)
 {
-    PyFrameObject *real;
+    le_frame_t *real;
     stack_frame_info_t **last = innermost_slot(&real), **p;
     stack_frame_info_t *rec, *in;
     FrameRuntime *fr;
@@ -2581,7 +2581,7 @@ innermost_caller(stack_frame_info_t **own, bool *found)
     if (last == NULL || hidden_frames != NULL ||
         psyco_next_stack_frame(last) != own)
         return NULL;
-    fr = psyco_frame_start_get(le_frame_of(real));
+    fr = psyco_frame_start_get(real);
     rec = *last;
     v.frame = NULL;
     v.lasti = rec->back_lasti;
@@ -2593,10 +2593,10 @@ innermost_caller(stack_frame_info_t **own, bool *found)
     else if (last == *fr->psy_frames_start) {
         v.code = (PyObject *)fr->psy_code;
         v.globals = fr->psy_globals;
-        v.frame = real;
+        v.frame = le_frame_object(real);
         v.tag = 0;
         *found = true;
-        return emulate_frame(&v);
+        return v.frame == NULL ? NULL : emulate_frame(&v);
     }
     else {
         w = fr->walked;
