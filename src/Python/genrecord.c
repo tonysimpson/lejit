@@ -279,6 +279,52 @@ le_gen_record_real(PyObject *rec)
     return record_escape(r, frame_func(&r->frame), r->state);
 }
 
+/* As record_escape, for a record no frame object stands for: the
+   generator is written directly (frames.c:le_gen_make), its frame the
+   record's, moved in as frame_give moves it, and no frame object is made
+   for it. */
+static PyObject *
+record_escape_frameless(le_gen_record_t *r, PyFunctionObject *func,
+                        int8_t state)
+{
+    le_frame_t *f = &r->frame, *own;
+    PyCodeObject *co = LE_FRAME_CODE(f);
+    int k, n = frame_nwords(f);
+    PyGenObject *gen = (PyGenObject *)le_gen_make(func);
+    if (gen == NULL) {
+        r->state = FRAME_CLEARED;
+        return NULL;
+    }
+    own = (le_frame_t *)((char *)gen + offsetof(PyGenObject, gi_iframe));
+    memcpy(own, f, (char *)&f->localsplus[n] - (char *)f);
+#if LE_HAS_FRAME_STACKREFS
+    own->stackpointer = own->localsplus + n;
+    own->f_executable = PyStackRef_FromPyObjectNew((PyObject *)co);
+#elif LE_HAS_FRAME_EXECUTABLE
+    own->f_executable = Py_NewRef(co);
+#else
+    own->f_code = (PyCodeObject *)Py_NewRef(co);
+#endif
+#if !LE_HAS_FRAME_STACKREFS
+    le_gen_frame_set_depth(own, n - co->co_nlocalsplus);
+#endif
+    own->owner = FRAME_OWNED_BY_GENERATOR;
+    own->previous = NULL;
+    own->frame_obj = NULL;
+    /* the record keeps only its code */
+    for (k = 0; k < n; k++) le_frame_word_put(f, k, NULL);
+    le_gen_frame_set_depth(f, 0);
+    f->f_locals = NULL;
+    (void)frame_func_take(f); /* the generator's now */
+    gen->gi_frame_state = state;
+    gen->gi_exc_state.exc_value = r->exc_state.exc_value;
+    r->exc_state.exc_value = NULL;
+    r->state = FRAME_CLEARED;
+    PyObject_GC_Track(gen);
+    r->escaped = Py_NewRef(gen);
+    return (PyObject *)gen;
+}
+
 /* The real generator made from the record 'r', in the state 'state': a
    frame object for its frame (the one Python asked for, or a new one)
    takes the frame, and the generator is made around it. The record holds
@@ -292,6 +338,8 @@ record_escape(le_gen_record_t *r, PyFunctionObject *func, int8_t state)
     PyGenObject *gen;
     if (words_escape(f) < 0)
         return NULL;
+    if (f->frame_obj == NULL)
+        return record_escape_frameless(r, func, state);
     /* complete for the while, or no frame object is made for it */
     if (!le_frame_complete(f))
         le_frame_set_lasti(f, 0);

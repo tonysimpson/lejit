@@ -51,11 +51,13 @@ psyco_inline_frame_left(void);
    its f_localsplus and value stack items in order (psyco_resume_value) and
    its blocks (psyco_resume_block); psyco_resume_run runs it in ceval from
    the instruction after 'lasti' and returns its result. Called from
-   compiled code (pycompiler.c:resume_if_tracing). */
+   compiled code (pycompiler.c:resume_if_tracing). 'frameless': no frame
+   object is made where none stands for the call's frame yet, for
+   psyco_resume_suspend to make the coroutine's frame itself. */
 struct resume_s;
 EXTERNFN struct resume_s *
 psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
-                   long nvalues, PyObject **word);
+                   long nvalues, PyObject **word, long frameless);
 EXTERNFN void
 psyco_resume_value(struct resume_s *st, long i, PyObject *v);
 #if !LE_HAS_EXCEPTION_TABLE
@@ -84,6 +86,12 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
    an exception. */
 EXTERNFN PyObject *
 le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
+#if LE_HAS_INTERPRETER_FRAME
+/* the generator or coroutine for func, written directly, its frame for the
+   caller to fill and the caller to track */
+EXTERNFN PyObject *
+le_gen_make(PyFunctionObject *func);
+#endif
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
