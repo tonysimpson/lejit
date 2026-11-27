@@ -29,6 +29,13 @@ with `error=True` raises one. `lejit.start(check=True)` checks first, as does
 `LEJIT_START_CHECK=warning` (or `error`); `LEJIT_MODE=off` makes `lejit.start()` do
 nothing.
 
+Tools that read a thread's frames from outside Python (faulthandler, py-spy,
+gdb, `_remote_debugging`) don't see a function LeJIT runs when C calls it,
+such as a `sorted` key or a callback asyncio's event loop runs: where CPython
+would show that function, they show the frame that called the C. Python's own
+views of frames (tracebacks, `sys._getframe`, `inspect`) see it as CPython
+does.
+
 The package is `lejit/` (its API, in Python, is `lejit/__init__.py`) over the
 compiled module `lejit._core`, built from the C sources in `src/`. On a Python
 LeJIT can't run on (not CPython, not x86-64 Linux, a free-threaded build, or
