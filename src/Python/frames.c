@@ -1245,9 +1245,9 @@ walked_end(struct walked_calls_s *w)
 }
 
 /* the seen call whose own slot is 'own', in any of this thread's runs, or
-   NULL; 'in' is set to its run's walk. The slots go down the stack. */
+   NULL; 'in' is set to its run. The slots go down the stack. */
 static walked_call_t *
-walked_find(stack_frame_info_t **own, struct walked_calls_s **in)
+walked_find(stack_frame_info_t **own, FrameRuntime **in)
 {
     FrameRuntime *fr;
     if (walked_seen == 0)
@@ -1265,7 +1265,7 @@ walked_find(stack_frame_info_t **own, struct walked_calls_s **in)
                 if (!w->calls[mid].seen)
                     break;
                 if (in != NULL)
-                    *in = w;
+                    *in = fr;
                 return &w->calls[mid];
             }
             if (w->calls[mid].own > own)
@@ -1407,18 +1407,21 @@ walked_watch(struct walked_calls_s *w, size_t k)
         walked_seen++;
 }
 
-/* the call whose own slot is 'own' has returned: 'walked' is set if it was
-   watched. What it returns to if it came through a barrier put here, else
-   NULL. */
+/* the call whose own slot is 'own' has returned: 'run' is set to its run
+   if it was watched, whose walk then ends with its caller's calls, all
+   still running. What it returns to if it came through a barrier put
+   here, else NULL. */
 static code_t *
-walked_returned(stack_frame_info_t **own, bool *walked)
+walked_returned(stack_frame_info_t **own, FrameRuntime **run)
 {
+    walked_call_t *c = walked_find(own, run);
     struct walked_calls_s *w;
-    walked_call_t *c = walked_find(own, &w);
     code_t *ret;
-    *walked = c != NULL;
-    if (c == NULL)
+    if (c == NULL) {
+        *run = NULL;
         return NULL;
+    }
+    w = (*run)->walked;
     ret = c->ret;
     w->n = c - w->calls;
     walked_seen--;
@@ -1949,11 +1952,14 @@ psyco_coros_realise(void)
 static PyFrameObject *
 activation_caller(activation_t *a);
 
+static PyFrameObject *
+walked_caller(FrameRuntime *fr, stack_frame_info_t **own, bool *found);
+
 DEFINEFN
 code_t *
 psyco_activation_returned(long *sp)
 {
-    bool walked;
+    FrameRuntime *walked;
     code_t *ret = walked_returned((stack_frame_info_t **)(sp + 1), &walked);
     activation_t *a = act_find((stack_frame_info_t **)(sp + 1));
     PyFrameObject *f;
@@ -1961,7 +1967,7 @@ psyco_activation_returned(long *sp)
     int gen, nkeep;
     PyObject *coro;
     if (a == NULL) {
-        if (walked && ret != NULL)
+        if (walked != NULL && ret != NULL)
             return ret;
         psyco_fatal_msg("a kept frame's call returned unknown");
     }
@@ -1977,8 +1983,13 @@ psyco_activation_returned(long *sp)
         /* it outlives its call: linked to its caller, as CPython's is,
            while the caller's record still says where the call was; where
            CPython leaves an ended generator's without one, so is this */
+        bool found = false;
         PyErr_Fetch(&t, &v, &tb);
-        f->f_back = activation_caller(a);
+        if (walked != NULL)
+            f->f_back = walked_caller(walked, a->own, &found);
+        if (!found)
+            f->f_back = activation_caller(a);
+        PyErr_Clear();
         PyErr_Restore(t, v, tb);
         a = act_find((stack_frame_info_t **)(sp + 1));
     }
@@ -2568,20 +2579,37 @@ catcher_slot(PyFrameObject *f, FrameRuntime **run)
    slot is 'own', as a walk visits it, found from the calls innermost_slot
    keeps for its run without a walk; *found false if they don't say */
 static PyFrameObject *
+caller_in_walk(FrameRuntime *fr, stack_frame_info_t **last,
+               stack_frame_info_t **own, size_t n, bool *found);
+
+static PyFrameObject *
 innermost_caller(stack_frame_info_t **own, bool *found)
 {
     le_frame_t *real;
-    stack_frame_info_t **last = innermost_slot(&real), **p;
-    stack_frame_info_t *rec, *in;
-    FrameRuntime *fr;
+    stack_frame_info_t **last = innermost_slot(&real);
     struct walked_calls_s *w;
-    le_frame_t *gf = NULL;
-    visited_frame_t v;
     *found = false;
     if (last == NULL || hidden_frames != NULL ||
         psyco_next_stack_frame(last) != own)
         return NULL;
-    fr = psyco_frame_start_get(real);
+    w = psyco_frame_start_get(real)->walked;
+    return caller_in_walk(psyco_frame_start_get(real), last, own,
+                          w == NULL || w == &walked_once ? 0 : w->n, found);
+}
+
+/* the caller of a compiled callee whose own slot is 'own' as a walk
+   visits it, its record in slot 'last' of run 'fr', whose walk's first
+   'n' calls, the callee's the last, are running; *found false if they
+   don't say */
+static PyFrameObject *
+caller_in_walk(FrameRuntime *fr, stack_frame_info_t **last,
+               stack_frame_info_t **own, size_t n, bool *found)
+{
+    stack_frame_info_t **p;
+    stack_frame_info_t *rec, *in;
+    struct walked_calls_s *w = fr->walked;
+    le_frame_t *gf = NULL;
+    visited_frame_t v;
     rec = *last;
     v.frame = NULL;
     v.lasti = rec->back_lasti;
@@ -2593,17 +2621,15 @@ innermost_caller(stack_frame_info_t **own, bool *found)
     else if (last == *fr->psy_frames_start) {
         v.code = (PyObject *)fr->psy_code;
         v.globals = fr->psy_globals;
-        v.frame = le_frame_object(real);
+        v.frame = le_frame_object(fr->frame);
         v.tag = 0;
         *found = true;
         return v.frame == NULL ? NULL : emulate_frame(&v);
     }
     else {
-        w = fr->walked;
-        if (w == NULL || w == &walked_once || w->n < 3 ||
-            w->calls[w->n - 1].own != own || w->calls[w->n - 2].own != last)
+        if (n < 3 || w->calls[n - 1].own != own || w->calls[n - 2].own != last)
             return NULL;
-        p = w->calls[w->n - 3].own;
+        p = w->calls[n - 3].own;
         in = *p;
         v.tag = (long)p;
         gf = gen_frame_at(p);
@@ -2614,6 +2640,27 @@ innermost_caller(stack_frame_info_t **own, bool *found)
         v.globals = le_frame_globals(gf != NULL ? gf : fr->frame);
     *found = true;
     return emulate_frame(&v);
+}
+
+/* the caller of the call whose own slot is 'own', which has just
+   returned, from what run 'fr' walked of it: emulated, or NULL; *found
+   false if the walk doesn't say */
+static PyFrameObject *
+walked_caller(FrameRuntime *fr, stack_frame_info_t **own, bool *found)
+{
+    struct walked_calls_s *w = fr->walked;
+    size_t n = w->n + 1; /* with the call just ended */
+    PyFrameObject *f;
+    *found = false;
+    if (hidden_frames != NULL || n < 2 || w->calls[n - 1].own != own ||
+        psyco_next_stack_frame(w->calls[n - 2].own) != own)
+        return NULL;
+    f = caller_in_walk(fr, w->calls[n - 2].own, own, n, found);
+    /* the caller's return is seen too, so that the walk finds its caller
+       if its frame outlives it */
+    if (f != NULL && n >= 3)
+        walked_watch(w, n - 2);
+    return f;
 }
 
 /* the caller of the compiled callee of code 'co' whose own slot is 'own',
