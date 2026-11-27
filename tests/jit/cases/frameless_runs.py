@@ -250,14 +250,17 @@ def _maps(k):
 
 
 def _interpreted(n):
-    # the hook is called from the exec's code itself: no compiled frame
-    # holds the run
+    # runs in ceval, as LeJIT compiles no function that can call exec; the
+    # hook is called from it directly, so no compiled frame holds the run
+    if n < 0:
+        exec('')
     lejit = sys.modules.get('lejit')
-    call = ('_maps(i)' if lejit is None or not lejit._started else
-            'lejit._core._run_frameless(_maps, i)')
-    ns = {'lejit': lejit, '_maps': _maps, 'out': []}
-    exec('for i in range(%d):\n    out.append(%s)' % (n, call), ns)
-    return ns['out']
+    frameless = lejit is not None and lejit._started
+    out = []
+    for i in range(n):
+        out.append(lejit._core._run_frameless(_maps, i) if frameless else
+                   _maps(i))
+    return out
 
 
 def from_interpreted(n):
