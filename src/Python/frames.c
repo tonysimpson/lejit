@@ -904,13 +904,23 @@ static char locals_note;
 /* one frame pvisitframes visits: a real frame of its own ('code' NULL), a
    compiled frame ('frame' NULL: its code, globals, tag and the place it is
    at), or the real frame whose code LeCode_Run runs (its code, globals,
-   frame and place); all borrowed */
+   frame and place); all borrowed. A real frame's object is 'object', or
+   NULL if none is made yet (visited_object makes it). */
 typedef struct {
     PyObject *code, *globals;
-    PyFrameObject *frame;
+    le_frame_t *frame;
+    PyFrameObject *object;
     long tag;
     int lasti;
 } visited_frame_t;
+
+/* the visited real frame's object (borrowed), made if it has none, or
+   NULL */
+static PyFrameObject *
+visited_object(const visited_frame_t *v)
+{
+    return v->object != NULL ? v->object : le_frame_object(v->frame);
+}
 
 static PyObject *
 pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
@@ -2041,9 +2051,12 @@ emulate_frame(const visited_frame_t *v)
 {
     if (v->frame != NULL) {
         /* a real Python frame, or the one whose code LeCode_Run runs */
-        psyco_frame_stands(v->frame);
-        Py_INCREF(v->frame);
-        return v->frame;
+        PyFrameObject *o = visited_object(v);
+        if (o == NULL)
+            return NULL;
+        psyco_frame_stands(o);
+        Py_INCREF(o);
+        return o;
     }
     else {
         /* a Psyco frame: emulate it */
@@ -2099,6 +2112,25 @@ is_hidden(stack_frame_info_t **slot)
     return false;
 }
 
+/* the next frame out of 'f', whose frame object is '*fo' or NULL if it
+   has none, as le_frame_object_back gives it, without making a frame
+   object: the one its object was linked to, else its caller Python sees */
+static void
+walk_back(le_frame_t **f, PyFrameObject **fo)
+{
+    PyFrameObject *o = *fo != NULL ? *fo : le_frame_object_made(*f);
+    le_frame_t *p;
+    if (o != NULL && o->f_back != NULL) {
+        *fo = o->f_back;
+        *f = le_frame_of(*fo);
+        return;
+    }
+    p = le_frame_back(o != NULL ? le_frame_of(o) : *f);
+    while (p != NULL && !le_frame_complete(p)) p = le_frame_back(p);
+    *f = p;
+    *fo = p != NULL ? le_frame_object_made(p) : NULL;
+}
+
 static PyObject *
 pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
              void *data)
@@ -2118,22 +2150,33 @@ pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
 
     PyObject *result = NULL;
     FrameRuntime *fstart;
+    /* the next run out, as the runs nest */
+    FrameRuntime *run = frame_runs;
     le_frame_t *f = le_frame_current(PyThreadState_Get());
+    /* f's frame object, or NULL if it has none: none is made for a frame
+       the walk only passes */
     PyFrameObject *fo = NULL;
     bool linked = false; /* the previous frame was emulated, so the compiled
                             frames up to this one are already in the chain
                             (linked_frame) */
     le_recursion_suspend();
     while (f != NULL && !le_frame_complete(f)) f = le_frame_back(f);
-    if (f != NULL && (fo = le_frame_object(f)) == NULL)
-        OUT_OF_MEMORY();
+    if (f != NULL)
+        fo = le_frame_object_made(f);
     /* each frame's caller is as frame.f_back gives it: an emulated frame
        made current (le_warn) is linked to the next only by f_back */
-    while (fo != NULL) {
+    while (f != NULL) {
         /* is this Python frame the starting point of a chained
            list of Psyco frames ? */
-        fstart = linked ? NULL : psyco_frame_start_get(le_frame_of(fo));
-        linked = !le_frame_is_executing(fo) || live_activation(fo) != NULL;
+        fstart = NULL;
+        if (!linked) {
+            fstart = run != NULL && run->frame == f ? run
+                                                    : psyco_frame_start_get(f);
+            if (fstart != NULL)
+                run = fstart->next;
+        }
+        linked = fo != NULL &&
+                 (!le_frame_is_executing(fo) || live_activation(fo) != NULL);
         if (fstart != NULL && !fstart->resumed) {
             /* Yes. Get the list start. */
             struct sfitmp_s *revlist;
@@ -2198,11 +2241,11 @@ pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
                             fdata == *p->fi ? gen_frame_at(p->fi) : NULL;
                         g = fdata->globals;
                         if (g == NULL)
-                            g = le_frame_globals(gf != NULL ? gf
-                                                            : le_frame_of(fo));
+                            g = le_frame_globals(gf != NULL ? gf : f);
                         v.code = (PyObject *)fdata->co;
                         v.globals = g;
                         v.frame = NULL;
+                        v.object = NULL;
                         v.tag = tag;
                         v.lasti = lasti;
                         lasti = fdata->back_lasti;
@@ -2226,24 +2269,25 @@ pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
                proxy function. Visited as its code, globals, frame and
                place */
             if (returning) {
-                fo = le_frame_object_back(fo);
+                walk_back(&f, &fo);
                 continue;
             }
             v.code = (PyObject *)fstart->psy_code;
             v.globals = fstart->psy_globals;
-            v.frame = fo;
+            v.frame = f;
+            v.object = fo;
             v.tag = 0;
             v.lasti = lasti;
             result = callback(&v, data);
         }
         else {
             /* a real unshadowed Python frame */
-            visited_frame_t real = {NULL, NULL, fo, 0, -1};
+            visited_frame_t real = {NULL, NULL, f, fo, 0, -1};
             result = callback(&real, data);
         }
         if (result != NULL)
             break;
-        fo = le_frame_object_back(fo);
+        walk_back(&f, &fo);
     }
     le_recursion_resume();
     return result;
@@ -2253,7 +2297,7 @@ static PyObject *
 visit_get_globals(const visited_frame_t *v, void *ignored)
 {
     if (v->code == NULL)
-        return le_frame_globals(le_frame_of(v->frame));
+        return le_frame_globals(v->frame);
     else
         return v->globals;
 }
@@ -2415,7 +2459,7 @@ visit_back_frame(const visited_frame_t *v, void *data)
                        v->code == (PyObject *)b->co;
         else
             b->found = v->frame != NULL
-                           ? v->frame == b->frame
+                           ? v->frame == le_frame_of(b->frame)
                            : visited_gen_frame(v) == le_frame_of(b->frame);
         return NULL;
     }
@@ -2843,7 +2887,7 @@ static PyObject *
 visit_root_lasti(const visited_frame_t *v, void *data)
 {
     struct root_lasti_s *r = (struct root_lasti_s *)data;
-    if (v->code != NULL && v->frame == r->frame) {
+    if (v->code != NULL && v->frame == le_frame_of(r->frame)) {
         r->lasti = v->lasti;
         return Py_None; /* stop */
     }
@@ -3443,17 +3487,17 @@ static PyObject *
 visit_warning_frame(const visited_frame_t *v, void *data)
 {
     struct warning_frame_s *in = (struct warning_frame_s *)data;
-    in->frame = v->frame;
+    in->frame = v->frame != NULL ? visited_object(v) : NULL;
     if (v->code == NULL) {
-        in->code = le_frame_code(le_frame_of(v->frame));
-        in->globals = le_frame_globals(le_frame_of(v->frame));
+        in->code = le_frame_code(v->frame);
+        in->globals = le_frame_globals(v->frame);
     }
     else {
         in->code = (PyCodeObject *)v->code;
         in->globals = v->globals;
     }
-    if (v->frame != NULL)
-        in->line = frame_get_lineno(v->frame, NULL);
+    if (in->frame != NULL)
+        in->line = frame_get_lineno(in->frame, NULL);
     else if (v->lasti >= 0)
         in->line = line_object(PyCode_Addr2Line(in->code, v->lasti));
     else
