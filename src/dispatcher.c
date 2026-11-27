@@ -1940,18 +1940,19 @@ holds_reference(vinfo_array_t *a)
    emit code (this runs before a function's first buffer, too).
    With 'unfix', at a merge point in the main loop, where code can be
    emitted, every dead local that isn't virtual takes one form, so that
-   no state differs from a block there in its dead locals alone: a
-   run-time value owning its reference, neither non-negative nor
-   megamorphic, which may be NULL where the local may be unbound on one
-   path here and bound on another (psyco_dead_local), as an unbound one
-   becomes too. A constant object becomes run-time, promoted or not, as a
-   copy of its own if something else holds it: otherwise a loop that binds
-   a different constant to it on each pass, such as a function promoted
-   at a call, starts one block per constant at its head, and the cap can't
-   merge them, as it keeps promoted values (psyco_forget_values). Nothing
-   reads one of them before it is rebound, so no fact or flag is relied
-   on; a deletion reads it, so it isn't dead. Only loads of constants and
-   increfs are emitted. */
+   states differ from a block there in their dead locals as little as
+   they can: a run-time value, neither non-negative nor megamorphic,
+   which may be NULL where the local may be unbound on one path here and
+   bound on another (psyco_dead_local), as an unbound one becomes too.
+   One that owns no reference keeps owning none: owning it would cost an
+   incref on every pass (richards +1.4% warm). A constant object becomes
+   run-time, promoted or not, as a copy of its own if something else holds
+   it: otherwise a loop that binds a different constant to it on each
+   pass, such as a function promoted at a call, starts one block per
+   constant at its head, and the cap can't merge them, as it keeps
+   promoted values (psyco_forget_values). Nothing reads one of them before
+   it is rebound, so no fact or flag is relied on; a deletion reads it,
+   so it isn't dead. Only loads of constants are emitted. */
 DEFINEFN
 void
 psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
@@ -1993,9 +1994,8 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
         if (!is_runtime(vi->source) || vi->refcount != 1)
             continue;
         if (unfix) {
-            need_reference(po, vi);
             vi->source &= ~(RunTime_NonNeg | RunTime_Megamorphic);
-            if (either)
+            if (either && (vi->source & RunTime_NoRef) == 0)
                 vi->source |= RunTime_MaybeNull;
         }
         if (vi->array == NullArray || holds_reference(vi->array))
@@ -2327,9 +2327,9 @@ widen_unbound(PsycoObject *po, global_entries_t *ge, int nlocals)
 /* The value of each virtual int or bool in the locals that isn't fixed
    becomes run-time, and not non-negative, so the counters' many
    combinations of known values collapse into one block (at a loop head's
-   second block, vcompiler.c:psyco_compile, and at the cap). A value something else holds
-   too gets its own, for small ints only, which computing gives back as
-   the same object. Only loads of constants are emitted. Returns whether
+   second block, vcompiler.c:psyco_compile, and at the cap). A value something
+   else holds too gets its own, for small ints only, which computing gives back
+   as the same object. Only loads of constants are emitted. Returns whether
    anything changed. */
 DEFINEFN
 bool

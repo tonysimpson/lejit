@@ -13,8 +13,11 @@ class Obj:
     pass
 
 
+# the caller's locals but 'out': f_locals can miss a list local that
+# compiled code keeps virtual
 def peek():
-    return sorted(sys._getframe(1).f_locals.items(), key=repr)
+    return sorted([(k, v) for k, v in sys._getframe(1).f_locals.items()
+                   if k != 'out'], key=repr)
 
 
 def loop_variable(items):

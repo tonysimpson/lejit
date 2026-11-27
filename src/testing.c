@@ -287,10 +287,9 @@ le_dead_locals(PyObject *self, PyObject *co)
             bool either;
             if (!PyLong_Check(o))
                 break;
-            if (PyList_Append(names,
-                              le_code_local_name(((PyCodeObject *)co),
-                                                 psyco_dead_local(o, &either))) <
-                0) {
+            if (PyList_Append(names, le_code_local_name(
+                                         ((PyCodeObject *)co),
+                                         psyco_dead_local(o, &either))) < 0) {
                 Py_DECREF(names);
                 goto fail;
             }

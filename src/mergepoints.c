@@ -456,9 +456,9 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         for (v = 0; v < nlocals; v++)
             _bound_access(bound, unbound, v, v < nargs, nlocals);
     }
-    while (_bound_pass(n, op, arg, nxt, setup_at, try_end, handler_at,
-                       nsetups, break_to, nbreak, exit_to, nexit, bound,
-                       unbound, tb, tu, nlocals, words));
+    while (_bound_pass(n, op, arg, nxt, setup_at, try_end, handler_at, nsetups,
+                       break_to, nbreak, exit_to, nexit, bound, unbound, tb,
+                       tu, nlocals, words));
 
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
