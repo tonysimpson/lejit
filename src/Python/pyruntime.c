@@ -375,6 +375,19 @@ le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
 #endif
     return f;
 }
+/* fn(arg) with the thread's frames as Python sees them linked and current
+   (frames.c), for signal handlers, which are given the current frame */
+extern int
+le_with_frames_linked(int (*fn)(void *), void *arg);
+#if !LE_HAS_TSTATE_EVAL_BREAKER && !LE_HAS_EVAL_BREAKER_GC
+static int
+le_pending_calls(void *ignored)
+{
+    (void)ignored;
+    return Py_MakePendingCalls();
+}
+#endif
+
 /* le_eval_breaker_address, le_eval_breaker_handler,
    le_eval_breaker_at_entry */
 #if LE_HAS_TSTATE_EVAL_BREAKER
@@ -398,10 +411,20 @@ _Static_assert((_PY_EVAL_EVENTS_MASK & ~LE_EVENTS_FREE_THREADED_ONLY) == 0xff,
                "LeJIT: the eval_breaker's events are tested as its low byte");
 
 /* -1 with an exception set */
+static int
+le_handle_pending(void *ts)
+{
+    return _Py_HandlePending((PyThreadState *)ts);
+}
+
 int
 le_eval_breaker_handler(void)
 {
-    return _Py_HandlePending(PyThreadState_GET());
+    PyThreadState *ts = PyThreadState_GET();
+    if (_Py_atomic_load_uintptr_relaxed(&ts->eval_breaker) &
+        _PY_SIGNALS_PENDING_BIT)
+        return le_with_frames_linked(le_handle_pending, ts);
+    return _Py_HandlePending(ts);
 }
 
 /* The same test before a frame's first instruction, for compiled code
@@ -469,6 +492,12 @@ le_compute_eval_breaker(PyInterpreterState *interp)
             _Py_atomic_load_relaxed(&ceval2->gc_scheduled));
 }
 
+static int
+le_make_pending_calls(void *ts)
+{
+    return _PyEval_MakePendingCalls((PyThreadState *)ts);
+}
+
 /* -1 with an exception set */
 int
 le_eval_breaker_handler(void)
@@ -481,7 +510,9 @@ le_eval_breaker_handler(void)
         _Py_atomic_load_relaxed(&ceval2->pending.calls_to_do) ||
         (_Py_IsMainThread() && _Py_IsMainInterpreter(interp) &&
          _Py_atomic_load_relaxed(&ceval->pending_mainthread.calls_to_do))) {
-        if (_PyEval_MakePendingCalls(tstate) < 0)
+        if ((_Py_atomic_load_relaxed(&ceval->signals_pending)
+                 ? le_with_frames_linked(le_make_pending_calls, tstate)
+                 : _PyEval_MakePendingCalls(tstate)) < 0)
             return -1;
     }
     if (_Py_atomic_load_relaxed(&ceval2->gc_scheduled)) {
@@ -576,7 +607,9 @@ le_eval_breaker_handler(void)
     struct _ceval_state *ceval2 = &interp->ceval;
     if (_Py_atomic_load_relaxed(&ceval->signals_pending) ||
         _Py_atomic_load_relaxed(&ceval2->pending.calls_to_do)) {
-        if (Py_MakePendingCalls() < 0)
+        if ((_Py_atomic_load_relaxed(&ceval->signals_pending)
+                 ? le_with_frames_linked(le_pending_calls, NULL)
+                 : Py_MakePendingCalls()) < 0)
             return -1;
         /* Py_MakePendingCalls also runs make_pending_calls, which ceval
            runs only when a call is queued: it recomputes eval_breaker
@@ -666,7 +699,9 @@ le_eval_breaker_handler(void)
     struct _ceval_runtime_state *ceval = &_PyRuntime.ceval;
     if (_Py_atomic_load_relaxed(&ceval->signals_pending) ||
         _Py_atomic_load_relaxed(&ceval->pending.calls_to_do)) {
-        if (Py_MakePendingCalls() < 0)
+        if ((_Py_atomic_load_relaxed(&ceval->signals_pending)
+                 ? le_with_frames_linked(le_pending_calls, NULL)
+                 : Py_MakePendingCalls()) < 0)
             return -1;
         /* Py_MakePendingCalls also runs make_pending_calls, which ceval
            runs only when a call is queued: it recomputes eval_breaker
@@ -750,8 +785,9 @@ int
 le_eval_breaker_handler(void)
 {
     PyThreadState *tstate = PyThreadState_GET();
+    /* a signal is a pending call: its handler is given the frame */
     if (_Py_atomic_load_relaxed(&_PyRuntime.ceval.pending.calls_to_do)) {
-        if (Py_MakePendingCalls() < 0)
+        if (le_with_frames_linked(le_pending_calls, NULL) < 0)
             return -1;
     }
     if (_Py_atomic_load_relaxed(&_PyRuntime.ceval.gil_drop_request))
