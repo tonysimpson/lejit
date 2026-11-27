@@ -148,6 +148,22 @@ def audited_names(n):
     return out
 
 
+# sys._current_frames gives this thread's frame as sys._getframe does
+def _this_thread_frame():
+    import threading
+    f = sys._current_frames()[threading.get_ident()]
+    return [f.f_code.co_name, f.f_back.f_code.co_name,
+            f is sys._getframe()]
+
+
+def _middle_of_current():
+    return _this_thread_frame()
+
+
+def current_frames():
+    return _middle_of_current()
+
+
 CASES = [
     ('depth_names', "[(4,)]", {}),
     ('audited_names', [(2,)], {}),
@@ -157,4 +173,5 @@ CASES = [
     ('too_deep', "[()]", {}),
     ('finaliser_caller', "[()]", {}),
     ('traceback_frames', "[([1],)]", {}),
+    ('current_frames', [()], {}),
 ]

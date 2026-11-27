@@ -145,7 +145,7 @@ le_stats(PyObject *self, PyObject *unused)
     }
 #endif
     if (d != NULL) {
-        /* frame objects made (pyruntime.c:le_pyframe_new,
+        /* frame objects made (frames.c:le_pyframe_new,
            mechanisms/frames.h:le_frame_object) */
         extern long le_stat_frame_objects;
         PyObject *t = PyLong_FromLong(le_stat_frame_objects);
