@@ -16,7 +16,7 @@ caller_locals.calls_operators                      3.11,3.12,3.13,3.14,3.15     
 caller_locals.dead_values_in_loop                  3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 caller_locals.repercent                            3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
 caller_locals.traceback_frame                      3.11,3.12,3.13,3.14,3.15           not looked at yet
-caller_locals.with_args                            3.11,3.12,3.13,3.14,3.15           not looked at yet
+caller_locals.with_args                            3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 calls.endless_recursion                            3.11,3.12,3.13,3.14,3.15           not looked at yet
 calls.new_class_bases                              3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 catcher_locals.after_return                        3.14,3.15                          not looked at yet
@@ -75,15 +75,15 @@ coro_async_for.tracing                             3.9,3.10,3.11,3.12,3.13,3.14,
 coro_async_for.with_asyncio                        3.14,3.15                          not looked at yet
 coro_async_with.errors                             3.12                               not looked at yet
 coro_async_with.handler_lasti                      3.14,3.15                          not looked at yet
-coro_async_with.started                            3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
-coro_async_with.traced_in_handler                  3.11,3.12,3.13,3.14,3.15           not looked at yet
+coro_async_with.started                            3.9,3.10,3.12,3.13,3.14            not looked at yet
+coro_async_with.traced_in_handler                  3.12,3.13,3.14                     not looked at yet
 coro_iterable.bad_operands                         3.9,3.10                           not looked at yet
 coro_iterable.with_asyncio                         3.11,3.12,3.13,3.14,3.15           not looked at yet
-coro_starts.handler_resumed                        3.12,3.14,3.15                     not looked at yet
+coro_starts.handler_resumed                        3.12,3.14                          not looked at yet
 coro_starts.origins                                3.11,3.14,3.15                     not looked at yet
-coro_starts.suspended_referents                    3.14,3.15                          not looked at yet
+coro_starts.suspended_referents                    3.14                               not looked at yet
 coro_starts.threads                                3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet (varies with thread timing)
-coro_starts.thrown                                 3.12,3.14,3.15                     not looked at yet
+coro_starts.thrown                                 3.12,3.14                          not looked at yet
 ctypes_calls.byref_objects                         3.14,3.15                          not looked at yet
 ctypes_calls.changes                               3.7                                not looked at yet
 ctypes_calls.errors                                3.11,3.12,3.13,3.14,3.15           not looked at yet
@@ -163,7 +163,7 @@ frames_seen_from_c.c_warning_places                3.7,3.8,3.9,3.10,3.11,3.12,3.
 frames_seen_from_c.caller_module_name              3.12,3.13,3.14,3.15                not looked at yet
 frames_seen_from_c.caught_middle                   3.11,3.12,3.13,3.14,3.15           not looked at yet
 frames_seen_from_c.getframe_through                3.11,3.12,3.13,3.14,3.15           not looked at yet
-frames_seen_from_c.init_frames_caller              3.11,3.12                          not looked at yet
+frames_seen_from_c.init_frames_caller              3.12                               not looked at yet
 frames_seen_from_c.kw_call_chain                   3.11,3.12,3.13,3.14,3.15           not looked at yet
 frames_seen_from_c.lasti_through_c                 3.14,3.15                          not looked at yet
 frames_seen_from_c.lineno_chain                    3.11,3.12,3.13,3.14,3.15           not looked at yet
@@ -202,10 +202,10 @@ gen_direct.ceval_steps                             3.11,3.12,3.13,3.14,3.15     
 gen_direct.coro_send                               3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
 gen_direct.locals_written                          3.11,3.12,3.13,3.14,3.15           not looked at yet
 gen_direct.not_started                             3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
-gen_direct.over_sequences                          3.11,3.12,3.13,3.14,3.15           not looked at yet
+gen_direct.over_sequences                          3.12,3.13,3.14,3.15                not looked at yet
 gen_direct.recursion_limit                         3.11,3.12,3.13,3.14,3.15           not looked at yet
 gen_direct.send_tracing                            3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
-gen_direct.tracing                                 3.12,3.14,3.15                     not looked at yet
+gen_direct.tracing                                 3.12,3.14                          not looked at yet
 gen_frame_words.changed_while_paused               3.14,3.15                          not looked at yet
 gen_functions.arguments_freed                      3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 gen_functions.early_stop                           3.14,3.15                          not looked at yet
@@ -223,26 +223,28 @@ gen_iters.ords                                     3.11,3.12,3.13,3.14,3.15     
 gen_iters.sentinel                                 3.11,3.12,3.13,3.14,3.15           not looked at yet
 gen_pauses.traced                                  3.14,3.15                          not looked at yet
 gen_virtual.closes                                 3.14,3.15                          not looked at yet
+gen_virtual.dropped_escaped                        3.14,3.15                          not looked at yet
+gen_virtual.dropped_in_yield_from                  3.14,3.15                          not looked at yet
 gen_virtual.drops                                  3.14,3.15                          not looked at yet
 gen_virtual.escapes_held                           3.12,3.13,3.14,3.15                not looked at yet
 gen_virtual.frame_clear                            3.11,3.12,3.13,3.14,3.15           not looked at yet
 gen_virtual.kept_frames                            3.14,3.15                          not looked at yet
-gen_virtual.nexts                                  3.11,3.12                          not looked at yet
+gen_virtual.nexts                                  3.12                               not looked at yet
 gen_virtual.sends                                  3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
 gen_virtual.stored                                 3.11,3.12,3.13,3.14,3.15           not looked at yet
-gen_virtual.traces                                 3.12,3.13,3.14,3.15                not looked at yet
-gen_virtual_chains.closes                          3.11,3.12,3.13,3.14,3.15           not looked at yet
-gen_virtual_chains.deep                            3.11,3.12,3.13,3.14,3.15           not looked at yet
-gen_virtual_chains.drops                           3.11,3.12,3.13,3.14,3.15           not looked at yet
-gen_virtual_chains.frames                          3.11,3.14,3.15                     not looked at yet
-gen_virtual_chains.holds                           3.11,3.12,3.13,3.14,3.15           not looked at yet
-gen_virtual_chains.kept_frames                     3.11,3.12,3.14,3.15                not looked at yet
-gen_virtual_chains.raises                          3.11,3.12,3.13,3.14,3.15           not looked at yet
+gen_virtual.traces                                 3.12,3.13,3.14                     not looked at yet
+gen_virtual_chains.closes                          3.12,3.13,3.14,3.15                not looked at yet
+gen_virtual_chains.deep                            3.12,3.13,3.14                     not looked at yet
+gen_virtual_chains.drops                           3.12,3.13,3.14,3.15                not looked at yet
+gen_virtual_chains.frames                          3.14,3.15                          not looked at yet
+gen_virtual_chains.holds                           3.12,3.13,3.14,3.15                not looked at yet
+gen_virtual_chains.kept_frames                     3.12,3.14,3.15                     not looked at yet
+gen_virtual_chains.raises                          3.12,3.13,3.14                     not looked at yet
 gen_virtual_chains.sends                           3.9,3.10                           not looked at yet
-gen_virtual_chains.traces                          3.11,3.12,3.13,3.14,3.15           not looked at yet
+gen_virtual_chains.traces                          3.12,3.13,3.14,3.15                not looked at yet
 gen_yield_from.delegation                          3.14,3.15                          not looked at yet
 gen_yield_from.throws                              3.9,3.10                           not looked at yet
-gen_yield_from.tracing                             3.12,3.13,3.14,3.15                not looked at yet
+gen_yield_from.tracing                             3.12,3.13,3.14                     not looked at yet
 globals_cache.builtins_subclass                    3.13,3.14,3.15                     not looked at yet
 globals_cache.deleted_global                       3.10,3.11,3.12,3.13,3.14,3.15      not looked at yet
 globals_cache.exec_namespaces                      3.14,3.15                          not looked at yet
@@ -311,6 +313,18 @@ megamorphic_resume.traceback_lines                 3.11,3.12,3.13,3.14,3.15     
 megamorphic_resume.traced_in_except                3.11,3.12,3.13,3.14,3.15           not looked at yet
 module_attributes.deleted                          3.11,3.12,3.13,3.14,3.15           not looked at yet
 module_attributes.module_getattr                   3.11,3.12,3.13,3.14,3.15           not looked at yet
+module_code.builtins_replaced_and_changed          3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.del_of_a_missing_name                  3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 a NameError from a compiled global load or delete costs one more allocation
+module_code.dict_written_by_another_module         3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.import_sees_its_locals                 3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.lazy_modules                           3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.missing_name                           3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 a NameError from a compiled global load or delete costs one more allocation
+module_code.star_import_all                        3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_dict                       3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_math                       3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_no_dict                    3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.star_import_not_str                    3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
+module_code.traceback_lines                        3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 an import passes __import__ its arguments in a new tuple, where CPython calls the default __import__'s code directly
 monitoring_changes.callee_sets_local_events        3.14,3.15                          not looked at yet
 monitoring_changes.callee_turns_on_profiling       3.14,3.15                          not looked at yet
 monitoring_changes.on_off_on                       3.14,3.15                          not looked at yet
@@ -406,6 +420,8 @@ unbound_locals.read_all                            3.15                         
 unknown_type_methods.builtins                      3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 unknown_type_methods.changed_class                 3.11,3.12,3.13,3.14,3.15           not looked at yet
 unknown_type_methods.raising                       3.11,3.12,3.13,3.14,3.15           not looked at yet
+unpack_key_errors.call_twice                       3.15                               not looked at yet
+unpack_key_errors.merge_twice                      3.15                               not looked at yet
 unpack_messages.errors                             3.11,3.12,3.13,3.14,3.15           not looked at yet
 virtual_objects.tuples_tracked                     3.14,3.15                          not looked at yet
 warn_reimported.where                              3.11,3.12,3.13,3.14,3.15           not looked at yet

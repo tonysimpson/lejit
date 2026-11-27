@@ -19,4 +19,11 @@
 EXTERNFN void *
 le_patch_entry(void *fn, void *by);
 
+/* As le_patch_entry, but each call jumps to 'by', with the registers and
+   stack as the caller left them for the original: 'by' must change no
+   register that a caller could count on the original leaving alone
+   (ipatch.c:le_patch_call says why a caller might). */
+EXTERNFN void *
+le_patch_entry_jump(void *fn, void *by);
+
 #endif /* _IPATCH_H */

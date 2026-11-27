@@ -274,7 +274,7 @@ le_dead_locals(PyObject *self, PyObject *co)
     }
     if (le_not_set_up("_dead_locals"))
         return NULL;
-    mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+    mps = psyco_get_merge_points((PyCodeObject *)co);
     if (mps == Py_None)
         Py_RETURN_NONE;
     result = PyDict_New();
@@ -323,7 +323,7 @@ le_inlinable(PyObject *self, PyObject *co)
     }
     if (le_not_set_up("_inlinable"))
         return NULL;
-    mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+    mps = psyco_get_merge_points((PyCodeObject *)co);
     return PyBool_FromLong(mps != Py_None &&
                            (psyco_mp_flags(mps) & MP_FLAGS_INLINABLE) != 0);
 }

@@ -337,6 +337,38 @@ psyco_write_far_jump(code_t *code, code_t *target)
     return code + SIZE_OF_FAR_JUMP_ANYWHERE;
 }
 
+#if LE_ENTERS_FUNCTIONS_FRAMELESS
+/* Where a patched _PyFunction_Vectorcall jumps (x64/ipatch.c): on to
+   'frameless', with the caller's registers, for a function whose code
+   object has a record with a frameless entry (le_code_extra_t), else on to
+   the original, whose address goes in '*original' once it is known. The
+   record is found only as the code object's first weak reference, where
+   it is unless something else made one after it; a call missed so is the
+   original's. It changes only rax, r11 and the flags, which the original
+   changes too, as every call of the eval function it makes through a
+   pointer can. */
+DEFINEFN void *
+le_function_gate_new(void *frameless, void ***original)
+{
+    code_t *limit, *start = psyco_code_open(&limit), *code = start, *gate;
+    code = psyco_write_far_jump(code, NULL);
+    *original = (void **)(code - sizeof(void *));
+    gate = code;
+    MOV_R_O(REG_X64_RAX, REG_X64_RDI, offsetof(PyFunctionObject, func_code));
+    MOV_R_O(REG_X64_RAX, REG_X64_RAX, offsetof(PyCodeObject, co_weakreflist));
+    TEST_R_R(REG_X64_RAX, REG_X64_RAX);
+    FAR_COND_JUMP_TO(start, CC_E);
+    MOV_R_UI(REG_X64_R11, (long)&CodeRecord_Type);
+    CMP_R_O8(REG_X64_R11, REG_X64_RAX, offsetof(PyObject, ob_type));
+    FAR_COND_JUMP_TO(start, CC_NE);
+    CMP_I8_BO(0, REG_X64_RAX, offsetof(code_record_t, x.frameless));
+    FAR_COND_JUMP_TO(start, CC_E);
+    JUMP_TO(frameless);
+    CLOSE_CODE("glue", start, code);
+    return gate;
+}
+#endif
+
 DEFINEFN code_t *
 psyco_write_respawn_stub(code_t *code)
 {

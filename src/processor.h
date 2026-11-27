@@ -20,6 +20,12 @@ EXTERNFN PyObject *
 psyco_processor_run(CodeBufferObject *codebuf, long initial_stack[],
                     struct stack_frame_info_s ***finfo);
 
+#if LE_ENTERS_FUNCTIONS_FRAMELESS
+/* the code a patched _PyFunction_Vectorcall jumps to (x64/iprocessor.c) */
+EXTERNFN void *
+le_function_gate_new(void *frameless, void ***original);
+#endif
+
 #define RUN_ARGC(codebuf)                                                 \
     ((int)((get_stack_depth(&((CodeBufferObject *)(codebuf))->snapshot) - \
             INITIAL_STACK_DEPTH - sizeof(long)) /                         \

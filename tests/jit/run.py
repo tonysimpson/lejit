@@ -26,6 +26,9 @@ plain CPython's: for a language rule some CPython gets wrong),
 every call, so the leak check's rounds always compile and aren't repeated),
 'objects': reason (no objects check: what the case allocates in its
 rounds depends on timing).
+A case function with a 'compiled_code' attribute (a code object) has that
+code checked for being compiled, or interpreted, instead of its own: module
+code it runs with exec.
 
 --release tests a release build, which can't say what it compiled: results
 and leaks are checked, but not whether each function compiled or how many
@@ -212,6 +215,8 @@ def main():
             problem = err
         else:
             extra = [l for l in err if l not in ref_err]
+            expected.pop()
+            rounds = got.pop()[len('rounds: '):]
             made, object_counts = objects_compared(expected.pop(), got.pop())
             leak_ref = int(expected.pop().split()[1])
             leak_lejit, repeats = map(int, got.pop().split()[1:])
@@ -230,6 +235,7 @@ def main():
             elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
+                problem += '; blocks every 10 rounds, then collected: ' + rounds
                 if repeated:
                     problem += '; ' + repeated
             elif extra:

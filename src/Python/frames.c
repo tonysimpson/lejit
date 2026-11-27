@@ -1664,10 +1664,6 @@ gen_frame_at(stack_frame_info_t **slot)
     if ((((long)rec) & 1) != 0 || !rec->on_gen_frame)
         return NULL;
     f = *(le_frame_t **)(psyco_next_stack_frame(slot) + 1);
-    /* a record made real while its body ran: the generator's */
-    if (le_frame_is_record(f) && le_frame_record(f)->escaped != NULL)
-        f = (le_frame_t *)((char *)le_frame_record(f)->escaped +
-                           offsetof(PyGenObject, gi_iframe));
     return f;
 }
 
@@ -2092,30 +2088,40 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
    origin tracking depth was 0 (psyco_coro_start). Its frame, left cleared
    (FRAME_CLEARED), is for the caller to fill; the caller tracks it then. A
    new reference, or NULL. */
-DEFINEFN PyObject *
-le_gen_make(PyFunctionObject *func)
+DEFINEFN PyTypeObject *
+le_gen_type(PyCodeObject *co)
 {
-    PyCodeObject *co = (PyCodeObject *)func->func_code;
-    PyTypeObject *type = (co->co_flags & CO_COROUTINE) ? &PyCoro_Type
-                         : (co->co_flags & CO_ASYNC_GENERATOR)
-                             ? &PyAsyncGen_Type
-                             : &PyGen_Type;
-    PyGenObject *gen = PyObject_GC_NewVar(
-        PyGenObject, type, co->co_nlocalsplus + co->co_stacksize);
-    if (gen == NULL)
-        return NULL;
+    return (co->co_flags & CO_COROUTINE)         ? &PyCoro_Type
+           : (co->co_flags & CO_ASYNC_GENERATOR) ? &PyAsyncGen_Type
+                                                 : &PyGen_Type;
+}
+
+DEFINEFN void
+le_gen_init_names(PyGenObject *gen, PyFunctionObject *func)
+{
 #if LE_HAS_GEN_CODE_FIELD
-    gen->gi_code = (PyCodeObject *)Py_NewRef(co);
+    gen->gi_code = (PyCodeObject *)Py_NewRef(func->func_code);
 #endif
     gen->gi_weakreflist = NULL;
     gen->gi_name = Py_NewRef(func->func_name);
     gen->gi_qualname = Py_NewRef(func->func_qualname);
-    gen->gi_exc_state.exc_value = NULL;
-    gen->gi_exc_state.previous_item = NULL;
     gen->gi_origin_or_finalizer = NULL;
     gen->gi_hooks_inited = 0;
     gen->gi_closed = 0;
     gen->gi_running_async = 0;
+}
+
+DEFINEFN PyObject *
+le_gen_make(PyFunctionObject *func)
+{
+    PyCodeObject *co = (PyCodeObject *)func->func_code;
+    PyGenObject *gen = PyObject_GC_NewVar(
+        PyGenObject, le_gen_type(co), co->co_nlocalsplus + co->co_stacksize);
+    if (gen == NULL)
+        return NULL;
+    le_gen_init_names(gen, func);
+    gen->gi_exc_state.exc_value = NULL;
+    gen->gi_exc_state.previous_item = NULL;
     gen->gi_frame_state = FRAME_CLEARED;
     return (PyObject *)gen;
 }
