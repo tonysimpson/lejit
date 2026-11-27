@@ -291,6 +291,15 @@ typedef enum {
 #define FITS_IN_8BITS(v) (((long)(v) < 128 && (long)(v) >= -128))
 #define FITS_IN_32BITS(v) \
     (((long)(v) < 2147483648 && (long)(v) >= -2147483648))
+/* 'addr' is in reach of RIP-relative code at 'at', with room for the code
+   to grow by 16 MB: code emitted again a little further on decides the
+   same */
+#define LE_RIP_NEAR(at, addr) \
+    ((unsigned long)(addr) - (unsigned long)(at) + 0x7f000000UL < 0xfe000000UL)
+/* the address of a slot of executable memory holding 'value', in reach of
+   code at 'at' (LE_RIP_NEAR), or NULL (dispatcher.c) */
+EXTERNFN code_t *
+psyco_const_slot(code_t *at, long value);
 /* the rel32 of a jump ending at 'end' to 'target': to the target, or else
    to a far jump to it within reach (codemanager.c:psyco_code_far_jump) */
 EXTERNFN code_t *
@@ -621,11 +630,13 @@ psyco_write_far_jump(code_t *code, code_t *target);
 #define MOV_R_A(r, rm) INDIRECT_ENCODING(true, 1, 0x8B, 0, 0, 0, r, rm)
 /* @asm: mov qword ptr [{rm}], {r} */
 #define MOV_A_R(rm, r) INDIRECT_ENCODING(true, 1, 0x89, 0, 0, 0, r, rm)
-/* the shortest form: a 32-bit MOV zero-extends, C7 /0
-   sign-extends an imm32; otherwise the 10-byte movabs. Not for code that
-   is patched later: that is MOV_R_UI. */
+/* the shortest form that doesn't depend on where the code is: a 32-bit
+   MOV zero-extends, C7 /0 sign-extends an imm32; otherwise the 10-byte
+   movabs. For code written aside and measured or copied, and code emitted
+   twice that must have the same length both times. Not for code that is
+   patched later: that is MOV_R_UI. */
 /* @asm: mov {rm}, {i:i64} */
-#define MOV_R_I(rm, i)                                           \
+#define MOV_R_IABS(rm, i)                                        \
     do {                                                         \
         long _mov_i = (long)(i);                                 \
         if (_mov_i >= 0 && _mov_i <= 0xFFFFFFFFL) {              \
@@ -642,6 +653,32 @@ psyco_write_far_jump(code_t *code, code_t *target);
             BASE_ENCODING(true, 0, 0, 0, 0, 0xB8, 0, rm);        \
             WRITE_64BIT(_mov_i);                                 \
         }                                                        \
+    } while (0)
+/* @asm: mov {r}, qword ptr [rip{o:d32}] */
+#define MOV_R_RIP(r, o)                            \
+    do {                                           \
+        long _rip_o = (o);                         \
+        REX_ENCODING(true, r, 0, 0);               \
+        WRITE_1(0x8B);                             \
+        MODRM_ENCODING(0, r, 5);                   \
+        WRITE_32BIT(_rip_o);                       \
+        le_reloc_note(code - 4, LE_RELOC_DATA, 4); \
+    } while (0)
+/* a constant in a register, in 7 bytes where MOV_R_IABS would take 10: the
+   address of something within reach, or a load from its slot in the
+   owner's constants (dispatcher.c:psyco_const_slot) */
+#define MOV_R_I(rm, i)                                            \
+    do {                                                          \
+        long _k = (long)(i);                                      \
+        code_t *_kslot;                                           \
+        if (FITS_IN_32BITS(_k) || (_k >= 0 && _k <= 0xFFFFFFFFL)) \
+            MOV_R_IABS(rm, _k);                                   \
+        else if (LE_RIP_NEAR(code, _k))                           \
+            LEA_R_RIP(rm, _k - ((long)code + 7));                 \
+        else if ((_kslot = psyco_const_slot(code, _k)) != NULL)   \
+            MOV_R_RIP(rm, (long)_kslot - ((long)code + 7));       \
+        else                                                      \
+            MOV_R_IABS(rm, _k);                                   \
     } while (0)
 /* @asm: movabs {rm}, {i:i64} */
 #define MOV_R_UI(rm, i)                           \
@@ -1164,11 +1201,39 @@ typedef enum {
             WRITE_32BIT(i);                                                   \
         }                                                                     \
         else {                                                                \
-            MOV_R_I(REG_TRANSIENT_1, i);                                      \
-            DIRECT_ENCODING(true, 1, 0x01 | _ENCODE_COMMON_INSTR(instr), 0,   \
-                            0, 0, REG_TRANSIENT_1, rm);                       \
+            COMMON_INSTR_I64(instr, rm, i);                                   \
         }                                                                     \
     } while (0)
+/* "INSTR rm, i" for an 'i' beyond 32 bits: with its slot in the owner's
+   constants (MOV_R_I), "INSTR rm, qword ptr [rip+slot]", which computes
+   the same; else through REG_TRANSIENT_1 */
+#define COMMON_INSTR_I64(instr, rm, i)                                      \
+    do {                                                                    \
+        long _ci = (long)(i);                                               \
+        code_t *_cslot = psyco_const_slot(code, _ci);                       \
+        if (_cslot != NULL) {                                               \
+            COMMON_INSTR_R_RIP(instr, rm, (long)_cslot - ((long)code + 7)); \
+        }                                                                   \
+        else {                                                              \
+            MOV_R_I(REG_TRANSIENT_1, _ci);                                  \
+            DIRECT_ENCODING(true, 1, 0x01 | _ENCODE_COMMON_INSTR(instr), 0, \
+                            0, 0, REG_TRANSIENT_1, rm);                     \
+        }                                                                   \
+    } while (0)
+/* "INSTR r, qword ptr [rip+o]"; 'o' is from the end of its 7 bytes */
+#define COMMON_INSTR_R_RIP(instr, r, o)              \
+    do {                                             \
+        long _rip_o = (o);                           \
+        REX_ENCODING(true, r, 0, 0);                 \
+        WRITE_1(0x03 | _ENCODE_COMMON_INSTR(instr)); \
+        MODRM_ENCODING(0, r, 5);                     \
+        WRITE_32BIT(_rip_o);                         \
+        le_reloc_note(code - 4, LE_RELOC_DATA, 4);   \
+    } while (0)
+/* @asm: cmp {r}, qword ptr [rip{o:d32}] */
+#define CMP_R_RIP(r, o) COMMON_INSTR_R_RIP(CMP, r, o)
+/* @asm: sub {r}, qword ptr [rip{o:d32}] */
+#define SUB_R_RIP(r, o) COMMON_INSTR_R_RIP(SUB, r, o)
 
 #define DIRECT_OR_RSP_OFFSET_ENCODING(rex_w, op_len, b1, b2, b3, mod, r, \
                                       source)                            \
@@ -1198,6 +1263,9 @@ typedef enum {
             DIRECT_OR_RSP_OFFSET_ENCODING(                                    \
                 true, 1, 0x81, 0, 0, _ENCODE_COMMON_INSTR(instr), 0, source); \
             WRITE_32BIT(i);                                                   \
+        }                                                                     \
+        else if (getreg(source) != REG_NONE) {                                \
+            COMMON_INSTR_I64(instr, getreg(source), i);                       \
         }                                                                     \
         else {                                                                \
             MOV_R_I(REG_TRANSIENT_1, i);                                      \

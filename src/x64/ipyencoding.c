@@ -308,22 +308,55 @@ _Static_assert(offsetof(store_cache_t, shape) == 0,
 #define INC_STORED(rg) INC_A(rg)
 #endif
 
-/* Which encodings reach: decided once from where the site starts, with a
-   margin, so that both passes emit the same lengths. */
-static bool
-rip_near(code_t *at, void *addr)
+/* Code emitted twice from 'start' (the attribute store and load, whose
+   short jumps the first pass measures) decides each encoding from 'start'
+   with a margin (LE_RIP_NEAR), and finds its constants' slots before the
+   first pass, so that both passes emit the same lengths. */
+#define SITE_CONSTS_MAX 6
+typedef struct {
+    long value[SITE_CONSTS_MAX];
+    code_t *slot[SITE_CONSTS_MAX];
+    int n;
+} site_consts_t;
+
+static void
+site_const(site_consts_t *k, code_t *start, long value)
 {
-    long d = (long)addr - (long)at;
-    return -0x7f000000L < d && d < 0x7f000000L;
+    extra_assert(k->n < SITE_CONSTS_MAX);
+    k->value[k->n] = value;
+    k->slot[k->n++] = FITS_IN_32BITS(value) || LE_RIP_NEAR(start, value)
+                          ? NULL
+                          : psyco_const_slot(start, value);
 }
-/* the address of a constant in a register: 5 bytes below 4 GB, else 7
-   (RIP-relative) or 10 */
-#define LOAD_ADDRESS(rg, addr, near)                        \
-    do {                                                    \
-        if ((unsigned long)(addr) > 0xFFFFFFFFUL && (near)) \
-            LEA_R_RIP(rg, (long)(addr) - ((long)code + 7)); \
-        else                                                \
-            MOV_R_I(rg, (long)(addr));                      \
+
+static void
+site_consts_operand(site_consts_t *k, code_t *start, Source src)
+{
+    if (is_compiletime(src))
+        site_const(k, start, KSOURCE_SOURCE(src)->value);
+}
+
+static code_t *
+site_slot(const site_consts_t *k, long value)
+{
+    int i;
+    for (i = 0; i < k->n; i++)
+        if (k->value[i] == value)
+            return k->slot[i];
+    return NULL;
+}
+/* the constant 'addr' in a register: 5 bytes below 4 GB, else 7
+   (RIP-relative, or from its slot in 'consts') or 10 */
+#define LOAD_ADDRESS(rg, addr)                                            \
+    do {                                                                  \
+        long _la = (long)(addr);                                          \
+        code_t *_ls = site_slot(consts, _la);                             \
+        if ((unsigned long)_la > 0xFFFFFFFFUL && LE_RIP_NEAR(start, _la)) \
+            LEA_R_RIP(rg, _la - ((long)code + 7));                        \
+        else if ((unsigned long)_la > 0xFFFFFFFFUL && _ls != NULL)        \
+            MOV_R_RIP(rg, (long)_ls - ((long)code + 7));                  \
+        else                                                              \
+            MOV_R_IABS(rg, _la);                                          \
     } while (0)
 /* a call to the glue 'fn' from code that starts at 'start'; with XMM
    values live, to its copy that keeps them */
@@ -335,26 +368,25 @@ rip_near(code_t *at, void *addr)
             _glue = psyco_glue_keeping_xmm(_glue);       \
             po->xmm_call = XMM_CALL_KEPT;                \
         }                                                \
-        if (rip_near(start, _glue)) {                    \
+        if (LE_RIP_NEAR(start, _glue)) {                 \
             le_trace_call((code_t *)code, _glue);        \
             WRITE_1(0xE8);                               \
             WRITE_32BIT((long)_glue - ((long)code + 4)); \
             le_reloc_note(code - 4, LE_RELOC_JUMP, 4);   \
         }                                                \
         else {                                           \
-            MOV_R_I(REG_TRANSIENT_1, (long)_glue);       \
+            MOV_R_IABS(REG_TRANSIENT_1, (long)_glue);    \
             CALL_R(REG_TRANSIENT_1);                     \
         }                                                \
         po->xmm_call = _xmm_call;                        \
     } while (0)
 static void
 load_operand(PsycoObject *po, code_t **pcode, Source src, reg_t rg,
-             code_t *start)
+             code_t *start, const site_consts_t *consts)
 {
     code_t *code = *pcode;
     if (is_compiletime(src)) {
-        long k = KSOURCE_SOURCE(src)->value;
-        LOAD_ADDRESS(rg, k, rip_near(start, (void *)k));
+        LOAD_ADDRESS(rg, KSOURCE_SOURCE(src)->value);
     }
     else {
         LOAD_REG_FROM(src, rg);
@@ -396,7 +428,8 @@ static signed char le_probe_masks[8] = {0, 1, 3, 7, 15, 31, 63, 127};
 
 static code_t *
 inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
-                  const bool *near, code_t **jat, int *pnj, code_t **pmiss)
+                  const site_consts_t *consts, const bool *near, code_t **jat,
+                  int *pnj, code_t **pmiss)
 {
     code_t *start = code;
     int nj = 0;
@@ -431,9 +464,9 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         WRITE_2(0x0F, 0x80 | (cc));                 \
         code += 4;                                  \
     } while (0)
-    load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
-    load_operand(po, &code, s->value->source, REG_X64_RSI, start);
-    LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+    load_operand(po, &code, s->obj->source, REG_X64_RDI, start, consts);
+    load_operand(po, &code, s->value->source, REG_X64_RSI, start, consts);
+    LOAD_ADDRESS(REG_X64_RDX, s->cache);
     if (IN_VALUES(s)) {
 #if LE_HAS_INLINE_VALUES
         TEST_I8_BO(REG_X64_RDI, s->dictoffset + LE_VALUES_VALID, 1);
@@ -457,7 +490,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         JCC_MISS(CC_E); /* the dict was made */
 #endif
 #endif
-        LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
+        LOAD_ADDRESS(REG_X64_R9, s->keys);
     }
     else {
         MOV_R_O(REG_X64_RCX, REG_X64_RDI, s->dictoffset);
@@ -606,14 +639,12 @@ probe:
                     offsetof(le_dictkeys_t, dk_log2_size));
         CMP_I8_R(7, REG_X64_R8);
         JCC_STUB(CC_uG); /* wider indices */
-        LOAD_ADDRESS(REG_X64_RDX, le_probe_masks,
-                     rip_near(start, le_probe_masks));
+        LOAD_ADDRESS(REG_X64_RDX, le_probe_masks);
         MOVSX_R_BX8(REG_X64_R8, REG_X64_RDX, 0, REG_X64_R8, 1);
-        MOV_R_I(REG_TRANSIENT_1, hash);
+        MOV_R_IABS(REG_TRANSIENT_1, hash);
         MOV_R_R(REG_X64_RSI, REG_TRANSIENT_1);
-        LOAD_ADDRESS(REG_TRANSIENT_2, s->cache->name,
-                     rip_near(start, s->cache->name));
-        MOV_R_I(REG_X64_RDI, hash & 127);
+        LOAD_ADDRESS(REG_TRANSIENT_2, s->cache->name);
+        MOV_R_IABS(REG_X64_RDI, hash & 127);
         AND_R_R(REG_X64_RDI, REG_X64_R8);
         MOVSX_R_BX8(REG_X64_RAX, REG_X64_R9, ind, REG_X64_RDI, 1);
         body = code;
@@ -646,7 +677,7 @@ probe:
         le_trace_jump_cond(jfound, jfound + 2, code);
         /* R9: the entry's value */
         LEA_R_X8(REG_X64_R9, REG_X64_R9, ind + 9, REG_X64_RAX, 1);
-        load_operand(po, &code, s->value->source, REG_X64_RSI, start);
+        load_operand(po, &code, s->value->source, REG_X64_RSI, start, consts);
         if (s->dict_gc != STORE_GC_NONE) {     /* MAINTAIN_TRACKING */
             LE_GC_UNTRACKED_TEST(REG_X64_RCX); /* mechanisms/store_gc.h */
             if (s->dict_gc == STORE_GC_DICT) {
@@ -668,7 +699,7 @@ probe:
         MOV_R_A(REG_X64_RAX, REG_X64_R9);
         MOV_A_R(REG_X64_R9, REG_X64_RSI);
         INC_STORED(REG_X64_RSI);
-        LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+        LOAD_ADDRESS(REG_X64_RDX, s->cache);
         DICT_NEW_VERSION();
         WRITE_1(0xE9);
         UPDATABLE_WRITE_32BIT(REL32(code + 4, decref));
@@ -677,9 +708,9 @@ probe:
             *(dword_t *)(jstub[i] + 2) = REL32(jstub[i] + 6, code);
             le_trace_jump_cond(jstub[i], jstub[i] + 6, code);
         }
-        load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
-        load_operand(po, &code, s->value->source, REG_X64_RSI, start);
-        LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+        load_operand(po, &code, s->obj->source, REG_X64_RDI, start, consts);
+        load_operand(po, &code, s->value->source, REG_X64_RSI, start, consts);
+        LOAD_ADDRESS(REG_X64_RDX, s->cache);
     }
 #endif
     *pmiss = code;
@@ -698,6 +729,7 @@ void
 psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
 {
     bool near[STORE_MAX_MISS_JUMPS];
+    site_consts_t consts;
     code_t *jat[STORE_MAX_MISS_JUMPS], *miss, *start;
     int i, nj;
     extra_assert(!is_virtualtime(s->obj->source) &&
@@ -714,11 +746,20 @@ psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
     NEED_REGISTER(REG_X64_R8);
     NEED_REGISTER(REG_X64_R9);
     start = code;
+    consts.n = 0;
+    site_consts_operand(&consts, start, s->obj->source);
+    site_consts_operand(&consts, start, s->value->source);
+    site_const(&consts, start, (long)s->cache);
+    if (IN_VALUES(s))
+        site_const(&consts, start, (long)s->keys);
+#if LE_HAS_DICT_KEYS_KIND
+    site_const(&consts, start, (long)s->cache->name);
+#endif
     for (i = 0; i < STORE_MAX_MISS_JUMPS; i++) near[i] = true;
-    inline_store_body(po, start, s, near, jat, &nj, &miss);
+    inline_store_body(po, start, s, &consts, near, jat, &nj, &miss);
     for (i = 0; i < nj; i++) /* each later jump made short shortens it */
         near[i] = miss - jat[i] - 6 > 127;
-    code = inline_store_body(po, start, s, near, jat, &nj, &miss);
+    code = inline_store_body(po, start, s, &consts, near, jat, &nj, &miss);
     for (i = 0; i < nj; i++) {
         if (near[i]) {
             *(dword_t *)(jat[i] + 2) = REL32(jat[i] + 6, miss);
@@ -789,40 +830,76 @@ _Static_assert(offsetof(le_dictentry_t, me_hash) == 0 &&
                    sizeof(le_dictentry_t) == 24,
                "an entry is found at 24 * index and its hash first");
 #define LOAD_MAX_JUMPS 12
-DEFINEFN
-vinfo_t *
-psyco_inline_load(PsycoObject *po, inline_load_t *s)
+#define LOAD_MAX_FORWARD 24
+/* the forward jumps of the load, in the order emitted: where each is and
+   goes, and whether it is short; all are near in the first pass */
+typedef struct {
+    code_t *at[LOAD_MAX_FORWARD], *to[LOAD_MAX_FORWARD];
+    bool is_short[LOAD_MAX_FORWARD];
+    int n;
+} load_jumps_t;
+
+static code_t *
+inline_load_body(PsycoObject *po, code_t *code, inline_load_t *s, reg_t rg,
+                 const site_consts_t *consts, load_jumps_t *fj)
 {
-    code_t *jmiss[LOAD_MAX_JUMPS], *jnone[2], *jdone[5], *start, *at;
+    code_t *start = code, *at;
+    int jmiss[LOAD_MAX_JUMPS], jnone[2], jdone[5];
     int nmiss = 0, nnone = 0, ndone = 0, i;
 #if LE_HAS_DICT_KEYS_KIND
-    code_t *jdict[2];
+    int jdict[2];
     int ndict = 0;
 #endif
-    vinfo_t *v;
-    reg_t rg, ro;
-#define NEAR_JCC(cc, list, n)       \
-    do {                            \
-        list[n++] = code;           \
-        WRITE_2(0x0F, 0x80 | (cc)); \
-        code += 4;                  \
+    reg_t ro;
+#define FORWARD(list, cnt)                      \
+    do {                                        \
+        extra_assert(fj->n < LOAD_MAX_FORWARD); \
+        fj->at[fj->n] = code;                   \
+        list[cnt++] = fj->n++;                  \
     } while (0)
-#define NEAR_JMP(list, n) \
-    do {                  \
-        list[n++] = code; \
-        WRITE_1(0xE9);    \
-        code += 4;        \
+#define NEAR_JCC(cc, list, cnt)            \
+    do {                                   \
+        bool _short = fj->is_short[fj->n]; \
+        FORWARD(list, cnt);                \
+        if (_short) {                      \
+            WRITE_2(0x70 | (cc), 0);       \
+        }                                  \
+        else {                             \
+            WRITE_2(0x0F, 0x80 | (cc));    \
+            code += 4;                     \
+        }                                  \
     } while (0)
-#define POINT(list, n, target)                              \
-    for (i = 0; i < (n); i++) {                             \
-        at = list[i];                                       \
+#define NEAR_JMP(list, cnt)                \
+    do {                                   \
+        bool _short = fj->is_short[fj->n]; \
+        FORWARD(list, cnt);                \
+        if (_short) {                      \
+            WRITE_2(0xEB, 0);              \
+        }                                  \
+        else {                             \
+            WRITE_1(0xE9);                 \
+            code += 4;                     \
+        }                                  \
+    } while (0)
+#define POINT(list, cnt, target)                            \
+    for (i = 0; i < (cnt); i++) {                           \
+        at = fj->at[list[i]];                               \
+        fj->to[list[i]] = (target);                         \
         if (at[0] == 0xE9) {                                \
             *(dword_t *)(at + 1) = REL32(at + 5, (target)); \
             le_trace_jump(at, (target));                    \
         }                                                   \
-        else {                                              \
+        else if (at[0] == 0x0F) {                           \
             *(dword_t *)(at + 2) = REL32(at + 6, (target)); \
             le_trace_jump_cond(at, at + 6, (target));       \
+        }                                                   \
+        else {                                              \
+            extra_assert((target) - (at + 2) < 128);        \
+            at[1] = (code_t)((target) - (at + 2));          \
+            if (at[0] == 0xEB)                              \
+                le_trace_jump(at, (target));                \
+            else                                            \
+                le_trace_jump_cond(at, at + 2, (target));   \
         }                                                   \
     }
 #define SHORT_BACK(cc, target)                            \
@@ -835,26 +912,12 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         else                                              \
             le_trace_jump_cond(code - 2, code, (target)); \
     } while (0)
-    extra_assert(!is_virtualtime(s->obj->source));
-    if (!is_respawning(po) && po->codelimit - po->code < 512)
-        PsycoObject_EmergencyCodeRoom(po);
-    BEGIN_CODE
-    NEED_CC();
-    NEED_REGISTER(REG_X64_RAX);
-    NEED_REGISTER(REG_X64_RCX);
-    NEED_REGISTER(REG_X64_RDX);
-    NEED_REGISTER(REG_X64_RSI);
-    NEED_REGISTER(REG_X64_RDI);
-    NEED_REGISTER(REG_X64_R8);
-    NEED_REGISTER(REG_X64_R9);
-    NEED_FREE_REG(rg); /* callee-saved: the miss call keeps it */
-    start = code;
     if (is_runtime(s->obj->source) && !RUNTIME_REG_IS_NONE(s->obj)) {
         ro = RUNTIME_REG(s->obj);
     }
     else {
         ro = REG_X64_RDI;
-        load_operand(po, &code, s->obj->source, ro, start);
+        load_operand(po, &code, s->obj->source, ro, start, consts);
     }
     if (IN_VALUES(s)) {
 #if LE_MANAGED_VALUES
@@ -876,8 +939,8 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         TEST_R_R(REG_X64_R8, REG_X64_R8);
         NEAR_JCC(CC_E, jdict, ndict); /* the dict was made */
 #endif
-        LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
-        LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+        LOAD_ADDRESS(REG_X64_R9, s->keys);
+        LOAD_ADDRESS(REG_X64_RDX, s->cache);
         MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
         MOV_R_X8(REG_X64_RAX, REG_X64_R9, 0, REG_X64_RAX, 8);
         CMP_R_O8(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, name));
@@ -918,7 +981,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         NEAR_JCC(CC_E, jmiss, nmiss); /* combined */
 #endif
         MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
-        LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+        LOAD_ADDRESS(REG_X64_RDX, s->cache);
         KEYS_SHAPE_LOAD(REG_X64_RAX, REG_X64_R9);
         CMP_R_A(REG_X64_RAX, REG_X64_RDX);
         NEAR_JCC(CC_NE, jmiss, nmiss); /* keys of another shape */
@@ -945,7 +1008,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         CMP_I8_R(127, REG_X64_R8);
         NEAR_JCC(CC_uG, jmiss, nmiss); /* wider indices */
         SUB_R_I8(REG_X64_R8, 1);
-        MOV_R_I(REG_X64_RDI, s->hash & 127);
+        MOV_R_IABS(REG_X64_RDI, s->hash & 127);
         AND_R_R(REG_X64_RDI, REG_X64_R8);
         MOVSX_R_BX8(REG_X64_RAX, REG_X64_R9, ind, REG_X64_RDI, 1);
         CMP_I8_R(-1, REG_X64_RAX);
@@ -959,7 +1022,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         taken = code;
         jtaken[1] = (code_t)(taken - (jtaken + 2));
         le_trace_jump_cond(jtaken, jtaken + 2, taken);
-        MOV_R_I(REG_X64_RDX, s->hash);
+        MOV_R_IABS(REG_X64_RDX, s->hash);
         MOV_R_R(REG_X64_RSI, REG_X64_RDX);
         body = code;
         TEST_R_R(REG_X64_RAX, REG_X64_RAX);
@@ -999,14 +1062,12 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
                     offsetof(le_dictkeys_t, dk_log2_size));
         CMP_I8_R(7, REG_X64_R8);
         NEAR_JCC(CC_uG, jmiss, nmiss); /* wider indices */
-        LOAD_ADDRESS(REG_X64_RDX, le_probe_masks,
-                     rip_near(start, le_probe_masks));
+        LOAD_ADDRESS(REG_X64_RDX, le_probe_masks);
         MOVSX_R_BX8(REG_X64_R8, REG_X64_RDX, 0, REG_X64_R8, 1);
-        MOV_R_I(REG_TRANSIENT_1, s->hash);
+        MOV_R_IABS(REG_TRANSIENT_1, s->hash);
         MOV_R_R(REG_X64_RSI, REG_TRANSIENT_1);
-        LOAD_ADDRESS(REG_TRANSIENT_2, s->cache->name,
-                     rip_near(start, s->cache->name));
-        MOV_R_I(REG_X64_RDI, s->hash & 127);
+        LOAD_ADDRESS(REG_TRANSIENT_2, s->cache->name);
+        MOV_R_IABS(REG_X64_RDI, s->hash & 127);
         AND_R_R(REG_X64_RDI, REG_X64_R8);
         MOVSX_R_BX8(REG_X64_RAX, REG_X64_R9, ind, REG_X64_RDI, 1);
         body = code;
@@ -1045,18 +1106,65 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
 #endif
     POINT(jmiss, nmiss, code);
     MOV_R_R(REG_X64_RDI, REG_X64_RCX);
-    LOAD_ADDRESS(REG_X64_RSI, s->cache, rip_near(start, s->cache));
+    LOAD_ADDRESS(REG_X64_RSI, s->cache);
     CALL_GLUE(s->miss_glue, start);
     MOV_R_R(rg, REG_X64_RAX);
     POINT(jdone, ndone, code);
-    END_CODE
-    v = vinfo_new(RunTime_New(rg, false, false));
-    REG_NUMBER(po, rg) = v;
-    return v;
+    return code;
+#undef FORWARD
 #undef NEAR_JCC
 #undef NEAR_JMP
 #undef POINT
 #undef SHORT_BACK
+}
+
+DEFINEFN
+vinfo_t *
+psyco_inline_load(PsycoObject *po, inline_load_t *s)
+{
+    load_jumps_t fj;
+    site_consts_t consts;
+    code_t *start;
+    vinfo_t *v;
+    reg_t rg;
+    int i;
+    extra_assert(!is_virtualtime(s->obj->source));
+    if (!is_respawning(po) && po->codelimit - po->code < 512)
+        PsycoObject_EmergencyCodeRoom(po);
+    BEGIN_CODE
+    NEED_CC();
+    NEED_REGISTER(REG_X64_RAX);
+    NEED_REGISTER(REG_X64_RCX);
+    NEED_REGISTER(REG_X64_RDX);
+    NEED_REGISTER(REG_X64_RSI);
+    NEED_REGISTER(REG_X64_RDI);
+    NEED_REGISTER(REG_X64_R8);
+    NEED_REGISTER(REG_X64_R9);
+    NEED_FREE_REG(rg); /* callee-saved: the miss call keeps it */
+    start = code;
+    consts.n = 0;
+    site_consts_operand(&consts, start, s->obj->source);
+    site_const(&consts, start, (long)s->cache);
+    if (IN_VALUES(s))
+        site_const(&consts, start, (long)s->keys);
+#if LE_HAS_DICT_KEYS_KIND
+    site_const(&consts, start, (long)s->cache->name);
+#endif
+    /* the first pass, all near, gives an upper bound on each distance */
+    for (i = 0; i < LOAD_MAX_FORWARD; i++) {
+        fj.is_short[i] = false;
+        fj.to[i] = NULL;
+    }
+    fj.n = 0;
+    inline_load_body(po, start, s, rg, &consts, &fj);
+    for (i = 0; i < fj.n; i++)
+        fj.is_short[i] = fj.to[i] != NULL && fj.to[i] - (fj.at[i] + 2) < 128;
+    fj.n = 0;
+    code = inline_load_body(po, start, s, rg, &consts, &fj);
+    END_CODE
+    v = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = v;
+    return v;
 }
 
 /* A type guard (pobject.c:type_changed): tp's tp_flags and tp_version_tag
@@ -1121,17 +1229,17 @@ psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
    which the guard's form was chosen knowing there is */
 #if LE_HAS_DICT_VERSION_TAG
 #define LE_DICT_TAG_ADDRESS(d) (&((PyDictObject *)(d))->ma_version_tag)
-#define LOAD_DICT_TAG(r, d)                                      \
+#define LOAD_DICT_TAG(mov, r, d)                                 \
     do {                                                         \
-        MOV_R_I(r, (long)(d));                                   \
+        mov(r, (long)(d));                                       \
         MOV_R_O(r, r, CPY_OFFSET(PyDictObject, ma_version_tag)); \
     } while (0)
 #else
 #define LE_DICT_TAG_ADDRESS(d) le_dict_counter((PyDictObject *)(d))
-#define LOAD_DICT_TAG(r, d)                       \
-    do {                                          \
-        MOV_R_I(r, (long)LE_DICT_TAG_ADDRESS(d)); \
-        MOV_R_A(r, r);                            \
+#define LOAD_DICT_TAG(mov, r, d)              \
+    do {                                      \
+        mov(r, (long)LE_DICT_TAG_ADDRESS(d)); \
+        MOV_R_A(r, r);                        \
     } while (0)
 #endif
 _Static_assert(offsetof(le_dictentry_t, me_key) ==
@@ -1214,13 +1322,13 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         code += 4;                   \
     } while (0)
 #if LE_HAS_DICT_VERSION_TAG
-    MOV_R_I(REG_TRANSIENT_1, (long)globals);
+    MOV_R_IABS(REG_TRANSIENT_1, (long)globals);
     if (absent == NULL) {
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_version_tag));
 #else
     if (absent == NULL) {
-        LOAD_DICT_TAG(REG_TRANSIENT_1, globals);
+        LOAD_DICT_TAG(MOV_R_IABS, REG_TRANSIENT_1, globals);
 #endif
         MOV_R_UI(REG_TRANSIENT_2, (long)gtag);
         CMP_R_R(REG_TRANSIENT_2, REG_TRANSIENT_1);
@@ -1228,7 +1336,7 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
     }
     else {
 #if !LE_HAS_DICT_VERSION_TAG
-        MOV_R_I(REG_TRANSIENT_1, (long)globals);
+        MOV_R_IABS(REG_TRANSIENT_1, (long)globals);
 #endif
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_keys));
@@ -1256,7 +1364,7 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         }
     }
 #undef JNE_DONE
-    LOAD_DICT_TAG(REG_X64_RAX, builtins);
+    LOAD_DICT_TAG(MOV_R_IABS, REG_X64_RAX, builtins);
     MOV_R_UI(REG_TRANSIENT_1, (long)tag);
     CMP_R_R(REG_TRANSIENT_1, REG_X64_RAX);
     if (done == NULL)
@@ -1325,11 +1433,11 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_version_tag));
 #else
-        LOAD_DICT_TAG(REG_TRANSIENT_1, globals);
+        LOAD_DICT_TAG(MOV_R_I, REG_TRANSIENT_1, globals);
         MOV_R_I(REG_TRANSIENT_2, (long)tags);
 #endif
         XOR_R_O(REG_TRANSIENT_1, REG_TRANSIENT_2, 0);
-        LOAD_DICT_TAG(REG_X64_RAX, builtins);
+        LOAD_DICT_TAG(MOV_R_I, REG_X64_RAX, builtins);
         XOR_R_O(REG_X64_RAX, REG_TRANSIENT_2, sizeof(uint64_t));
         OR_R_R(REG_X64_RAX, REG_TRANSIENT_1);
     }
@@ -1526,7 +1634,7 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
         jmiss[i][1] = (code_t)(code - (jmiss[i] + 2));
         le_trace_jump_cond(jmiss[i], jmiss[i] + 2, code);
     }
-    LOAD_ADDRESS(REG_X64_RDI, arg, rip_near(start, arg));
+    MOV_R_I(REG_X64_RDI, (long)arg);
     CALL_GLUE(miss_glue, start);
     MOV_R_R(rg, REG_X64_RAX);
     extra_assert(code - (jdone + 2) < 128);

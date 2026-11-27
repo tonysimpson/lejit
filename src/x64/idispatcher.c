@@ -253,7 +253,7 @@ unify_check_save(code_t *code, struct dmove_s *dm, vinfo_t *wanted[])
     for (i = 0; i < REG_TOTAL; i++) {
         if (wanted[i] != NULL && RUNTIME_REG(wanted[i]) != REG_NONE) {
             le_trace_begin_simple_code(code);
-            MOV_R_I(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
+            MOV_R_IABS(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
             MOV_O_R(REG_TRANSIENT_2, 0, RUNTIME_REG(wanted[i]));
             le_trace_end_simple_code(code);
             if (code > dm->code_limit)
@@ -272,7 +272,7 @@ unify_check_verify(code_t *code, struct dmove_s *dm, vinfo_t *wanted[],
         if (saved[i]) {
             le_trace_begin_simple_code(code);
             WRITE_1(0x9C); /* PUSHFQ */
-            MOV_R_I(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
+            MOV_R_IABS(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
             MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_2, 0);
             CMP_R_R(REG_TRANSIENT_1, i);
             {

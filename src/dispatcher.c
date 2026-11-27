@@ -1226,6 +1226,78 @@ stub_pool_reserve(size_t n)
     return o->stub_pool;
 }
 
+/* Constants that compiled code reads RIP-relative (x64/iencoding.h:MOV_R_I)
+   are 8-byte slots in the stub pool, which none crosses a cache line. A
+   shared slot is never changed, so code emitted later reuses one that
+   still holds its value: the cache remembers the last slot per value,
+   valid while it is in its owner's current chunk. A promotion's slot is
+   its own, and the dispatcher rewrites it
+   (idispatcher.h:ipromotion_update_entry). Code written into the pool
+   itself (a stub) gets no slot, as it is written where the slot would go. */
+#define CONST_CACHE_SIZE 256
+static struct {
+    le_owner_t *owner;
+    code_t *slot;
+} const_cache[CONST_CACHE_SIZE];
+
+static code_t *
+const_slot_new(long value)
+{
+    code_t *slot = stub_pool_reserve(2 * sizeof(long) - 1);
+    if (((uintptr_t)slot & 63) > 64 - sizeof(long))
+        slot += 64 - ((uintptr_t)slot & 63);
+    POOL_OWNER->stub_pool = slot + sizeof(long);
+    *(long *)slot = value;
+    return slot;
+}
+
+/* whether a slot for code at 'at' can be taken */
+static bool
+const_slot_allowed(code_t *at)
+{
+    le_owner_t *o = POOL_OWNER;
+    return psyco_in_code_regions(at) && /* else written aside */
+           !(o->stub_pool_end - o->stub_chunk <= at && at <= o->stub_pool_end);
+}
+
+DEFINEFN code_t *
+psyco_const_slot(code_t *at, long value)
+{
+    le_owner_t *o = POOL_OWNER;
+    unsigned long h = (unsigned long)value * 0x9E3779B97F4A7C15UL;
+    int i = (int)(h >> 56) & (CONST_CACHE_SIZE - 1);
+    code_t *slot = const_cache[i].slot;
+    if (!const_slot_allowed(at))
+        return NULL;
+    if (const_cache[i].owner != o || slot < o->stub_pool_end - o->stub_chunk ||
+        slot >= o->stub_pool || *(long *)slot != value) {
+        slot = const_slot_new(value);
+        LE_RELOC_SLOT(slot); /* it may be the address of code */
+        const_cache[i].owner = o;
+        const_cache[i].slot = slot;
+    }
+    return LE_RIP_NEAR(at, slot) ? slot : NULL;
+}
+
+DEFINEFN void
+psyco_const_forget(le_owner_t *o)
+{
+    int i;
+    for (i = 0; i < CONST_CACHE_SIZE; i++)
+        if (const_cache[i].owner == o)
+            const_cache[i].owner = NULL;
+}
+
+DEFINEFN code_t *
+psyco_promotion_slot(code_t *at)
+{
+    code_t *slot;
+    if (!const_slot_allowed(at))
+        return NULL;
+    slot = const_slot_new(0);
+    return LE_RIP_NEAR(at, slot) ? slot : NULL;
+}
+
 DEFINEFN void *
 psyco_new_stub(void *fn, size_t size, code_t **stub)
 {
@@ -3203,8 +3275,8 @@ promotion_need_chain(rt_promotion_t *fs, int n)
     fs->chaincap = cap;
     promotion_chain_end(fs);
     /* overwrites the start of the site's own miss path */
-    ipromotion_write_jump(fs->jump_if_equal_code + PROMOTION_ENTRY_SIZE,
-                          chain);
+    ipromotion_write_jump(
+        fs->jump_if_equal_code + ENTRY_SIZE(fs->jump_if_equal_code), chain);
 }
 
 /* the site's megamorphic version, or NULL */
@@ -3309,8 +3381,9 @@ promotion_cache_forget(rt_promotion_t *fs, long key)
     if (n == count)
         return;
     /* empty, as ipromotion_finish wrote it */
-    ipromotion_update_entry(fs->jump_if_equal_code, 0,
-                            fs->jump_if_equal_code + PROMOTION_ENTRY_SIZE);
+    ipromotion_update_entry(
+        fs->jump_if_equal_code, 0,
+        fs->jump_if_equal_code + ENTRY_SIZE(fs->jump_if_equal_code));
     fs->ncached = 0;
     for (i = 0; i < n; i++) promotion_cache_add(fs, values[i], targets[i]);
     if (fs->chain != NULL)
