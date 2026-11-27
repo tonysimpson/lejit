@@ -404,8 +404,8 @@ static inline int
 le_frame_is_record(le_frame_t *f)
 {
     return f->owner == LE_FRAME_OWNED_BY_RECORD &&
-           Py_TYPE((PyObject *)((char *)f - offsetof(PyFrameObject,
-                                                     _f_frame_data))) !=
+           Py_TYPE((PyObject *)((char *)f -
+                                offsetof(PyFrameObject, _f_frame_data))) !=
                &PyFrame_Type;
 }
 /* the state of the generator or record whose frame f is */

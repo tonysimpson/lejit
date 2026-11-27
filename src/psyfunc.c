@@ -1818,8 +1818,8 @@ struct gen_layout {
 };
 static struct gen_layout gen_layout, record_layout;
 /* a record's words, as its frame's */
-#define REC_words                                                       \
-    FMUT(DEF_ARRAY(PyObject *, offsetof(PyGenObject, gi_iframe) +       \
+#define REC_words                                                 \
+    FMUT(DEF_ARRAY(PyObject *, offsetof(PyGenObject, gi_iframe) + \
                                    offsetof(le_frame_t, localsplus)))
 static void
 gen_layouts_init(void)

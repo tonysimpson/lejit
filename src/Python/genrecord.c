@@ -291,7 +291,8 @@ le_gen_record_real(PyObject *rec)
         return Py_NewRef(Py_None);
     }
     LE_STAT(le_stat_gen_records[1]++);
-    if (record_escape(r, frame_func(le_record_frame(r)), r->gi_frame_state) < 0)
+    if (record_escape(r, frame_func(le_record_frame(r)), r->gi_frame_state) <
+        0)
         return NULL;
     return Py_NewRef(rec);
 }

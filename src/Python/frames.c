@@ -1872,7 +1872,7 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
 DEFINEFN PyTypeObject *
 le_gen_type(PyCodeObject *co)
 {
-    return (co->co_flags & CO_COROUTINE)          ? &PyCoro_Type
+    return (co->co_flags & CO_COROUTINE)         ? &PyCoro_Type
            : (co->co_flags & CO_ASYNC_GENERATOR) ? &PyAsyncGen_Type
                                                  : &PyGen_Type;
 }
