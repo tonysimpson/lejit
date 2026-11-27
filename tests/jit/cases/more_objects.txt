@@ -44,6 +44,7 @@ coro_starts.threads                                3.7,3.8,3.9,3.10,3.11,3.12,3.
 coro_starts.thrown                                 3.12                               not looked at yet
 ctypes_calls.changes                               3.7                                not looked at yet
 ctypes_calls.pointer_results                       3.7                                not looked at yet
+ctypes_calls.retyped_in_loop                       3.7                                not looked at yet
 ctypes_threads.callback_from_c                     3.7,3.8,3.9,3.10,3.11,3.12,3.13    not looked at yet; leaves more alive: dict
 dead_virtual_locals.in_traceback                   3.11,3.12,3.13                     not looked at yet
 dead_virtual_locals.numeric                        3.11,3.12,3.13,3.14,3.15           not looked at yet
