@@ -313,6 +313,13 @@ SKIPPED = {
     'on unseeded data 3.14 gives a pstdev that is not exactly '
     'sqrt(pvariance) about one run in five, plain as well as with LeJIT':
         'test.test_statistics.TestPStdev.test_compare_to_variance',
+    "assert that a failed TLS handshake's transport is freed with the "
+    'collector off, which some orders of the tests before them prevent, '
+    'plain as well as with LeJIT':
+        'test.test_asyncio.test_sslproto.*StartTLSTests.'
+        'test_create_connection_ssl_failed_certificate_no_cycles '
+        'test.test_asyncio.test_sslproto.*StartTLSTests.'
+        'test_start_tls_failed_certificate_no_cycles',
 }
 
 # Modules that never run at the same time as each other: test_perf_profiler
