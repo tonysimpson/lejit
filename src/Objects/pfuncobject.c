@@ -518,20 +518,23 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     PyObject *kwdefs = NULL;
     int tuple_size;
     bool as_direct = true;
+    bool returned = psyco_inlined_call_returned(po);
 
     /* the code and the defaults are those compiled while f still has
        them */
     co = compiled_code(f);
 #ifdef Py_TPFLAGS_HAVE_VECTORCALL
     /* as vectorcall_replaced, read when compiling the call */
-    if (*(vectorcallfunc *)((char *)f + Py_TYPE(f)->tp_vectorcall_offset) !=
-        le_usual_vectorcall) {
+    if (!returned &&
+        *(vectorcallfunc *)((char *)f + Py_TYPE(f)->tp_vectorcall_offset) !=
+            le_usual_vectorcall) {
         /* CPython calls it from C too */
         as_direct = false;
         goto fallback;
     }
 #endif
-    switch (field_changed(po, f, FUNC_code_now, (PyObject *)co)) {
+    switch (returned ? 0
+                     : field_changed(po, f, FUNC_code_now, (PyObject *)co)) {
         case 0:
             break;
         case 1:
@@ -550,8 +553,9 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
         PyObject *rec;
         if (!names_every_kwonly(co, kwnames) &&
             (rec = compiled_kwdefaults(f)) != NULL) {
-            switch (field_changed(po, f, FUNC_kwdefaults_now,
-                                  PyTuple_GET_ITEM(rec, 0))) {
+            switch (returned ? 0
+                             : field_changed(po, f, FUNC_kwdefaults_now,
+                                             PyTuple_GET_ITEM(rec, 0))) {
                 case 0:
                     break;
                 case 1:
@@ -559,9 +563,12 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
                 default:
                     return NULL;
             }
-            switch (word_changed(
-                po, PyLong_AsVoidPtr(PyTuple_GET_ITEM(rec, 1)),
-                PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(rec, 2)))) {
+            switch (returned
+                        ? 0
+                        : word_changed(
+                              po, PyLong_AsVoidPtr(PyTuple_GET_ITEM(rec, 1)),
+                              PyLong_AsUnsignedLongLong(
+                                  PyTuple_GET_ITEM(rec, 2)))) {
                 case 0:
                     break;
                 case 1:
@@ -577,7 +584,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
        use the defaults */
     defl = compiled_defaults(f);
     tuple_size = PsycoTuple_Load(arg);
-    if (tuple_size < 0 || tuple_size < co->co_argcount)
+    if (!returned && (tuple_size < 0 || tuple_size < co->co_argcount))
         switch (field_changed(po, f, FUNC_defaults_now, defl)) {
             case 0:
                 break;
@@ -654,26 +661,28 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
                 /* its defaults are its own: positional calls only */
                 if (keywords)
                     goto fallback;
-                condition_code_t cc;
-                vinfo_t *now = psyco_get_field(po, func, FUNC_code_now);
-                if (now == NULL)
-                    return NULL;
-                cc = integer_cmp(po, now, fcode, Py_NE);
-                vinfo_decref(now, po);
-                if (cc == CC_ERROR)
-                    return NULL;
-                if (runtime_condition_f(po, cc))
-                    goto fallback;
-#ifdef Py_TPFLAGS_HAVE_VECTORCALL
-                switch (vectorcall_replaced(po, func)) {
-                    case 0:
-                        break;
-                    case 1:
-                        goto fallback;
-                    default:
+                if (!psyco_inlined_call_returned(po)) {
+                    condition_code_t cc;
+                    vinfo_t *now = psyco_get_field(po, func, FUNC_code_now);
+                    if (now == NULL)
                         return NULL;
-                }
+                    cc = integer_cmp(po, now, fcode, Py_NE);
+                    vinfo_decref(now, po);
+                    if (cc == CC_ERROR)
+                        return NULL;
+                    if (runtime_condition_f(po, cc))
+                        goto fallback;
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+                    switch (vectorcall_replaced(po, func)) {
+                        case 0:
+                            break;
+                        case 1:
+                            goto fallback;
+                        default:
+                            return NULL;
+                    }
 #endif
+                }
                 return psyco_call_closure(po, func, (PyCodeObject *)c, arg);
             }
         }
