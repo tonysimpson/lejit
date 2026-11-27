@@ -81,7 +81,7 @@ frame_nwords(le_frame_t *f)
 #define GC_HEAD_SIZE (2 * sizeof(uintptr_t))
 
 DEFINEFN PyObject *
-le_gen_record_new(PyObject *func, long start)
+le_gen_record_new(PyObject *func, long start, long nstack)
 {
     PyCodeObject *co = (PyCodeObject *)((PyFunctionObject *)func)->func_code;
     Py_ssize_t n = co->co_nlocalsplus + co->co_stacksize;
@@ -91,6 +91,7 @@ le_gen_record_new(PyObject *func, long start)
     char *mem = PyObject_Malloc(GC_HEAD_SIZE +
                                 _PyObject_VAR_SIZE(&le_gen_record_type, n));
     le_gen_record_t *r;
+    long i;
     if (mem == NULL)
         return PyErr_NoMemory();
     memset(mem, 0, GC_HEAD_SIZE);
@@ -103,6 +104,9 @@ le_gen_record_new(PyObject *func, long start)
     r->gi_frame_state = FRAME_CREATED;
     le_frame_init_gen(le_record_frame(r), (PyFunctionObject *)func, (int)start,
                       LE_FRAME_OWNED_BY_RECORD);
+    for (i = 0; i < nstack; i++)
+        le_frame_word_put(le_record_frame(r), co->co_nlocalsplus + i, NULL);
+    le_gen_frame_set_depth(le_record_frame(r), (int)nstack);
     return (PyObject *)r;
 }
 
@@ -547,14 +551,16 @@ record_type_ready(void)
 
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
    it has none or something before it a record's start doesn't do
-   (le_gen_record_start), such as the iterator a generator expression
-   takes before it (GET_ITER). The record's type is made ready here, when
-   code that makes records is first compiled, not before. */
+   (le_gen_record_start) other than the iterator a generator expression
+   takes of its argument just before it (LOAD_FAST 0, GET_ITER): then
+   '*takes_iter' is set. The record's type is made ready here, when code
+   that makes records is first compiled, not before. */
 DEFINEFN long
-le_gen_record_start_unit(PyCodeObject *co)
+le_gen_record_start_unit(PyCodeObject *co, bool *takes_iter)
 {
     le_code_t c = le_code(co);
     int pos;
+    *takes_iter = false;
     if (!(le_gen_record_type.tp_flags & Py_TPFLAGS_READY) &&
         record_type_ready() < 0) {
         PyErr_Clear();
@@ -564,6 +570,17 @@ le_gen_record_start_unit(PyCodeObject *co)
         le_instr_t in = le_instr(c, pos);
         if (in.op == RETURN_GENERATOR)
             return pos / LE_UNIT;
+        if (*takes_iter)
+            return -1;
+        if (in.op == LOAD_FAST && in.arg == 0 && co->co_argcount == 1 &&
+            in.next < c.size) {
+            le_instr_t get = le_instr(c, in.next);
+            if (get.op != GET_ITER)
+                return -1;
+            *takes_iter = true;
+            pos = get.next;
+            continue;
+        }
         if (in.op != MAKE_CELL && in.op != COPY_FREE_VARS && in.op != RESUME &&
             in.op != NOP)
             return -1;

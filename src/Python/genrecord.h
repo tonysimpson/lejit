@@ -12,9 +12,10 @@ EXTERNVAR long le_stat_gen_records[6];
 #endif
 /* A new record for a generator of the function 'func', paused as
    RETURN_GENERATOR leaves a new generator, which is at code unit 'start'
-   of its code: no words yet. A new reference, or NULL with an exception. */
+   of its code, with 'nstack' items on its stack: no words yet. A new
+   reference, or NULL with an exception. */
 EXTERNFN PyObject *
-le_gen_record_new(PyObject *func, long start);
+le_gen_record_new(PyObject *func, long start, long nstack);
 /* frame 'f' cleared as CPython clears a frame that ends, but its code,
    which the caller lets go: a frame object that outlives it takes it;
    else its locals go, then its function (a record's frame, as a
@@ -48,9 +49,10 @@ EXTERNFN int
 le_gen_record_send_status(PyThreadState *ts, PyObject *rec, PyObject *result,
                           PyObject *out[]);
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
-   a record can't start there */
+   a record can't start there; '*takes_iter' if the code takes the
+   iterator of its argument first, which the record's maker does then */
 EXTERNFN long
-le_gen_record_start_unit(PyCodeObject *co);
+le_gen_record_start_unit(PyCodeObject *co, bool *takes_iter);
 /* The real generator of the record 'rec' that a frame's word holds
    (pycompiler.c:yield_resumable), made now unless it has been: a new
    reference, or NULL with an exception. An ended one, whose function has

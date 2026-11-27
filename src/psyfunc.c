@@ -2061,9 +2061,30 @@ static bool
 vgen_startable(vinfo_t *vgen, PyCodeObject *co)
 {
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
+    bool takes_iter;
     return pending_steppable(co) && args != NULL &&
            PsycoTuple_Load(args) == co->co_argcount &&
-           le_gen_record_start_unit(co) >= 0;
+           le_gen_record_start_unit(co, &takes_iter) >= 0;
+}
+
+/* whether iter() of an object of type 'tp' can't raise but for memory,
+   nor run Python: so that taking it in a generator expression's
+   consumer, not in the body before RETURN_GENERATOR, can't be seen */
+static bool
+iter_cannot_raise(PyTypeObject *tp)
+{
+    static PyTypeObject *const iterables[] = {
+        &PyList_Type,      &PyTuple_Type,   &PyRange_Type,
+        &PyDict_Type,      &PySet_Type,     &PyFrozenSet_Type,
+        &PyUnicode_Type,   &PyBytes_Type,   &PyByteArray_Type,
+        &PyDictKeys_Type,  &PyDictValues_Type, &PyDictItems_Type};
+    size_t i;
+    if (tp->tp_iter == PyObject_SelfIter)
+        return true;
+    for (i = 0; i < sizeof(iterables) / sizeof(iterables[0]); i++)
+        if (tp->tp_iter == iterables[i]->tp_iter)
+            return true;
+    return false;
 }
 
 /* The first step of the pending generator 'vgen' of code 'co'
@@ -2079,9 +2100,18 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *vglobals = vgen->array->items[iGENEXPR_GLOBALS];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-    vinfo_t *vt, *vb, *vplace, *vrec;
-    long start = le_gen_record_start_unit(co);
+    vinfo_t *vt, *vb, *vplace, *vrec, *viter = NULL;
+    bool takes_iter;
+    long start = le_gen_record_start_unit(co, &takes_iter);
+    long nstack = takes_iter ? 1 + LE_HAS_GET_ITER_INDEX : 0;
     int r, i;
+    if (takes_iter) {
+        PyTypeObject *tp = Psyco_NeedType(po, PsycoTuple_GET_ITEM(args, 0));
+        if (tp == NULL)
+            return -1;
+        if (!iter_cannot_raise(tp))
+            return 0;
+    }
     if (callee_builtins(po, vfunc, vglobals, &vb) != 1)
         return 0;
     vt = vinfo_new(CompileTime_New((long)t));
@@ -2099,10 +2129,16 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     if (r <= 0)
         return r;
 
-    /* the record, which the virtual generator holds in place of its
-       arguments, then its words */
+    /* the iterator the body would take before RETURN_GENERATOR; then
+       the record, which the virtual generator holds in place of its
+       arguments, then its words, that iterator (and NULL) its stack */
+    if (takes_iter) {
+        viter = PsycoObject_GetIter(po, PsycoTuple_GET_ITEM(args, 0));
+        if (viter == NULL || !compute_vinfo(viter, po))
+            goto error;
+    }
     vrec = psyco_generic_call(po, le_gen_record_new, CfCommonNewRefPyObject,
-                              "vl", vfunc, start);
+                              "vll", vfunc, start, nstack);
     if (vrec == NULL)
         goto error;
     vinfo_incref(args);
@@ -2129,6 +2165,24 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
         consume_reference(po, v);
     }
     vinfo_decref(args, po);
+    if (viter != NULL) {
+        vinfo_t *w;
+        bool ok;
+#if LE_HAS_FRAME_STACKREFS
+        w = psyco_stackref_from_steal(po, viter);
+#else
+        w = viter;
+        vinfo_incref(w);
+#endif
+        ok = w != NULL && psyco_put_nth_field(po, vrec, REC_words,
+                                              le_code_nlocalsplus(co), w);
+        vinfo_xdecref(w, po);
+        if (!ok)
+            goto error;
+        consume_reference(po, viter);
+        vinfo_decref(viter, po);
+        viter = NULL;
+    }
     if ((co->co_ncellvars > 0 || co->co_nfreevars > 0) &&
         psyco_generic_call(po, le_gen_record_start,
                            CfReturnTypeInt | CfPyErrIfNeg, "v", vrec) == NULL)
@@ -2136,6 +2190,7 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     return 1;
 
 error:
+    vinfo_xdecref(viter, po);
     vinfo_decref(*ventry, po);
     *ventry = NULL;
     return -1;
