@@ -151,13 +151,15 @@ le_frame_start(le_frame_t *f)
     PyCodeObject *co = LE_FRAME_CODE(f);
     int k, nfrees = co->co_nfreevars, n = co->co_nlocalsplus - nfrees;
     LE_FRAME_PLACE(f) = _PyCode_CODE(co) + co->_co_firsttraceable;
-    for (k = 0; k < n; k++)
-        if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
-            PyObject *cell = PyCell_New(LE_FRAME_WORD(f, k));
-            if (cell == NULL)
-                return -1;
-            le_frame_word_set(f, k, cell);
-        }
+    /* most code has no cells to look for */
+    if (co->co_ncellvars > 0)
+        for (k = 0; k < n; k++)
+            if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
+                PyObject *cell = PyCell_New(LE_FRAME_WORD(f, k));
+                if (cell == NULL)
+                    return -1;
+                le_frame_word_set(f, k, cell);
+            }
     for (k = 0; k < nfrees; k++) {
         PyObject *o = PyTuple_GET_ITEM(le_frame_closure(f), k);
         le_frame_word_set(f, n + k, Py_NewRef(o));
@@ -166,6 +168,10 @@ le_frame_start(le_frame_t *f)
 }
 /* CPython's own PyEval_GetFrame, which LeJIT replaces (frames.c) */
 extern PyFrameObject *(*le_cpython_eval_getframe)(void);
+#if ALL_CHECKS
+/* frame objects LeJIT has made (pyruntime.c) */
+extern long le_stat_frame_objects;
+#endif
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
    for it. NULL with no exception set if it can't be made. */
@@ -182,7 +188,16 @@ le_frame_object(le_frame_t *f)
     le_frame_set_current(ts, f);
     o = le_cpython_eval_getframe();
     le_frame_set_current(ts, cur);
+#if ALL_CHECKS
+    le_stat_frame_objects += o != NULL;
+#endif
     return o;
+}
+/* the frame object Python sees (borrowed), or NULL if none is made yet */
+static inline PyFrameObject *
+le_frame_object_made(le_frame_t *f)
+{
+    return f->frame_obj;
 }
 /* the frame a frame object is (its own, or the one it is a view of) */
 static inline le_frame_t *
@@ -863,6 +878,11 @@ le_frame_start(le_frame_t *f)
 /* the frame object Python sees (borrowed) */
 static inline PyFrameObject *
 le_frame_object(le_frame_t *f)
+{
+    return f;
+}
+static inline PyFrameObject *
+le_frame_object_made(le_frame_t *f)
 {
     return f;
 }

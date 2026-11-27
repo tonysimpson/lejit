@@ -51,11 +51,13 @@ psyco_inline_frame_left(void);
    its f_localsplus and value stack items in order (psyco_resume_value) and
    its blocks (psyco_resume_block); psyco_resume_run runs it in ceval from
    the instruction after 'lasti' and returns its result. Called from
-   compiled code (pycompiler.c:resume_if_tracing). */
+   compiled code (pycompiler.c:resume_if_tracing). 'frameless': no frame
+   object is made where none stands for the call's frame yet, for
+   psyco_resume_suspend to make the coroutine's frame itself. */
 struct resume_s;
 EXTERNFN struct resume_s *
 psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
-                   long nvalues, PyObject **word);
+                   long nvalues, PyObject **word, long frameless);
 EXTERNFN void
 psyco_resume_value(struct resume_s *st, long i, PyObject *v);
 #if !LE_HAS_EXCEPTION_TABLE
@@ -66,13 +68,11 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level);
    reference to its traceback frame from when it catches an exception
    until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
    'f' in it as the frame catches, the innermost compiled frame, whose own
-   slot is 'own'; _drop lets it go if nothing else holds it, _shared does
-   too and says whether something does, and _end lets it go once given its
-   locals, as the call ends. */
+   slot is 'own'. As the call ends, _shared lets it go if nothing else
+   holds it, and says whether something does; _end lets it go once given
+   its locals. */
 EXTERNFN void
 psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own);
-EXTERNFN void
-psyco_frame_catcher_drop(PyObject **word);
 EXTERNFN long
 psyco_frame_catcher_shared(PyObject **word);
 EXTERNFN void
@@ -86,6 +86,12 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
    an exception. */
 EXTERNFN PyObject *
 le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
+#if LE_HAS_INTERPRETER_FRAME
+/* the generator or coroutine for func, written directly, its frame for the
+   caller to fill and the caller to track */
+EXTERNFN PyObject *
+le_gen_make(PyFunctionObject *func);
+#endif
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co,

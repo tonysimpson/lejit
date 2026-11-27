@@ -77,6 +77,14 @@ PycException_Occurred(PsycoObject *po)
 EXTERNFN void
 PycException_Clear(PsycoObject *po);
 
+/* attribute 'name' of a module of exact type (a constant whose class
+   the caller has checked), from its dict as a guarded constant, as a
+   global is: true with *result a new vinfo, or NULL where the caller
+   loads it at run time; false on error */
+EXTERNFN bool
+psyco_module_attr_cached(PsycoObject *po, PyObject *module, PyObject *name,
+                         vinfo_t **result);
+
 /* globals['__builtins__'] as a dict, as frameobject.c finds a new frame's
    builtins; borrowed */
 EXTERNFN PyObject *
