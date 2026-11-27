@@ -810,6 +810,19 @@ psyco_leave_recursive_call(PsycoObject *po, int through_c)
     return leave_recursive_call(po, vts);
 }
 
+DEFINEFN
+condition_code_t
+psyco_recursion_levels_over(PsycoObject *po, int levels)
+{
+    condition_code_t cc;
+    vinfo_t *vts = load_tstate(po);
+    if (vts == NULL)
+        return CC_ERROR;
+    cc = recursion_levels_over(po, vts, levels);
+    vinfo_decref(vts, po);
+    return cc;
+}
+
 /* Py_EnterRecursiveCall before a compiled call, on a thread state the
    caller has loaded. From an inlined frame, for that frame too while the
    call runs: CPython counted it as it entered, and the test of the call's

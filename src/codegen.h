@@ -161,6 +161,11 @@ enum le_through_c {
    from C; false with an exception set */
 EXTERNFN bool
 psyco_leave_recursive_call(PsycoObject *po, int through_c);
+/* the condition under which 'levels' Py_EnterRecursiveCall tests, each
+   inside the last, made by C called here could fail
+   (mechanisms/recursion.h:recursion_levels_over); nothing is counted */
+EXTERNFN condition_code_t
+psyco_recursion_levels_over(PsycoObject *po, int levels);
 /* tests the 32-bit int at 'address' at run time: CC_NE if it isn't 0 */
 EXTERNFN condition_code_t
 psyco_int32_nonzero_at(PsycoObject *po, void *address);
