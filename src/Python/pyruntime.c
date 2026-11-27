@@ -347,6 +347,37 @@ function_without_code(PyFrameObject *f)
 }
 #endif
 
+/* gc.enable()'s switch: the GC state's, the interpreter's or the
+   runtime's */
+static int *
+gc_enabled(void)
+{
+#if LE_HAS_GC_PER_INTERPRETER
+    struct _gc_runtime_state *gc = &PyThreadState_GET()->interp->gc;
+#else
+    struct _gc_runtime_state *gc = &_PyRuntime.gc;
+#endif
+    _Static_assert(sizeof(gc->enabled) == sizeof(int),
+                   "LeJIT: the GC's enabled is an int");
+    return &gc->enabled;
+}
+
+static int gc_was_enabled;
+
+void
+le_gc_off(void)
+{
+    int *enabled = gc_enabled();
+    gc_was_enabled = *enabled;
+    *enabled = 0;
+}
+
+void
+le_gc_on_again(void)
+{
+    *gc_enabled() = gc_was_enabled;
+}
+
 #if LE_HAS_EVAL_FRAME_POPS
 /* the object the GC tracked last, or NULL: the youngest generation's
    last, which follows its GC header */

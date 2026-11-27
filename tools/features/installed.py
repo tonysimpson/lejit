@@ -376,6 +376,7 @@ HEADER_DETECTORS = {
     'FRAME_INSTR_PTR': internal(features.frame_instr_ptr),
     'TSTATE_CURRENT_FRAME': features.tstate_current_frame,
     'TSTATE_EVAL_BREAKER': features.tstate_eval_breaker,
+    'GC_PER_INTERPRETER': internal(features.gc_per_interpreter),
     'GIL_PER_INTERPRETER': internal(features.gil_per_interpreter),
     'GET_FINALIZING': internal(features.get_finalizing),
     'INTERP_GET_FINALIZING': internal(features.interp_get_finalizing),

@@ -710,6 +710,12 @@ GIL_FIELDS = ('locked', 'last_holder', 'switch_number', 'mutex', 'cond',
               'switch_mutex', 'switch_cond')
 
 
+def gc_per_interpreter(s):
+    """the cyclic GC's state is the interpreter's (its gc), not the
+    runtime's (_PyRuntime.gc)"""
+    return _field(s, '_is', 'gc')
+
+
 def gil_per_interpreter(s):
     """the GIL is the interpreter's (its ceval state's gil, a pointer), not
     the runtime's (_PyRuntime.ceval.gil)"""
@@ -1738,6 +1744,7 @@ STATE = [
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',
                           lambda s: _file(s, 'Include/internal/pycore_interp.h'))),
     ('EVAL_HOOK_TSTATE', eval_hook_tstate),
+    ('GC_PER_INTERPRETER', gc_per_interpreter),
     ('GIL_PER_INTERPRETER', gil_per_interpreter),
     ('GET_FINALIZING', get_finalizing),
     ('INTERP_GET_FINALIZING', interp_get_finalizing),

@@ -300,6 +300,15 @@ EXTERNFN void
 le_untraced_begin(void);
 EXTERNFN void
 le_untraced_end(void);
+/* The cyclic GC is off from the outermost compile's start to its end
+   (pyruntime.c): a collection an allocation of the compiler's started
+   could run finalisers, which may run Python code or let another thread
+   take the GIL (a C dealloc that releases it) and compile while the
+   compile is open, as if inside it. */
+EXTERNFN void
+le_gc_off(void);
+EXTERNFN void
+le_gc_on_again(void);
 /* The outermost compile also runs with the headroom CPython gives the
    raising of RecursionError (recursion_headroom), where there is a C limit
    apart from the Python one: a compile entered at that limit (the branch
@@ -322,6 +331,7 @@ le_outer_compile_begin(void)
 {
     psyco_code_move_begin();
     le_untraced_begin();
+    le_gc_off();
 #if LE_HAS_PY_RECURSION_REMAINING
     PyThreadState_GET()->recursion_headroom++;
 #endif
@@ -334,6 +344,7 @@ le_outer_compile_end(void)
 #endif
     psyco_code_move_made();
     le_untraced_end();
+    le_gc_on_again();
 }
 #if ALL_CHECKS || LE_CODESTATS
 EXTERNFN long
