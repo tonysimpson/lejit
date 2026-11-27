@@ -784,6 +784,21 @@ le_compute_eval_breaker(PyInterpreterState *interp)
             _PyRuntime.ceval.pending.async_exc);
 }
 
+extern _Bool
+le_pending_is_own(int (*func)(void *));
+
+/* whether a pending call queued may be a signal's: one not LeJIT's own */
+static int
+le_foreign_call_queued(void)
+{
+    const struct _pending_calls *p = &_PyRuntime.ceval.pending;
+    int i;
+    for (i = p->first; i != p->last; i = (i + 1) % NPENDINGCALLS)
+        if (!le_pending_is_own(p->calls[i].func))
+            return 1;
+    return 0;
+}
+
 /* -1 with an exception set */
 int
 le_eval_breaker_handler(void)
@@ -794,7 +809,8 @@ le_eval_breaker_handler(void)
        eval_breaker is set in every thread */
     if (_Py_atomic_load_relaxed(&_PyRuntime.ceval.pending.calls_to_do)) {
         unsigned long main = _PyRuntime.ceval.pending.main_thread;
-        if ((main == 0 || PyThread_get_thread_ident() == main
+        if (((main == 0 || PyThread_get_thread_ident() == main) &&
+                     le_foreign_call_queued()
                  ? le_with_frames_linked(le_pending_calls, NULL)
                  : Py_MakePendingCalls()) < 0)
             return -1;
