@@ -697,6 +697,7 @@ run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
             }
             else
                 SAVE_REG_TO_EBP_BASE(getreg(src), at);
+            CODE_ROOM_IN_BLOCK();
         }
         args[i] = (long)RunTime_NewStack(stackbase, false, false);
     }
@@ -832,7 +833,8 @@ DEFINEFN
 vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
-                 struct stack_frame_info_s *finfo, int through_c)
+                 struct stack_frame_info_s *finfo, int through_c,
+                 vinfo_t *vfunc)
 {
     /* this is a simplified version of psyco_generic_call() which
         assumes Psyco's calling convention instead of the C's. */
@@ -865,11 +867,13 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
         }
     }
     END_CODE
-    finfo->back_locals = psyco_locals_map(
-        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 0);
+    finfo->back_locals =
+        psyco_locals_map(po, psyco_call_lasti(po->pr.co, po->pr.next_instr),
+                         reg_pos, 0, finfo->func == NULL ? vfunc : NULL);
     if (po->pr.is_inlining)
         finfo[1].own_locals = psyco_locals_map(
-            po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 1);
+            po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 1,
+            NULL);
     BEGIN_CODE
 
     /* add 16 byte aligned stack */
@@ -906,6 +910,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
             PUSH_R(getreg(source));
         }
         psyco_inc_stackdepth(po);
+        CODE_ROOM_IN_BLOCK();
     }
     po->stack_depth += stack_correction;
 
@@ -999,10 +1004,11 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     }
     END_CODE
     finfo->back_locals = psyco_locals_map(
-        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 0);
+        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 0, NULL);
     if (po->pr.is_inlining)
         finfo[1].own_locals = psyco_locals_map(
-            po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 1);
+            po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 1,
+            NULL);
     BEGIN_CODE
     /* aligned as psyco_call_psyco's, with the frame's word too */
     stack_correction =
@@ -1020,7 +1026,10 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     finfo_last(finfo)->link_stack_depth =
         po->stack_depth - INITIAL_STACK_DEPTH;
     initial_stack_depth = po->stack_depth;
-    for (i = 0; i < argcount; i++) PUSH_SOURCE(argsources[i]);
+    for (i = 0; i < argcount; i++) {
+        PUSH_SOURCE(argsources[i]);
+        CODE_ROOM_IN_BLOCK();
+    }
     /* every register is saved and still holds what it did */
     if (RSOURCE_REG_IS_NONE(sentry)) {
         MOV_R_O(REG_X64_RAX, REG_X64_RSP,

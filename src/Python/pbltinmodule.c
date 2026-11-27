@@ -497,73 +497,134 @@ pbuiltin_max_fast(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
     return pbuiltin_min_max(po, vself, vargs, NULL, Py_GT, cimpl_max);
 }
 
-/* builtin_isinstance: Objects/abstract.c:PyObject_IsInstance decided at
-   compile time from the promoted type of obj and the promoted class (or
-   tuple of classes). 1 or 0 if known, -1 if it must be asked at run time.
-   Only the rules for an exact 'type' cls are folded; a metaclass's
-   __instancecheck__ is never guessed. A heap type's subtype relation can
-   change (__bases__ assignment) and so is never folded; a static type's
-   can't. A false answer also needs obj.__class__ to be the ordinary
-   object.__class__, which recursive_isinstance consults next. */
-static int
-isinstance_known(PyTypeObject *tp, PyObject *cls, int depth)
-{
-    if ((PyObject *)tp == cls)
-        return 1;
-    if (PyTuple_Check(cls)) {
-        Py_ssize_t i;
-        if (depth > 8) /* CPython counts recursion here */
-            return -1;
-        for (i = 0; i < PyTuple_GET_SIZE(cls); i++) {
-            int r = isinstance_known(tp, PyTuple_GET_ITEM(cls, i), depth + 1);
-            if (r != 0)
-                return r; /* found, or unknown: then CPython decides it all */
-        }
-        return 0;
-    }
-    if (!PyType_CheckExact(cls) || (tp->tp_flags & Py_TPFLAGS_HEAPTYPE))
-        return -1;
-    if (PyType_IsSubtype(tp, (PyTypeObject *)cls))
-        return 1;
-    if (tp->tp_getattro == PyObject_GenericGetAttr &&
-        _PyType_Lookup(tp, str___class__) == object_class_descr)
-        return 0;
-    return -1;
-}
+static PyObject *str___instancecheck__;
+static PyObject *type_instancecheck; /* type.__instancecheck__ */
 
-/* the same for a class given as a vinfo: a virtual tuple (built here) is
-   walked item by item; otherwise only a static type is promoted. Anything
-   else at run time (a heap class, which a constant would keep alive, or a
-   tuple made elsewhere, a new object each call) is left to CPython. Sets
-   *r; returns false on error or promotion. */
+/* builtin_isinstance: Objects/abstract.c:object_recursive_isinstance
+   decided at compile time from the promoted type tp of obj and the class,
+   or tuple of classes, 'vcls'. Sets *r to 1 or 0 if known, -1 if it must be
+   asked at run time, and raises *levels to the number of
+   Py_EnterRecursiveCall tests, each inside the last, that CPython makes on
+   the way to the answer, which the caller tests at run time. Only type's
+   own __instancecheck__ is folded: for a class whose metaclass isn't type,
+   the metaclass's lookup of it is guarded. A heap type's subtype relation
+   can change (__bases__ assignment) and so is never folded; a static
+   type's can't. A false answer also needs obj.__class__ to be the
+   ordinary object.__class__, which object_isinstance consults next.
+   'depth' is the number of tuples 'vcls' is in. False on error or
+   promotion. */
 static bool
 isinstance_known_v(PsycoObject *po, PyTypeObject *tp, vinfo_t *vcls, int depth,
-                   int *r)
+                   int *r, int *levels);
+
+/* the same for a class, or a tuple, known at compile time */
+static bool
+isinstance_known_c(PsycoObject *po, PyTypeObject *tp, vinfo_t *vcls,
+                   PyObject *cls, int depth, int *r, int *levels)
+{
+    *r = -1;
+    if ((PyObject *)tp == cls) { /* CPython's quick test, made first */
+        *r = 1;
+        return true;
+    }
+    if (PyTuple_Check(cls)) {
+        Py_ssize_t i;
+        if (depth > 8)
+            return true;
+        if (*levels < depth + 1)
+            *levels = depth + 1;
+        *r = 0;
+        for (i = 0; i < PyTuple_GET_SIZE(cls) && *r == 0; i++) {
+            PyObject *item = PyTuple_GET_ITEM(cls, i);
+            vinfo_t *vitem;
+            bool ok;
+            Py_INCREF(item);
+            vitem =
+                vinfo_new(CompileTime_NewSk(sk_new((long)item, SkFlagPyObj)));
+            ok = isinstance_known_v(po, tp, vitem, depth + 1, r, levels);
+            vinfo_decref(vitem, po);
+            if (!ok)
+                return false;
+        }
+        return true; /* found, not found, or unknown: then CPython decides */
+    }
+    if (!PyType_Check(cls) || (tp->tp_flags & Py_TPFLAGS_HEAPTYPE))
+        return true;
+    if (!PyType_CheckExact(cls)) {
+        /* _PyObject_LookupSpecial(cls, "__instancecheck__"), then a call
+           of the bound method found */
+        PyTypeObject *meta = Py_TYPE(cls);
+        PyObject *descr;
+        int m;
+        if (Psyco_ConstantClassMutable(vcls) &&
+            Psyco_ConstantType(po, vcls, &meta) < 0)
+            return false;
+        if (!(meta->tp_flags & Py_TPFLAGS_HEAPTYPE))
+            return true;
+        /* the key: an address of meta's that no slot's lookup uses */
+        m = Psyco_TypeLookup(po, meta, (char *)meta + 1, str___instancecheck__,
+                             &descr);
+        if (m < 0)
+            return false;
+        if (m == 0)
+            return psyco_generic_call(po, cimpl_type_lookup_changed,
+                                      CfNoReturnValue | CfNoPython | CfNoBlock,
+                                      "lll", (long)meta,
+                                      (long)str___instancecheck__,
+                                      (long)descr) != NULL;
+        if (descr != type_instancecheck)
+            return true;
+        /* the checker's test, then the C call's of it */
+        if (*levels < depth + 2)
+            *levels = depth + 2;
+    }
+    if (PyType_IsSubtype(tp, (PyTypeObject *)cls))
+        *r = 1;
+    else if (tp->tp_getattro == PyObject_GenericGetAttr &&
+             _PyType_Lookup(tp, str___class__) == object_class_descr)
+        *r = 0;
+    return true;
+}
+
+/* a virtual tuple (built here) is walked item by item; otherwise only a
+   static type is promoted. Anything else at run time (a heap class, which
+   a constant would keep alive, or a tuple made elsewhere, a new object
+   each call) is left to CPython. */
+static bool
+isinstance_known_v(PsycoObject *po, PyTypeObject *tp, vinfo_t *vcls, int depth,
+                   int *r, int *levels)
 {
     PyObject *cls;
     int m;
     if (Psyco_KnownType(vcls) == &PyTuple_Type &&
         !is_compiletime(vcls->source) && PsycoTuple_Load(vcls) >= 0) {
         int i, n = PsycoTuple_Load(vcls);
-        *r = 0;
+        *r = -1;
         if (depth > 8)
-            *r = -1;
+            return true;
+        if (*levels < depth + 1)
+            *levels = depth + 1;
+        *r = 0;
         for (i = 0; i < n && *r == 0; i++)
             if (!isinstance_known_v(po, tp, PsycoTuple_GET_ITEM(vcls, i),
-                                    depth + 1, r))
+                                    depth + 1, r, levels))
                 return false;
         return true;
     }
     m = psyco_atcompiletime_static_type(po, vcls, &cls);
     if (m < 0)
         return false;
-    *r = m == 0 ? -1 : isinstance_known(tp, cls, depth);
-    return true;
+    if (m == 0) {
+        *r = -1;
+        return true;
+    }
+    return isinstance_known_c(po, tp, vcls, cls, depth, r, levels);
 }
 
 /* Objects/abstract.c:PyObject_IsInstance's meta, by hand: the answer at
-   compile time when isinstance_known gives one (the const_fold
-   shortcut, its depth limit, never for a heap type), else the real call.
+   compile time when isinstance_known_v gives one (never for a heap type)
+   and CPython's tests of the recursion limit would pass, else the real
+   call.
    Hand-written because the shortcut is judgement: the C has no
    compile-time form of it. A 0 or 1, or NULL on error. */
 DEFINEFN
@@ -572,10 +633,10 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
 {
     vinfo_t *x;
     PyTypeObject *tp;
-    int r;
-    /* isinstance_known never folds for a heap type, so only a static type is
-       promoted: a constant heap type would keep the class alive, and a class
-       made per call would compile a new path each time */
+    int r, levels = 0;
+    /* isinstance_known_c never folds for a heap type, so only a static
+       type is promoted: a constant heap type would keep the class alive, and a
+       class made per call would compile a new path each time */
     if (is_compiletime(vobj->source) && !Psyco_ConstantClassMutable(vobj)) {
         tp = Py_TYPE((PyObject *)CompileTime_Get(vobj->source)->value);
         r = 1;
@@ -595,8 +656,16 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
     }
     if (r == 0)
         r = -1;
-    else if (!isinstance_known_v(po, tp, vcls, 0, &r))
+    else if (!isinstance_known_v(po, tp, vcls, 0, &r, &levels))
         return NULL;
+    if (r >= 0 && levels > 0) {
+        /* near the limit, CPython decides whether a test fails */
+        condition_code_t cc = psyco_recursion_levels_over(po, levels);
+        if (cc == CC_ERROR)
+            return NULL;
+        if (runtime_condition_f(po, cc))
+            r = -1;
+    }
     if (r == 1)
         return psyco_vi_One();
     if (r == 0)
@@ -604,6 +673,100 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
     return psyco_generic_call(po, PyObject_IsInstance, CfCommonIntBoolOrError,
                               "vv", vobj, vcls);
 }
+
+/* whether an int fits a C long, as PyLong_AsLongAndOverflow tells */
+static int
+cimpl_long_fits(PyObject *v)
+{
+    int overflow;
+    PyLong_AsLongAndOverflow(v, &overflow);
+    return !overflow;
+}
+
+/* the C long of 'v', an exact int or bool, as builtin_sum_impl's int
+   loop reads its total and each item (PyLong_AsLongAndOverflow): 1 with a
+   new reference in *pw; 0 if it doesn't fit; -1 on error */
+static int
+sum_int_word(PsycoObject *po, vinfo_t *v, vinfo_t **pw)
+{
+    vinfo_t *fits;
+    int t;
+    if (PsycoLong_IsVirtual(v)) {
+        *pw = vinfo_getitem(v, iLONG_VALUE);
+        vinfo_incref(*pw);
+        return 1;
+    }
+    if (is_compiletime(v->source)) {
+        int overflow;
+        long w = PyLong_AsLongAndOverflow(
+            (PyObject *)CompileTime_Get(v->source)->value, &overflow);
+        if (overflow)
+            return 0;
+        *pw = vinfo_new(CompileTime_New(w));
+        return 1;
+    }
+    t = PsycoLong_MediumValue(po, v, pw);
+    if (t != 0)
+        return t;
+    fits = psyco_generic_call(
+        po, cimpl_long_fits, CfReturnTypeInt | CfNoPython | CfNoBlock, "v", v);
+    if (fits == NULL || (t = runtime_NON_NULL_t(po, fits)) < 0)
+        return -1;
+    if (!t)
+        return 0;
+    *pw = psyco_generic_call(
+        po, PyLong_AsLong, CfReturnTypeLong | CfNoPython | CfNoBlock, "v", v);
+    return *pw != NULL ? 1 : -1;
+}
+
+/* builtin_sum_impl's int loop, which keeps the total as a C long, not an
+   int object: the total 'acc' + 'item', both exact ints or bools, as a
+   virtual int; NULL with no exception set where either doesn't fit a C
+   long or the sum overflows one, which ends CPython's loop */
+static vinfo_t *
+sum_int_add(PsycoObject *po, vinfo_t *acc, vinfo_t *item)
+{
+    vinfo_t *a, *b, *w;
+    int t = sum_int_word(po, acc, &a);
+    if (t <= 0)
+        return NULL;
+    t = sum_int_word(po, item, &b);
+    if (t <= 0) {
+        vinfo_decref(a, po);
+        return NULL;
+    }
+    w = integer_add(po, a, b, true);
+    vinfo_decref(a, po);
+    vinfo_decref(b, po);
+    return w != NULL ? PsycoLong_FROM_WORD(w) : NULL;
+}
+
+#if !LE_HAS_SUM_COMPENSATED
+/* one item of a sum() where float sums aren't compensated: acc + item as
+   builtin_sum_impl's loops give it (a new reference, NULL on error). A
+   virtual int total is in its int loop, which adds a C long. */
+DEFINEFN
+vinfo_t *
+psyco_sum_add(PsycoObject *po, vinfo_t *acc, vinfo_t *item)
+{
+    if (PsycoLong_IsVirtual(acc)) {
+        PyTypeObject *tp = Psyco_NeedType(po, item);
+        if (tp == NULL)
+            return NULL;
+        if (tp == &PyLong_Type || tp == &PyBool_Type) {
+            vinfo_t *x = sum_int_add(po, acc, item);
+            if (x != NULL || PycException_Occurred(po))
+                return x;
+        }
+    }
+    if (Psyco_KnownType(acc) != NULL)
+        return PsycoNumber_Add(po, acc, item);
+    /* e.g. from a user __add__: a temporary, so its type can't be
+       promoted; CPython's generic loop */
+    return psyco_generic_call(po, PyNumber_Add, CfCommonNewRefPyObject, "vv",
+                              acc, item);
+}
+#endif
 
 #if LE_HAS_SUM_COMPENSATED
 /* builtin_sum_impl (Python/bltinmodule.c) where it compensates float sums
@@ -646,21 +809,6 @@ cimpl_cs_to_double(double hi, double lo)
     if (lo && isfinite(lo))
         return hi + lo;
     return hi;
-}
-
-/* whether an int fits a C long, as PyLong_AsLongAndOverflow tells */
-static int
-cimpl_long_fits(PyObject *v)
-{
-    int overflow;
-    PyLong_AsLongAndOverflow(v, &overflow);
-    return !overflow;
-}
-
-static int
-cimpl_sum_int_fits(PyObject *item, PyObject *sum)
-{
-    return cimpl_long_fits(item) && cimpl_long_fits(sum);
 }
 
 #if !LE_HAS_SUM_INT_AS_DOUBLE
@@ -941,9 +1089,9 @@ psyco_sum_step(PsycoObject *po, int *phase, vinfo_t **acc, vinfo_t **comp,
                vinfo_t *item)
 {
     PyTypeObject *tp;
-    vinfo_t *x, *res, *xd, *fits;
+    vinfo_t *x, *res, *xd;
     vinfo_t *nacc = *acc, *ncomp = *comp;
-    int nphase = *phase, t;
+    int nphase = *phase;
     if (*phase == GENEXPR_SUM_GENERIC) {
         if (Psyco_KnownType(*acc) != NULL)
             x = PsycoNumber_Add(po, *acc, item);
@@ -980,55 +1128,37 @@ psyco_sum_step(PsycoObject *po, int *phase, vinfo_t **acc, vinfo_t **comp,
     if (tp == NULL)
         return false;
     if (*phase == GENEXPR_SUM) {
+        bool is_int = tp == &PyLong_Type || tp == &PyBool_Type;
+        if (is_int) {
+            x = sum_int_add(po, *acc, item);
+            if (x != NULL) {
+                vinfo_decref(*acc, po);
+                *acc = x;
+                return true;
+            }
+            if (PycException_Occurred(po))
+                return false;
+        }
+        /* the int loop ends: its total + item */
         sum_know_type(po, *acc, &PyLong_Type);
         x = PsycoNumber_Add(po, *acc, item);
         if (x == NULL)
             return false;
-        if (tp != &PyLong_Type && tp != &PyBool_Type) {
-            /* the int loop ends: its result + item */
-            if (!sum_enter(po, GENEXPR_SUM, x, &nphase, &nacc, &ncomp))
-                return false;
+        if (is_int) {
+            /* an int, which goes on with plain + */
+            sum_know_type(po, x, &PyLong_Type);
             vinfo_decref(*acc, po);
-            vinfo_decref(*comp, po);
-            *phase = nphase;
-            *acc = nacc;
-            *comp = ncomp;
+            *acc = x;
+            *phase = GENEXPR_SUM_GENERIC;
             return true;
         }
-        /* it goes on while the item and the sum fit a C long; else the
-           sum is an int, which goes on with plain + */
-        t = 1;
-        if (!PsycoLong_IsVirtual(x)) {
-            if (PsycoLong_IsVirtual(item))
-                fits = psyco_generic_call(
-                    po, cimpl_long_fits,
-                    CfReturnTypeInt | CfNoPython | CfNoBlock, "v", x);
-            else
-                fits = psyco_generic_call(
-                    po, cimpl_sum_int_fits,
-                    CfReturnTypeInt | CfNoPython | CfNoBlock, "vv", item, x);
-            if (fits == NULL || (t = runtime_NON_NULL_t(po, fits)) < 0) {
-                vinfo_decref(x, po);
-                return false;
-            }
-        }
-        else if (!PsycoLong_IsVirtual(item) && !is_compiletime(item->source)) {
-            fits = psyco_generic_call(po, cimpl_long_fits,
-                                      CfReturnTypeInt | CfNoPython | CfNoBlock,
-                                      "v", item);
-            if (fits == NULL || (t = runtime_NON_NULL_t(po, fits)) < 0) {
-                vinfo_decref(x, po);
-                return false;
-            }
-        }
-        else if (is_compiletime(item->source))
-            t = cimpl_long_fits(
-                (PyObject *)CompileTime_Get(item->source)->value);
-        if (!t)
-            *phase = GENEXPR_SUM_GENERIC;
-        sum_know_type(po, x, &PyLong_Type);
+        if (!sum_enter(po, GENEXPR_SUM, x, &nphase, &nacc, &ncomp))
+            return false;
         vinfo_decref(*acc, po);
-        *acc = x;
+        vinfo_decref(*comp, po);
+        *phase = nphase;
+        *acc = nacc;
+        *comp = ncomp;
         return true;
     }
     /* the float loop */
@@ -1054,6 +1184,8 @@ psyco_sum_step(PsycoObject *po, int *phase, vinfo_t **acc, vinfo_t **comp,
         /* added as a C long, with plain +; one that doesn't fit ends the
            loop */
         bool ok;
+        vinfo_t *fits;
+        int t;
         if (PsycoLong_IsVirtual(item)) {
             xd = psyco_generic_call(
                 po, cimpl_fp_from_long,
@@ -1199,7 +1331,7 @@ pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
         vinfo_decref(comp, po);
         return x;
     }
-#endif
+#else
     if (n == 2) {
         result = PsycoTuple_GET_ITEM(vargs, 1);
         vinfo_incref(result);
@@ -1207,17 +1339,12 @@ pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
     else
         result = PsycoLong_FROM_LONG(po, psyco_vi_Zero());
     for (i = 0; i < k && result != NULL; i++) {
-        vinfo_t *item = PsycoTuple_GET_ITEM(vit, i);
-        if (Psyco_KnownType(result) != NULL)
-            x = PsycoNumber_Add(po, result, item);
-        else /* e.g. from a user __add__: a temporary, so its type can't be
-                promoted; CPython's generic loop */
-            x = psyco_generic_call(po, PyNumber_Add, CfCommonNewRefPyObject,
-                                   "vv", result, item);
+        x = psyco_sum_add(po, result, PsycoTuple_GET_ITEM(vit, i));
         vinfo_decref(result, po);
         result = x;
     }
     return result;
+#endif
 fallback:
     return PsycoCFunction_CallFast(po, cimpl_sum, sum_flags, vself, vargs);
 }
@@ -1482,6 +1609,8 @@ psyco_bltinmodule_init(void)
     Psyco_DefineMeta(type_call, ptype_call);
     str___class__ = PyUnicode_InternFromString("__class__");
     object_class_descr = _PyType_Lookup(&PyBaseObject_Type, str___class__);
+    str___instancecheck__ = PyUnicode_InternFromString("__instancecheck__");
+    type_instancecheck = _PyType_Lookup(&PyType_Type, str___instancecheck__);
 #undef DEFMETA
 #undef DEFFAST
     Py_XDECREF(md);

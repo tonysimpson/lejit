@@ -8,8 +8,9 @@
 /* 'vfunc' is the function object itself (compile-time or virtual), called
    as such when the call can't be compiled; never inlined unless
    'allow_inline'. 'kw' is NULL, a known NULL, or the call's keyword
-   arguments: pending keywords (pdictobject.c) bind, anything else is the
-   real call. 'kwdefs', NULL or a dict of exact str keys whose values are
+   arguments: pending keywords (pdictobject.c) bind, so does the dict of
+   an f(*a, **d) call (psyco_dict_keywords), at run time; anything else is
+   the real call. 'kwdefs', NULL or a dict of exact str keys whose values are
    held for as long as the code is, gives the keyword-only defaults the
    call is compiled with; with NULL, a call that needs one is the real
    call. */
@@ -18,6 +19,11 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                   vinfo_t *vglobals, vinfo_t *vdefaults, vinfo_t *arg_tuple,
                   vinfo_t *kw, PyObject *kwdefs, int recursion,
                   bool allow_inline);
+/* whether 'kw' is the run-time dict of the f(*a, **d) call being
+   compiled (pycompiler.c:ex_call), an exact dict no code can reach before
+   the call reads it; a function or method call may bind it */
+EXTERNFN bool
+psyco_dict_keywords(PsycoObject *po, vinfo_t *kw);
 /* the same for a run-time function whose closure code 'co' is known */
 EXTERNFN vinfo_t *
 psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
@@ -80,18 +86,19 @@ psyco_coro_start(PsycoObject *po, vinfo_t *v);
    locals and makes the real call, which raises CPython's own error; -2 on
    an error. The vinfo_t ** parameters are the values bound; the others are
    the compiler's own. A keyword-only parameter with no argument is left
-   to the real call, which has the defaults. */
+   to the real call, which has the defaults. 'kwdict', if not NULL, is the
+   callee's **kwargs, already made. */
 EXTERNFN int
 _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
                             vinfo_t **f_localsplus, vinfo_t **args,
                             Py_ssize_t argcount, PyObject *kwnames,
-                            vinfo_t **kwargs, vinfo_t **defs,
+                            vinfo_t **kwargs, vinfo_t *kwdict, vinfo_t **defs,
                             Py_ssize_t defcount, PyObject *kwdefs,
                             vinfo_t **closure, bool make_cells);
 
 /* for pycompiler.c */
 EXTERNFN vinfo_t *
-psyco_save_inline_po(PsycoObject *po);
+psyco_save_inline_po(PsycoObject *po, vinfo_t *func);
 EXTERNFN PsycoObject *
 psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a);
 

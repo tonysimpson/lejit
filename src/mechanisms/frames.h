@@ -151,13 +151,15 @@ le_frame_start(le_frame_t *f)
     PyCodeObject *co = LE_FRAME_CODE(f);
     int k, nfrees = co->co_nfreevars, n = co->co_nlocalsplus - nfrees;
     LE_FRAME_PLACE(f) = _PyCode_CODE(co) + co->_co_firsttraceable;
-    for (k = 0; k < n; k++)
-        if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
-            PyObject *cell = PyCell_New(LE_FRAME_WORD(f, k));
-            if (cell == NULL)
-                return -1;
-            le_frame_word_set(f, k, cell);
-        }
+    /* most code has no cells to look for */
+    if (co->co_ncellvars > 0)
+        for (k = 0; k < n; k++)
+            if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
+                PyObject *cell = PyCell_New(LE_FRAME_WORD(f, k));
+                if (cell == NULL)
+                    return -1;
+                le_frame_word_set(f, k, cell);
+            }
     for (k = 0; k < nfrees; k++) {
         PyObject *o = PyTuple_GET_ITEM(le_frame_closure(f), k);
         le_frame_word_set(f, n + k, Py_NewRef(o));
@@ -166,6 +168,10 @@ le_frame_start(le_frame_t *f)
 }
 /* CPython's own PyEval_GetFrame, which LeJIT replaces (frames.c) */
 extern PyFrameObject *(*le_cpython_eval_getframe)(void);
+#if ALL_CHECKS
+/* frame objects LeJIT has made (Python/frames.c) */
+extern long le_stat_frame_objects;
+#endif
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
    for it. NULL with no exception set if it can't be made. */
@@ -182,7 +188,16 @@ le_frame_object(le_frame_t *f)
     le_frame_set_current(ts, f);
     o = le_cpython_eval_getframe();
     le_frame_set_current(ts, cur);
+#if ALL_CHECKS
+    le_stat_frame_objects += o != NULL;
+#endif
     return o;
+}
+/* the frame object Python sees (borrowed), or NULL if none is made yet */
+static inline PyFrameObject *
+le_frame_object_made(le_frame_t *f)
+{
+    return f->frame_obj;
 }
 /* the frame a frame object is (its own, or the one it is a view of) */
 static inline le_frame_t *
@@ -218,20 +233,29 @@ le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
 }
-/* the frame borrows its builtins from its function, which holds them;
-   the frames given others are PyFrame_New's, whose function is their own,
-   so the function's are replaced */
+/* the function the frame runs a call of (borrowed), NULL for none */
+static inline PyFunctionObject *
+le_frame_function(le_frame_t *f)
+{
+#if LE_HAS_FRAME_FUNCOBJ
+    PyObject *func = LE_FRAME_FUNCOBJ(f);
+#else
+    PyObject *func = (PyObject *)f->f_func;
+#endif
+    return func != NULL && PyFunction_Check(func) ? (PyFunctionObject *)func
+                                                  : NULL;
+}
+/* the frame borrows its builtins from its function, which holds them. A
+   real function's are the ones compiled code runs its call with; the
+   frames given others are made with a function of their own
+   (frames.c:le_pyframe_new, the function not known), whose builtins
+   are replaced */
 static inline void
 le_frame_set_builtins(le_frame_t *f, PyObject *b)
 {
-    PyFunctionObject *func;
+    PyFunctionObject *func = le_frame_function(f);
     if (f->f_builtins == b)
         return;
-#if LE_HAS_FRAME_FUNCOBJ
-    func = (PyFunctionObject *)LE_FRAME_FUNCOBJ(f);
-#else
-    func = f->f_func;
-#endif
     Py_INCREF(b);
     Py_SETREF(func->func_builtins, b);
     f->f_builtins = b;
@@ -349,50 +373,40 @@ le_frame_gen(le_frame_t *f)
     (FRAME_CLEARED - FRAME_EXECUTING > 1 ? FRAME_EXECUTING + 1 : FRAME_CLEARED)
 /* A virtual generator's record (Python/genrecord.c): where a generator's
    body that compiled code runs before any generator object exists keeps
-   its paused state between runs. Its frame is an interpreter frame laid
-   out as a generator's, so that the body reads and writes either the same
-   way, and its state and exception state are as a generator's. It is
-   never in a thread's chain; a frame object asked for while its body runs
-   is a view of its frame, as of a generator's, until the record lets the
-   frame go. CPython's code tells a generator's frame by its owner, and
-   takes a frame owned by anything but the thread, a generator or a frame
-   object for one it has not started (3.14's _PyFrame_IsIncomplete), so a
-   record's frame is owned as a frame object's own frame is, and is told
-   from one by the record's type, read before the frame: a frame object's
-   own frame has the frame object there. */
-/* how far a generator's state is before its frame, which a record's is
-   too, so that one address serves either */
+   its paused state between runs. It is a generator object of the record's
+   type, untracked, so that the body reads and writes either the same way;
+   when it escapes it becomes the generator, in place. It is never in a
+   thread's chain; a frame object asked for while its body runs is a view
+   of its frame, as of a generator's, until the record lets the frame go.
+   CPython's code tells a generator's frame by its owner, and takes a frame
+   owned by anything but the thread, a generator or a frame object for one
+   it has not started (3.14's _PyFrame_IsIncomplete), so a record's frame
+   is owned as a frame object's own frame is, and is told from one by what
+   is where a frame object's type would be: never PyFrame_Type in a
+   generator's header. */
+typedef PyGenObject le_gen_record_t;
+#define LE_FRAME_OWNED_BY_RECORD FRAME_OWNED_BY_FRAME_OBJECT
+extern PyTypeObject le_gen_record_type; /* Python/genrecord.c */
+/* how far a generator's state is before its frame */
 #define LE_GEN_STATE_GAP \
     (offsetof(PyGenObject, gi_iframe) - offsetof(PyGenObject, gi_frame_state))
-typedef struct {
-    PyObject_HEAD
-        /* the real generator it has become, from then on (a reference) */
-        PyObject *escaped;
-    _PyErr_StackItem exc_state;
-    char before_state[(8 - LE_GEN_STATE_GAP % 8) % 8];
-    int8_t state; /* as a generator's gi_frame_state */
-    char after_state[LE_GEN_STATE_GAP - 1];
-    le_frame_t frame; /* last: its words follow */
-} le_gen_record_t;
-#define LE_FRAME_OWNED_BY_RECORD FRAME_OWNED_BY_FRAME_OBJECT
-_Static_assert(offsetof(PyFrameObject, _f_frame_data) >=
-                   offsetof(le_gen_record_t, frame),
-               "LeJIT: a frame object's own frame is too near its start");
-_Static_assert(offsetof(le_gen_record_t, frame) -
-                       offsetof(le_gen_record_t, state) ==
-                   LE_GEN_STATE_GAP,
-               "LeJIT: a record's state is not where a generator's is");
-extern PyTypeObject le_gen_record_type; /* Python/genrecord.c */
+static inline le_frame_t *
+le_record_frame(le_gen_record_t *r)
+{
+    return (le_frame_t *)&r->gi_iframe;
+}
 static inline le_gen_record_t *
 le_frame_record(le_frame_t *f)
 {
-    return (le_gen_record_t *)((char *)f - offsetof(le_gen_record_t, frame));
+    return (le_gen_record_t *)((char *)f - offsetof(PyGenObject, gi_iframe));
 }
 static inline int
 le_frame_is_record(le_frame_t *f)
 {
     return f->owner == LE_FRAME_OWNED_BY_RECORD &&
-           Py_TYPE(le_frame_record(f)) == &le_gen_record_type;
+           Py_TYPE((PyObject *)((char *)f -
+                                offsetof(PyFrameObject, _f_frame_data))) !=
+               &PyFrame_Type;
 }
 /* the state of the generator or record whose frame f is */
 static inline int8_t *
@@ -679,18 +693,17 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
     f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
 #endif
 }
-/* A frame for the generator function 'func' as RETURN_GENERATOR leaves a
-   new generator's: its function and code (references it holds), globals
-   and builtins (its function's), no locals mapping, no frame object and
-   no caller, every word NULL, the stack empty, its place the
-   RETURN_GENERATOR at 'start' (code units from the first) or the
-   instruction after it, where the place is the one to go on with. Its
-   other fields are 0, as _PyFrame_Initialize leaves them. Owned by
-   'owner'. */
+/* A frame of the code 'co' for the function 'func', as CPython starts a
+   call's: its function and code (references it holds), globals and
+   builtins (its function's), no locals mapping, no frame object and no
+   caller, every word NULL, the stack empty, its place the instruction at
+   'start' (code units from the first) or the one after it, where the
+   place is the one to go on with. Its other fields are 0, as
+   _PyFrame_Initialize leaves them. Owned by 'owner'. */
 static inline void
-le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
+le_frame_init(le_frame_t *f, PyCodeObject *co, PyFunctionObject *func,
+              int start, char owner)
 {
-    PyCodeObject *co = (PyCodeObject *)func->func_code;
     int k;
     memset(f, 0, offsetof(le_frame_t, localsplus));
 #if LE_HAS_FRAME_STACKREFS
@@ -712,6 +725,13 @@ le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
     le_gen_frame_set_depth(f, 0);
     LE_FRAME_PLACE(f) = _PyCode_CODE(co) + start + LE_HAS_FRAME_INSTR_PTR;
     f->owner = owner;
+}
+/* A frame for the generator function 'func' as RETURN_GENERATOR leaves a
+   new generator's, at the RETURN_GENERATOR at 'start' (le_frame_init) */
+static inline void
+le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
+{
+    le_frame_init(f, (PyCodeObject *)func->func_code, func, start, owner);
 }
 /* the generator's frame runs, its stack held by compiled code (and its
    locals, but where LE_RESUMES_ON_FRAME those the code hasn't taken):
@@ -866,6 +886,11 @@ le_frame_object(le_frame_t *f)
 {
     return f;
 }
+static inline PyFrameObject *
+le_frame_object_made(le_frame_t *f)
+{
+    return f;
+}
 /* the frame a frame object is */
 static inline le_frame_t *
 le_frame_of(PyFrameObject *f)
@@ -886,6 +911,13 @@ static inline PyObject *
 le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
+}
+/* a frame object holds no function */
+static inline PyFunctionObject *
+le_frame_function(le_frame_t *f)
+{
+    (void)f;
+    return NULL;
 }
 /* the frame holds a reference to its builtins: the old one goes */
 static inline void

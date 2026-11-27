@@ -40,6 +40,10 @@ psyco_activation_returned(long *sp);
    inlined in it, if it is of code 'co' (borrowed), else NULL */
 EXTERNFN PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co);
+/* the function of the innermost compiled frame, if it is of code 'co' and
+   LeJIT knows it (borrowed), else NULL */
+EXTERNFN PyFunctionObject *
+psyco_innermost_function(PyCodeObject *co);
 /* how many frame objects of inlined frames are kept: compiled code
    leaving an inlined frame that ran Python then calls
    psyco_inline_frame_left, which lets its own go */
@@ -51,11 +55,20 @@ psyco_inline_frame_left(void);
    its f_localsplus and value stack items in order (psyco_resume_value) and
    its blocks (psyco_resume_block); psyco_resume_run runs it in ceval from
    the instruction after 'lasti' and returns its result. Called from
-   compiled code (pycompiler.c:resume_if_tracing). */
+   compiled code (pycompiler.c:resume_if_tracing). 'frame' says what is
+   made where nothing stands for the call's frame yet: a frame object
+   (RESUME_FRAME_OBJECT); nothing (RESUME_NO_FRAME), for
+   psyco_resume_suspend to make the coroutine's frame itself; or, for
+   psyco_resume_run, a compiled callee's frame of the thread's with no
+   frame object, as CPython's call has, where frames are not frame objects
+   (RESUME_THREAD_FRAME). */
+#define RESUME_FRAME_OBJECT 0
+#define RESUME_NO_FRAME 1
+#define RESUME_THREAD_FRAME 2
 struct resume_s;
 EXTERNFN struct resume_s *
 psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
-                   long nvalues, PyObject **word);
+                   long nvalues, PyObject **word, long frame);
 EXTERNFN void
 psyco_resume_value(struct resume_s *st, long i, PyObject *v);
 #if !LE_HAS_EXCEPTION_TABLE
@@ -66,13 +79,11 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level);
    reference to its traceback frame from when it catches an exception
    until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
    'f' in it as the frame catches, the innermost compiled frame, whose own
-   slot is 'own'; _drop lets it go if nothing else holds it, _shared does
-   too and says whether something does, and _end lets it go once given its
-   locals, as the call ends. */
+   slot is 'own'. As the call ends, _shared lets it go if nothing else
+   holds it, and says whether something does; _end lets it go once given
+   its locals. */
 EXTERNFN void
 psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own);
-EXTERNFN void
-psyco_frame_catcher_drop(PyObject **word);
 EXTERNFN long
 psyco_frame_catcher_shared(PyObject **word);
 EXTERNFN void
@@ -86,10 +97,33 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
    an exception. */
 EXTERNFN PyObject *
 le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
+#if LE_HAS_INTERPRETER_FRAME
+/* the generator or coroutine for func, written directly, its frame for the
+   caller to fill and the caller to track */
+EXTERNFN PyObject *
+le_gen_make(PyFunctionObject *func);
+/* the type of a generator of the code 'co': generator, coroutine or async
+   generator, by its flags */
+EXTERNFN PyTypeObject *
+le_gen_type(PyCodeObject *co);
+/* gen's header but its exception state and state, as le_gen_make
+   writes it, for the function 'func' */
+EXTERNFN void
+le_gen_init_names(PyGenObject *gen, PyFunctionObject *func);
+#endif
+/* A new frame object for a call running 'co' in 'globals', of the function
+   'func' where it is known (NULL: not known). Where frames are
+   interpreter frames, one with the function owns its frame, as
+   PyFrame_New's does, and is all that is made, as CPython's frame for the
+   call holds its function; one without holds a function of its own, which
+   PyFrame_New makes. NULL with an exception. */
+EXTERNFN PyFrameObject *
+le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
+               PyFunctionObject *func);
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
-le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
-               PyObject *globals); /* pyruntime.c */
+le_pyframe_new_by_cpython(PyThreadState *ts, PyCodeObject *co,
+                          PyObject *globals); /* pyruntime.c */
 /* a frame's place, as CPython gives it, while the instruction at 'pos'
    in its code 'co' calls: the instruction's last unit, past its caches */
 EXTERNFN int
@@ -136,6 +170,10 @@ struct locals_map_s {
     /* the frame's catcher word (pycompiler.c:catcher_word) as an offset
        from data, or -1 if it has none */
     long word;
+    /* whether one more value follows the locals': the function of the
+       frame the record is for, known only at run time (the callee's, or
+       for an own map the inlined frame's) */
+    int func;
     long items[1];
 };
 
@@ -162,6 +200,10 @@ struct stack_frame_info_s {
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
+    /* the frame's function, where the code making the call knows it as it
+       compiles (a constant its owner holds), else NULL: the frame object
+       made for the frame holds it (le_pyframe_new) */
+    PyFunctionObject *func;
     /* this call runs a generator's body on the generator's own frame,
        whose address is the word above the callee's own slot
        (psyfunc.c:psyco_gen_step) */
@@ -178,9 +220,12 @@ struct stack_frame_info_s {
    inlined frame's parent's, whose slot the call uses, unless 'own'. A
    local only in a register is found there (LM_REG), or with reg_pos at
    the position its register is pushed at for this call
-   (psyco_call_psyco). Nothing is emitted. */
+   (psyco_call_psyco). Nothing is emitted. After the locals, the
+   function of the frame called, if known only at run time: 'func', or
+   for 'own' the inlined frame's (LOC_INLINE_FUNC). */
 EXTERNFN struct locals_map_s *
-psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own);
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own,
+                 vinfo_t *func);
 EXTERNVAR struct locals_map_s **psyco_locals_maps;
 EXTERNFN bool
 psyco_locals_map_reads(vinfo_t *vi, int level);
@@ -208,11 +253,28 @@ EXTERNFN stack_frame_info_t *
 psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
 #endif
 
-/* A real frame LeCode_Run runs: on its C stack, linked into this
-   thread's list from start to return (frames.c:frame_runs) */
+/* A run of compiled code from C: on its C stack, linked into this
+   thread's list from start to return (frames.c:frame_runs). Either the
+   real frame LeCode_Run runs, or, with 'frame' NULL, a frameless run
+   (eval_hook.c:le_run_frameless), whose own frame has a view only when
+   asked for (frames.c:keep_root). */
 typedef struct frame_runtime_s *FrameRuntime_list_t;
 typedef struct frame_runtime_s {
-    le_frame_t *frame; /* LeCode_Run's caller holds it */
+    le_frame_t *frame; /* LeCode_Run's caller holds it; NULL: frameless */
+    /* a frameless run's: the thread's current frame as it started, or
+       NULL; its frames come just inside that one's */
+    le_frame_t *back;
+    /* a frameless run's thread state: the OS thread may run another's
+       (a subinterpreter's) inside it, whose walks must not find it */
+    PyThreadState *ts;
+    PyFunctionObject
+        *func; /* a frameless run's function; its caller holds it */
+    /* the key of a frameless run's own frame's kept frame (frames.c:
+       keep_root), or NULL while it has none */
+    struct stack_frame_info_s **root_own;
+    /* ceval ran the real frame on to its end and popped it
+       (psyco_resume_run) */
+    int popped;
     stack_frame_info_t ***psy_frames_start;
     PyCodeObject *psy_code;
     PyObject *psy_globals;
@@ -264,6 +326,21 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
 EXTERNFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start);
+/* the same for a frameless run of func's code */
+EXTERNFN void
+psyco_frame_start_register_frameless(FrameRuntime *fr, PyFunctionObject *func,
+                                     stack_frame_info_t ***psy_frames_start);
+/* the frameless run's own frame's frame object, made now if need be; a
+   new reference */
+EXTERNFN PyFrameObject *
+psyco_frameless_frame(FrameRuntime *fr);
+/* eval_hook.c: the compiled entry for a call of func, or NULL, and a run
+   of it with no real frame */
+EXTERNFN PyObject *
+le_function_entry(PyFunctionObject *func);
+EXTERNFN PyObject *
+le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
+                 PyObject *const *args, Py_ssize_t nargs);
 EXTERNFN void
 psyco_frame_start_unregister(FrameRuntime *fr);
 #ifdef PyFrameLocalsProxy_Check

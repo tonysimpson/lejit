@@ -143,6 +143,36 @@ def getframe_through():
     return seen_kw(k=1), Seen().seen, next(seen_gen())
 
 
+# a frame sys._getframe gives, its callers read through f_back while the
+# call runs, after the callers' locals change, and after it returns
+def _shown_ints(d):
+    return sorted((k, v) for k, v in d.items() if isinstance(v, int))
+
+
+def _deep_leaf(n):
+    f = sys._getframe(n)
+    return f, chain_names(f, 3)
+
+
+def _deep_mid(n):
+    m = n * 3
+    f, during = _deep_leaf(n)
+    m += 1
+    return f, during, [_shown_ints(g.f_locals) for g in (f, f.f_back)
+                       if g.f_code.co_name == '_deep_mid'], m
+
+
+def _deep_top(n):
+    t = n
+    f, during, mid, m = _deep_mid(n)
+    t += 1
+    return during, mid, chain_names(f, 3), m, t
+
+
+def getframe_deep():
+    return [_deep_top(n) for n in range(2)]
+
+
 # pyparsing's _trim_arity: call a parse action with fewer arguments until
 # one fits, telling a wrong arity from a TypeError inside it by the line
 # of the traceback's last frame
@@ -353,6 +383,33 @@ def caller_module_name():
     return ask_module_names()
 
 
+# TypeVar, ParamSpec, TypeVarTuple, TypeAliasType and sentinel take
+# __module__ from the frame of the function that makes them, which C reads
+# itself where they are C; here that function is compiled and another
+# module's, and called from the case's frame
+_made_elsewhere = {'__name__': 'tp_elsewhere'}
+exec('def make(kind, name):\n'
+     '    return kind(name).__module__\n'
+     'def make_alias(kind, name):\n'
+     '    return kind(name, int).__module__\n', _made_elsewhere)
+
+
+def module_of_made_objects():
+    import typing
+    import builtins
+    make = _made_elsewhere['make']
+    out = [make(typing.TypeVar, 'T')]
+    if hasattr(typing, 'ParamSpec'):
+        out.append(make(typing.ParamSpec, 'P'))
+    if hasattr(typing, 'TypeVarTuple'):
+        out.append(make(typing.TypeVarTuple, 'Ts'))
+    if hasattr(typing, 'TypeAliasType'):
+        out.append(_made_elsewhere['make_alias'](typing.TypeAliasType, 'A'))
+    if hasattr(builtins, 'sentinel'):
+        out.append(make(builtins.sentinel, 'S'))
+    return out
+
+
 def gen_frames():
     yield back_names(3)
 
@@ -421,20 +478,25 @@ def replaced_functions():
     return out
 
 
+# a log record holds the time it was made: whether its ints are new objects
+# or cached small ones depends on when it runs
+LOGS = {'objects': "a log record's time decides whether its ints are new objects"}
+
 CASES = [
     ('pos_call_chain', "[()]", {}),
     ('kw_call_chain', "[()]", {}),
     ('warn_stacklevel', "[()]", {}),
-    ('log_caller', "[()]", {}),
-    ('log_kw_caller', "[()]", {}),
-    ('log_init_caller', "[()]", {}),
-    ('log_gen_caller', "[()]", {}),
+    ('log_caller', "[()]", LOGS),
+    ('log_kw_caller', "[()]", LOGS),
+    ('log_init_caller', "[()]", LOGS),
+    ('log_gen_caller', "[()]", LOGS),
     ('warn_through', "[(1,), (2,)]", {}),
     ('c_warning_places', "[()]", {}),
     ('init_frames_caller', "[()]", {}),
     ('returned_back_names', "[()]", {}),
     ('returned_back_names_interpreted', "[()]", {}),
     ('caller_module_name', "[()]", {}),
+    ('module_of_made_objects', "[(), ()]", {}),
     ('raised_middle', "[()]", {}),
     ('caught_middle', "[()]",
      {'warmup': (20, 'a call site that gets new lambdas each round compiles '
@@ -443,6 +505,7 @@ CASES = [
     ('attr_line', "[()]", {}),
     ('lasti_through_c', "[()]", {}),
     ('getframe_through', "[()]", {}),
+    ('getframe_deep', "[()]", {}),
     ('trim_arity_case', "[()]", {}),
     ('replaced_functions', "[()]", {}),
 ]

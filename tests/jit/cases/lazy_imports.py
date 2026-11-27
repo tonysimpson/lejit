@@ -104,8 +104,12 @@ def from_proxy(n):
     return out
 
 
+# each round imports a module afresh, and an import looks up names made
+# afresh, which the type cache keeps
+FRESH = {'clear_type_cache': 'imports look up new names each round'}
+
 CASES = [
-    ('global_reified', [(3,)], {}),
-    ('missing_reified', [(2,)], {}),
-    ('from_proxy', [(2,)], {}),
+    ('global_reified', [(3,)], FRESH),
+    ('missing_reified', [(2,)], FRESH),
+    ('from_proxy', [(2,)], FRESH),
 ]

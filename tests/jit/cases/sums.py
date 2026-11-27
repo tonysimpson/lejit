@@ -56,6 +56,21 @@ def squares(n):
     return sum(i * i for i in range(n)) + sum(x for x in range(n) if x & 1)
 
 
+def word_totals(n):
+    """totals past one digit and at a C long's limits, either way, kept as a
+    C long by CPython's int loop until one overflows it"""
+    big = 2 ** 62
+    return [sum(i * 40000 for i in range(n)),
+            sum(x for x in (big, big, -big, -big, n)),
+            sum(x for x in (-big, -big, -big, -n)),
+            sum(x for x in (big, big - 1, n, -n)),
+            sum((x for x in range(n)), 2 ** 63 - 2),
+            sum((big, big - 1 + n, 1)),
+            sum((-big, -big - n, 1)),
+            sum(b for b in (True, False, 2 ** 40) * n),
+            sum((x for x in (n, 1.5, 2 ** 70)), 2 ** 31)]
+
+
 SEQS = '''[
     [1e100, 1.0, -1e100], [0.1] * 10, [1, 2, 3], [], [True, 2, False],
     [1e100j, 1j, -1e100j], [1, 2.5, 1j], [1j, 1e100, 1.0, -1e100],
@@ -80,4 +95,5 @@ CASES = [
                          'for s in (0.0, -0.0, 10, 2 ** 70, 1j, 1e100)]' % SEQS, {}),
     ('mixed', [(1,), (7,)], {}),
     ('squares', [(30,), (0,), (100000,)], {}),
+    ('word_totals', [(0,), (1,), (2,), (60000,)], {}),
 ]

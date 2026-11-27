@@ -509,13 +509,35 @@ made_add(le_owner_t *o, code_t *start, code_t *end)
     nmade++;
 }
 
-static void
-made_forget(le_owner_t *o)
+static bool
+in_owner(const le_owner_t *o, code_t *p)
 {
-    int i;
+    void **b;
+    int k;
+    for (k = 0; k < o->nextents; k++)
+        if (o->extents[k].start <= p && p < o->extents[k].end)
+            return true;
+    for (b = o->blocks; b != NULL; b = *b)
+        if ((code_t *)(b + 2) <= p && p < (code_t *)(b + 2) + (size_t)b[1])
+            return true;
+    return false;
+}
+
+/* 'o' died, and what it held ('dead''s code and records) is about to be
+   freed: its pieces stay, and the notes in what it held are dropped, since
+   that memory may be anything's by the time the compile ends */
+static void
+made_forget(le_owner_t *o, const le_owner_t *dead)
+{
+    long i;
     for (i = 0; i < nmade; i++)
         if (made[i].owner == o)
             made[i].owner = NULL;
+    if (le_compile_depth == 0)
+        return;
+    for (i = 0; i < nnotes; i++)
+        if (notes[i].at != NULL && in_owner(dead, notes[i].at))
+            notes[i].at = NULL;
 }
 
 DEFINEFN void
@@ -710,9 +732,9 @@ extent_cmp(const void *a, const void *b)
     return x->start < y->start ? -1 : x->start > y->start;
 }
 
-/* whether [p, p + 8) meets a new copy */
+/* whether [p, p + size) meets a new copy */
 static bool
-in_copies(code_t *p)
+in_copies(code_t *p, int size)
 {
     int lo = 0, hi = ncopies;
     while (lo < hi) {
@@ -722,7 +744,7 @@ in_copies(code_t *p)
         else
             hi = mid;
     }
-    return lo < ncopies && copies[lo].start < p + 8;
+    return lo < ncopies && copies[lo].start < p + size;
 }
 
 static int
@@ -835,6 +857,8 @@ psyco_code_move_made(void)
     for (i = j = 0; i < nnotes; i++) {
         note_t *x = &notes[i];
         made_t *m;
+        if (x->at == NULL)
+            continue;
         if (x->kind != LE_RELOC_WORD) {
             dword_t v;
             if (!in_regions(x->at))
@@ -925,7 +949,7 @@ psyco_code_move_made(void)
         note_t *x = &notes[i];
         code_t *at = moved(x->at);
         made_t *m = made_find(x->at);
-        if (m == NULL && in_copies(x->at))
+        if (m == NULL && in_copies(x->at, NOTE_SIZE(x)))
             continue;
         if (x->kind == LE_RELOC_WORD) {
             code_t *v, *w;
@@ -1061,27 +1085,32 @@ psyco_owner_pin(PyObject *p)
     psyco_owner_keep(p);
 }
 
-/* each block is a list link, then the record */
+/* each block is a list link, its size in checked builds, then the record
+ */
+#define BLOCK_HEAD (ALL_CHECKS ? 2 : 1)
 DEFINEFN void *
 psyco_owner_alloc(size_t size)
 {
     le_owner_t *o = psyco_owner;
-    void **p = PyMem_Malloc(sizeof(void *) + size);
+    void **p = PyMem_Malloc(BLOCK_HEAD * sizeof(void *) + size);
     if (p == NULL || LE_FAIL(LE_FAIL_OWNER))
         OUT_OF_MEMORY();
-    memset(p + 1, 0, size);
+    memset(p + BLOCK_HEAD, 0, size);
+#if ALL_CHECKS
+    p[1] = (void *)size;
+#endif
     if (o != NULL) {
         *p = o->blocks;
         o->blocks = p;
     }
-    return p + 1;
+    return p + BLOCK_HEAD;
 }
 
 static void
 codebuf_unlist(CodeBufferObject *b);
 #if ALL_CHECKS
 static void
-made_forget(le_owner_t *o);
+made_forget(le_owner_t *o, const le_owner_t *dead);
 #endif
 EXTERNFN void
 psyco_owner_release_records(le_owner_t *o); /* dispatcher.c */
@@ -1178,7 +1207,7 @@ owner_free(le_owner_t *o, PyObject *mergepoints, PyObject *entry_point)
         free_release_pages(s, e);
     }
 #if ALL_CHECKS
-    made_forget(o);
+    made_forget(o, &dead);
     PyMem_Free(dead.relocs);
 #endif
     PyMem_Free(dead.extents);
@@ -1416,7 +1445,6 @@ static long extras_since_scan = 0; /* records counted since the last scan */
 #define SCAN_MIN 512               /* records counted before the first scan */
 static long scan_after = SCAN_MIN; /* more after a scan too big */
 static bool scan_asked = false;    /* the pending call is queued */
-static PyObject *get_objects = NULL; /* gc.get_objects, once imported */
 static PyObject *gc_callbacks = NULL, *scan_callback = NULL;
 
 #define SCAN_MAX_NODES ((size_t)1 << 20)
@@ -1644,7 +1672,6 @@ static long
 scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
 {
     le_code_extra_t *x;
-    PyObject *all;
     PyObject *modules = le_modules_dict();
     Py_ssize_t pos = 0;
     PyObject *k, *m;
@@ -1658,33 +1685,10 @@ scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
             if (PyModule_GetDict(m) != NULL)
                 scan_node(PyModule_GetDict(m), NODE_PRUNED);
         }
-    /* every function is tracked by CPython's GC, so its code is found
-       here; one only something else holds is never a seed, which only
-       makes more look alive */
-    if (get_objects == NULL) {
-        /* not at start-up: importing runs Python code, which LeJIT compiles */
-        PyObject *gc = PyImport_ImportModule("gc");
-        if (gc != NULL) {
-            get_objects = PyObject_GetAttrString(gc, "get_objects");
-            Py_DECREF(gc);
-        }
-    }
-    all = get_objects != NULL ? PyObject_CallObject(get_objects, NULL) : NULL;
-    if (all == NULL || !PyList_Check(all)) {
-        PyErr_Clear();
-        Py_XDECREF(all);
-        return -1;
-    }
-    for (i = 0; i < (size_t)PyList_GET_SIZE(all); i++) {
-        PyObject *f = PyList_GET_ITEM(all, i);
-        if (PyFunction_Check(f)) {
-            PyObject *co = PyFunction_GET_CODE(f);
-            x = le_code_extra_get((PyCodeObject *)co);
-            if (x != NULL && (x->owner.npins > 0 || x->owner.groups != NULL))
-                scan_node(co, NODE_CODE);
-        }
-    }
-    Py_DECREF(all);
+    /* every code object whose code holds something */
+    for (x = le_code_extras; x != NULL; x = x->next)
+        if (x->owner.npins > 0 || x->owner.groups != NULL)
+            scan_node((PyObject *)le_code_extra_code(x), NODE_CODE);
     for (i = 0; i < scan.n && !scan.failed; i++) {
         scan_edges(i, visit_count);
         if (scan.nodes[i].kind == NODE_CODE) {
@@ -1701,7 +1705,7 @@ scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
             push_alive(i);
     propagate();
     /* then the groups reached, until no more are */
-    if (scan.n > 0 && psyco_frames_running(mark_running, NULL) < 0)
+    if (scan.n > 0 && psyco_frames_running(mark_running, NULL, true) < 0)
         scan.unknown = true;
     do {
         changed = false;
@@ -1826,6 +1830,219 @@ owners_scan(void)
     pins_drop(&dropped);
 }
 
+/*** The sweep: compiled code not used lately is released ***/
+
+/* After every full collection, the compiled code of each code object that
+   no frame has entered through the hook (eval_hook.c:le_code_to_run,
+   le_gen_to_run) or was found running in for SWEEP_COLD sweeps is
+   released with everything its owner and groups hold, as if the code
+   object had died, unless code that stays may jump into it: code that
+   stays keeps the code of every code object it pins (compiled code holds
+   the code objects whose code it calls or inlines) and of every group it
+   depends on, so cold code objects that pin each other go together. The
+   next call compiles afresh. Code released SWEEP_RELEASES times stays.
+   A full collection is told by an object of LeJIT's own that the
+   collector tracks: once it is old, only a full collection traverses it,
+   and its traverse asks for the sweep as a pending call, which runs
+   between bytecodes in the main interpreter, as the owner scan's does
+   (owners_pending). Unlike a gc.callbacks entry, it costs nothing at the
+   other collections and needs no import of gc. */
+#define SWEEP_COLD 4
+#define SWEEP_RELEASES 3
+
+#if ALL_CHECKS
+DEFINEVAR long le_stat_sweeps[3]; /* sweeps run, code released, its bytes */
+#endif
+
+/* has code the sweep may release once it is cold */
+static bool
+sweep_may_release(le_code_extra_t *x)
+{
+    return x->owner.nbufs > 0 && x->entry_point != Py_None &&
+           x->releases < SWEEP_RELEASES && x != le_gen_interpreted_x;
+}
+
+static void
+sweep_running(PyCodeObject **cos, int ncos, code_t *at, void *unused)
+{
+    int k;
+    for (k = 0; k < ncos; k++) {
+        le_code_extra_t *x = le_code_extra_get(cos[k]);
+        if (x != NULL)
+            x->cold = 0;
+    }
+}
+
+/* 'x' stays; so does 'y', onto 'stack', if it was to go */
+static void
+sweep_keep_one(le_code_extra_t *y, le_code_extra_t **stack, size_t *n)
+{
+    if (y != NULL && y->swept) {
+        y->swept = 0;
+        stack[(*n)++] = y;
+    }
+}
+
+static void
+sweep_keep_pins(le_owner_t *o, le_code_extra_t **stack, size_t *n)
+{
+    size_t j;
+    for (j = 0; o->pins != NULL && j <= o->pinmask; j++)
+        if (o->pins[j] != NULL && PyCode_Check(o->pins[j]))
+            sweep_keep_one(le_code_extra_get((PyCodeObject *)o->pins[j]),
+                           stack, n);
+}
+
+static void
+sweep_keep(le_code_extra_t *x, le_code_extra_t **stack, size_t *n)
+{
+    le_group_t *g;
+    int i;
+    sweep_keep_pins(&x->owner, stack, n);
+    for (g = x->owner.groups; g != NULL; g = g->next) {
+        sweep_keep_pins(&g->owner, stack, n);
+        for (i = 0; i < g->ndeps; i++) {
+            le_owner_t *root = &g->deps[i]->owner;
+            while (root->parent != NULL) root = root->parent;
+            sweep_keep_one(
+                (le_code_extra_t *)((char *)root -
+                                    offsetof(le_code_extra_t, owner)),
+                stack, n);
+        }
+    }
+}
+
+static bool sweep_asked = false; /* the pending call is queued */
+
+static void
+sweep(void)
+{
+    le_code_extra_t *x, **cand;
+    PyObject **reports;
+    le_owner_t dropped;
+    size_t n = 0, ncand = 0, nstack = 0, i, k;
+    LE_STAT(le_stat_sweeps[0]++);
+    for (x = le_code_extras; x != NULL; x = x->next) {
+        if (x->cold < SWEEP_COLD)
+            x->cold++;
+        n++;
+    }
+    if (psyco_frames_running(sweep_running, NULL, false) < 0)
+        return;
+    for (x = le_code_extras; x != NULL; x = x->next)
+        if (x->cold == SWEEP_COLD && sweep_may_release(x))
+            ncand++;
+    if (ncand == 0)
+        return;
+    ncand = 0;
+    /* the candidates, then a stack of those found to stay */
+    cand = PyMem_Malloc(2 * n * sizeof(*cand));
+    if (cand == NULL)
+        return;
+    for (x = le_code_extras; x != NULL; x = x->next) {
+        if (x->cold < SWEEP_COLD || !sweep_may_release(x))
+            continue;
+        x->swept = 1;
+        cand[ncand++] = x;
+    }
+    if (ncand == 0) {
+        PyMem_Free(cand);
+        return;
+    }
+    for (x = le_code_extras; x != NULL; x = x->next)
+        if (!x->swept)
+            sweep_keep(x, cand + n, &nstack);
+    while (nstack > 0) sweep_keep(cand[n + --nstack], cand + n, &nstack);
+    for (i = k = 0; i < ncand; i++)
+        if (cand[i]->swept)
+            cand[k++] = cand[i];
+    ncand = k;
+    /* each one's report and entry point */
+    reports = ncand > 0 ? PyMem_Malloc(2 * ncand * sizeof(PyObject *)) : NULL;
+    if (reports == NULL) {
+        for (i = 0; i < ncand; i++) cand[i]->swept = 0;
+        PyMem_Free(cand);
+        return;
+    }
+    /* as owners_scan frees records: all are emptied before any is
+       released, so that code a dealloc runs compiles afresh, and every
+       report lives until all are released; their references are dropped
+       last */
+    for (i = 0; i < ncand; i++) {
+        le_code_extra_reset(cand[i], &reports[i], &reports[ncand + i]);
+        Py_XINCREF(reports[i]);
+    }
+    memset(&dropped, 0, sizeof(dropped));
+    for (i = 0; i < ncand; i++) {
+        le_owner_t *o = &cand[i]->owner;
+        LE_STAT(le_stat_sweeps[1]++);
+#if ALL_CHECKS
+        {
+            le_group_t *g;
+            int e;
+            for (e = 0; e < o->nextents; e++)
+                le_stat_sweeps[2] += o->extents[e].end - o->extents[e].start;
+            for (g = o->groups; g != NULL; g = g->next)
+                for (e = 0; e < g->owner.nextents; e++)
+                    le_stat_sweeps[2] +=
+                        g->owner.extents[e].end - g->owner.extents[e].start;
+        }
+#endif
+        while (o->groups != NULL) {
+            le_group_t *g = o->groups;
+            o->groups = g->next;
+            group_free(g, reports[i], o, false);
+        }
+        owner_free(o, reports[i], reports[ncand + i]);
+        pins_take(&dropped, o);
+        psyco_owner_untrack(cand[i]);
+        cand[i]->swept = 0;
+        cand[i]->releases++;
+    }
+    for (i = 0; i < ncand; i++) Py_XDECREF(reports[i]);
+    PyMem_Free(reports);
+    PyMem_Free(cand);
+    pins_drop(&dropped);
+}
+
+static int
+sweep_pending(void *arg)
+{
+    PyObject *t, *v, *tb;
+    sweep_asked = false;
+    if (PyThreadState_GET()->interp != PyInterpreterState_Main() ||
+        psyco_owner != NULL || le_compile_depth != 0 || nopen != 0 ||
+        psyco_compile_guard != NULL || le_is_finalizing())
+        return 0;
+    PyErr_Fetch(&t, &v, &tb);
+    sweep();
+    PyErr_Restore(t, v, tb);
+    return 0;
+}
+
+static int
+sweep_clock_traverse(PyObject *self, visitproc visit, void *arg)
+{
+    PyObject *t, *v, *tb;
+    if (sweep_asked || le_is_finalizing())
+        return 0;
+    /* some versions set an error when the call can't be added */
+    PyErr_Fetch(&t, &v, &tb);
+    if (Py_AddPendingCall(sweep_pending, NULL) == 0)
+        sweep_asked = true;
+    else
+        PyErr_Clear();
+    PyErr_Restore(t, v, tb);
+    return 0;
+}
+
+static PyTypeObject SweepClock_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "lejit._core.sweep_clock",
+    .tp_basicsize = sizeof(PyObject),
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .tp_traverse = sweep_clock_traverse,
+};
+
 static int
 owners_pending(void *arg)
 {
@@ -1842,6 +2059,13 @@ owners_pending(void *arg)
     owners_scan();
     PyErr_Restore(t, v, tb);
     return 0;
+}
+
+/* whether func is one of LeJIT's own pending calls */
+DEFINEFN bool
+le_pending_is_own(int (*func)(void *))
+{
+    return func == sweep_pending || func == owners_pending;
 }
 
 static bool
@@ -2168,6 +2392,14 @@ owners_scan_init(void)
     PyObject *c;
     if (PyType_Ready(&Record_Type) < 0)
         PyErr_Clear();
+    /* held for good */
+    if (PyType_Ready(&SweepClock_Type) == 0) {
+        PyObject *clock =
+            (PyObject *)PyObject_GC_New(PyObject, &SweepClock_Type);
+        if (clock != NULL)
+            PyObject_GC_Track(clock);
+    }
+    PyErr_Clear();
     c = PyObject_CallFunction((PyObject *)&PyType_Type, "s()N", "C",
                               PyDict_New());
     if (c != NULL)

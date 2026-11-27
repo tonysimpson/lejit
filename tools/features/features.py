@@ -773,6 +773,11 @@ def tstate_attach(s):
 
 
 
+def function_vectorcall(s):
+    """a function keeps the C function its calls go through (vectorcall)"""
+    return _field(s, 'PyFunctionObject', 'vectorcall')
+
+
 def tstate_holds_gil(s):
     """a thread state says whether it holds the GIL in a field of its own,
     holds_gil (else in its _status bits)"""
@@ -968,6 +973,17 @@ def gen_keeps_code(s):
     return False, 'every header: _PyFrame_ClearExceptCode'
 
 
+def gen_code_field(s):
+    """a generator holds its code in a field of its own (gi_code in
+    _PyGenObject_HEAD), not only in its frame"""
+    for path in s.headers:
+        with open(os.path.join(s.src, path), encoding='latin-1') as f:
+            text = ''.join(f.read().split())
+        if '#define_PyGenObject_HEAD(prefix)' in text:
+            return 'prefix##_code;' in text, '%s:_PyGenObject_HEAD' % path
+    return False, 'every header: _PyGenObject_HEAD'
+
+
 def frame_stackrefs(s):
     """an interpreter frame's words are _PyStackRefs (f_executable,
     f_funcobj, localsplus): a word with its low bit set holds no reference
@@ -1100,6 +1116,12 @@ def range_iter_index(s):
         return 'index' in fields, path + ':_PyRangeIterObject.index'
     # until 3.11 the struct is private to Objects/rangeobject.c
     return _body_has(s, 'Objects/rangeobject.c', 'rangeiter_next', 'r->index')
+
+
+def range_iter_free_list(s):
+    """a range iterator is taken from the thread's free list where
+    rangeiter_dealloc keeps them (fast_range_iter), not always allocated"""
+    return _body_has(s, 'Objects/rangeobject.c', 'fast_range_iter', '_Py_FREELIST_POP')
 
 
 def inline_values(s):
@@ -1347,7 +1369,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # gone from 3.15: yield from's is GET_ITER with an argument
            'GET_YIELD_FROM_ITER',
            # gone from 3.16: del is PUSH_NULL and the store
-           'DELETE_ATTR', 'DELETE_GLOBAL')
+           'DELETE_ATTR', 'DELETE_GLOBAL', 'DELETE_NAME')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1581,6 +1603,7 @@ EXPORTS = [
     ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
     ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
     ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
+    ('LAZY_IMPORT_NAME_LINKABLE', '_PyEval_LazyImportName'),
 ]
 
 
@@ -1688,6 +1711,7 @@ FRAMES = [
     ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
     ('GEN_NEW_AROUND_FRAME', gen_new_around_frame),
     ('GEN_KEEPS_CODE', gen_keeps_code),
+    ('GEN_CODE_FIELD', gen_code_field),
     ('GETFRAME_AUDITS_RESULT', D('sys._getframe\'s audit event names the frame it returns, after the walk (none when the stack is too shallow), not the current frame before it',
                                  lambda s: _body_has(s, 'Python/sysmodule.c', 'sys__getframe_impl', '"sys._getframe", "(O)", pyFrame', missing=False))),
 ]
@@ -1713,6 +1737,7 @@ STATE = [
     ('TSTATE_STATUS', tstate_status),
     ('TSTATE_ATTACH', tstate_attach),
     ('TSTATE_HOLDS_GIL', tstate_holds_gil),
+    ('FUNCTION_VECTORCALL', function_vectorcall),
     ('TSTATE_GIL_REQUESTED', tstate_gil_requested),
     ('GENERATOR_RETURN_KIND', generator_return_kind),
     ('LAST_PROFILED_FRAME', last_profiled_frame),
@@ -1806,6 +1831,7 @@ OBJECTS = [
     ('DEALLOC_DEFERS_TO_TRASHCAN', dealloc_defers_to_trashcan),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
+    ('RANGE_ITER_FREE_LIST', range_iter_free_list),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),
 
 

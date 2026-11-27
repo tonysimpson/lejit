@@ -33,7 +33,8 @@
    bytes each, a short jump among them made a 6-byte one, the jump back */
 #define MOVED_MAX (2 * 15 + 6 + 5)
 /* a stub: push [rip+6] (the replacement's address), jmp [rip+8]
-   (le_patch_call's), those two addresses, then the original's moved first
+   (le_patch_call's), those two addresses, or jmp [rip] and the
+   replacement's address (le_patch_entry_jump), then the original's moved first
    instructions after an endbr64, so that it can be called indirectly where
    indirect branch tracking is on */
 #define STUB_JUMP 28
@@ -138,6 +139,10 @@ decode(const unsigned char *p, insn_t *in)
                  op2 == 0xb6 || op2 == 0xb7 || op2 == 0xbe || op2 == 0xbf ||
                  op2 == 0xd6 || op2 == 0xef)
             modrm = 1; /* endbr64, nop, cmov, set, SSE moves, imul, movzx */
+        else if (op2 == 0xba) { /* bt, bts, btr, btc r/m, imm8 */
+            modrm = 1;
+            imm = 1;
+        }
         else
             return false;
     }
@@ -380,8 +385,9 @@ write_entry(unsigned char *fn, const unsigned char jump[ENTRY_JUMP])
     return true;
 }
 
-DEFINEFN void *
-le_patch_entry(void *fn, void *by)
+/* the stub's head: through le_patch_call to 'by', or a plain jump to it */
+static void *
+patch(void *fn, void *by, bool direct)
 {
     static const unsigned char endbr64[4] = {0xf3, 0x0f, 0x1e, 0xfa};
     unsigned char *stub, *moved, jump[ENTRY_JUMP];
@@ -391,7 +397,12 @@ le_patch_entry(void *fn, void *by)
     memcpy(moved, endbr64, 4);
     if (move_entry(fn, moved + 4) == 0)
         return NULL; /* the stub's room is left unused */
-    {
+    if (direct) {
+        static const unsigned char head[6] = {0xff, 0x25, 0, 0, 0, 0};
+        memcpy(stub, head, 6);
+        memcpy(stub + 6, &by, 8);
+    }
+    else {
         static const unsigned char head[12] = {0xff, 0x35, 6, 0, 0, 0,
                                                0xff, 0x25, 8, 0, 0, 0};
         const void *call = le_patch_call;
@@ -405,4 +416,16 @@ le_patch_entry(void *fn, void *by)
         !write_entry(fn, jump))
         return NULL;
     return moved;
+}
+
+DEFINEFN void *
+le_patch_entry(void *fn, void *by)
+{
+    return patch(fn, by, false);
+}
+
+DEFINEFN void *
+le_patch_entry_jump(void *fn, void *by)
+{
+    return patch(fn, by, true);
 }

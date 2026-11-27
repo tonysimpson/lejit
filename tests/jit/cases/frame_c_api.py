@@ -36,6 +36,8 @@ _EvalFrameLocals = _function('PyEval_GetFrameLocals', ctypes.c_void_p)
 _EvalFrameGlobals = _function('PyEval_GetFrameGlobals', ctypes.c_void_p)
 _EvalFrameBuiltins = _function('PyEval_GetFrameBuiltins', ctypes.c_void_p)
 _DecRef = _function('Py_DecRef', None, ctypes.c_void_p)
+_LineNumber = _function('PyFrame_GetLineNumber', ctypes.c_int,
+                        ctypes.py_object)
 
 
 def _borrowed(address):
@@ -94,8 +96,45 @@ def two_down(n):
     return direct_callee(z), z
 
 
+# the line C reads of the innermost frame, at two places in one call: the
+# frame it gets is where the call is each time
+def _lines_here():
+    first = _LineNumber(_borrowed(_GetFrame()))
+    second = _LineNumber(_borrowed(_GetFrame()))
+    return second - first
+
+
+def lines_from_c(n):
+    return [_lines_here() for i in range(n)]
+
+
+# the globals and builtins C reads, with no frame asked for, are the
+# innermost frame's: here a function's made under builtins of its own
+def _with_own_builtins():
+    b = {'len': len}
+    g = {'__builtins__': b, '_borrowed': _borrowed,
+         '_GetBuiltins': _GetBuiltins, '_GetGlobals': _GetGlobals}
+    exec('def read():\n'
+         '    return _borrowed(_GetBuiltins()), _borrowed(_GetGlobals())\n',
+         g)
+    return b, g, g['read']
+
+
+_own_b, _own_g, _own_read = _with_own_builtins()
+
+
+def own_builtins(n):
+    out = []
+    for i in range(n):
+        b, g = _own_read()
+        out.append((b is _own_b, g is _own_g))
+    return out
+
+
 CASES = [
     ('seen_here', "[(1,), (2,)]", {}),
     ('direct_callee', "[(1,), (3,)]", {}),
     ('two_down', "[(1,)]", {}),
+    ('lines_from_c', [(3,)], {}),
+    ('own_builtins', [(3,)], {}),
 ]

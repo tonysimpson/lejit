@@ -1,6 +1,6 @@
 # The order finalisers run in, as in the adversarial suite's finalisers: a
-# returning function releases its locals first to last, and a dropped list
-# its items last to first.
+# returning function releases its locals and cells in its frame's order,
+# and a dropped list its items last to first.
 ORDER = []
 
 
@@ -45,8 +45,26 @@ def pair_kept_to_end():
     return ORDER[:]
 
 
+def closure_locals(i):
+    a = Handle('a%d' % i)
+    b = Handle('b%d' % i)
+    c = Handle('c%d' % i)
+    g = lambda: b
+    return 0
+
+
+def cell_released_from_c():
+    # map calls closure_locals from C, so it runs in a frame ceval made,
+    # which holds b's cell
+    del ORDER[:]
+    for i in range(3):
+        list(map(closure_locals, [i]))
+    return ORDER[:]
+
+
 CASES = [
     ('locals_released', "[()]", {}),
     ('pairs_dropped', "[(), (1,)]", {}),
     ('pair_kept_to_end', "[()]", {}),
+    ('cell_released_from_c', "[()]", {}),
 ]

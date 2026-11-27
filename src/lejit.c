@@ -142,6 +142,8 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match)
    only to weakref.getweakrefs on the code object. */
 DEFINEVAR PyCodeObject *le_gen_interpreted = NULL;
 DEFINEVAR le_code_extra_t *le_gen_interpreted_x = NULL;
+DEFINEVAR le_code_extra_t *le_code_extras = NULL;
+static long next_serial = 0;
 
 DEFINEVAR PyTypeObject CodeRecord_Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "lejit._core.code_record",
@@ -168,7 +170,39 @@ le_code_extra_free(le_code_extra_t *x)
 #endif
     psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
     psyco_owner_untrack(x); /* after: releasing can keep into the owner */
+    if (x->prev != NULL)
+        x->prev->next = x->next;
+    else
+        le_code_extras = x->next;
+    if (x->next != NULL)
+        x->next->prev = x->prev;
     Py_DECREF(RECORD_OF(x));
+}
+
+DEFINEFN void
+le_code_extra_reset(le_code_extra_t *x, PyObject **mergepoints,
+                    PyObject **entry_point)
+{
+    int i, j;
+    if (x == le_gen_interpreted_x)
+        le_gen_interpreted = NULL;
+    for (i = 0; i < x->nresumes; i++)
+        for (j = 0; j < x->resumes[i].count; j++)
+            Py_XDECREF(x->resumes[i].entries[j].code);
+    PyMem_Free(x->resumes);
+    x->resumes = x->last_resume = NULL;
+    x->nresumes = 0;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    le_gen_direct_clear(le_code_extra_code(x), x);
+#endif
+    *mergepoints = x->merge_points;
+    *entry_point = x->entry_point;
+    x->merge_points = x->entry_point = NULL;
+    x->entry_globals = x->entry_builtins = NULL;
+    x->inline_end = 0;
+    x->serial = ++next_serial;
+    x->cold = 0;
+    x->frameless = 0;
 }
 
 static int
@@ -219,7 +253,6 @@ DEFINEFN
 le_code_extra_t *
 le_code_extra(PyCodeObject *co)
 {
-    static long next_serial = 0;
     le_code_extra_t *x = le_code_extra_get(co);
     PyObject *args;
     code_record_t *r;
@@ -242,6 +275,10 @@ le_code_extra(PyCodeObject *co)
     PyObject_GC_UnTrack(r);
     r->attached = 1;
     r->x.serial = ++next_serial;
+    r->x.next = le_code_extras;
+    if (le_code_extras != NULL)
+        le_code_extras->prev = &r->x;
+    le_code_extras = &r->x;
     return &r->x;
 }
 

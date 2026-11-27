@@ -44,12 +44,15 @@
 #define INDEX_LOC_LOCALS_PLUS 4 /* start of local variables + stack */
 
 /* LOC_INLINING's array, while a frame is inlined: the parent's code
-   object, position and code serial (psyfunc.c:psyco_save_inline_po), then
-   the parent's vlocals */
+   object, position and code serial (psyfunc.c:psyco_save_inline_po), the
+   inlined frame's function where the call knows it, else (i << 1) | 1 if
+   it is the parent's run-time vlocal i, else 0, then the
+   parent's vlocals */
 #define LOC_INLINE_CO 0
 #define LOC_INLINE_NEXT_INSTR 1
 #define LOC_INLINE_SERIAL 2
-#define TOTAL_LOC_INLINE 3
+#define LOC_INLINE_FUNC 3
+#define TOTAL_LOC_INLINE 4
 
 /* A generator compiled into its consumer
    (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
@@ -134,6 +137,12 @@ typedef struct {
                                call of a Python function, whose frame is
                                counted without the recursion limit's test
                                (psyfunc.c:psyco_call_pyfunc) */
+    char ex_keywords;       /* the call being compiled is an f(*a, **d)
+                               call whose keywords are a run-time exact dict
+                               the binder may read (psyco_dict_keywords) */
+    char ex_method;         /* the call being compiled is an f(*a, **kw)
+                               of a bound method, which CPython runs from C
+                               (PyObject_Call) */
     int call_site; /* 1 + the CALL_* instruction being compiled, or 0 */
     struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                          which gives it its return address */
