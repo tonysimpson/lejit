@@ -622,11 +622,8 @@ pyc_data_build(PsycoObject *po, PyObject *merge_points)
     if ((co->co_flags & LE_BODY_FLAGS) &&
         GENEXPR_SLOT_MODE(co) < po->vlocals.count &&
         po->vlocals.items[GENEXPR_SLOT_MODE(co)] != NULL &&
-        psyco_generator_mode(po) == GENEXPR_INLINED) {
+        psyco_generator_mode(po) == GENEXPR_INLINED)
         merge_points = psyco_inline_merge_points(merge_points);
-        if (merge_points == NULL)
-            OUT_OF_MEMORY();
-    }
     po->pr.merge_points = merge_points;
 }
 

@@ -709,8 +709,18 @@ _build_merge_points(PyCodeObject *co)
         report->flags |= MP_FLAGS_RESUMABLE;
     if (co->co_flags & CO_GENERATOR) {
         int yield = fusable_yield(co);
-        if (yield >= 0 && inlinable_generator(co, c, yield))
-            report->flags |= MP_FLAGS_GEN_INLINABLE;
+        /* made now: compiling the frame must not fail for memory */
+        if (yield >= 0 && inlinable_generator(co, c, yield)) {
+            PyObject *view = PyCapsule_New(report, NULL, NULL);
+            if (view != NULL && PyCapsule_SetContext(view, report) == 0) {
+                report->inline_view = view;
+                report->flags |= MP_FLAGS_GEN_INLINABLE;
+            }
+            else {
+                Py_XDECREF(view);
+                PyErr_Clear(); /* out of memory: not inlined */
+            }
+        }
     }
     {
         PyObject *capsule = PyCapsule_New(report, NULL, report_destructor);
@@ -1375,21 +1385,13 @@ psyco_first_merge_point(PyObject *mergepoints)
    for a generator compiled into its consumer's loop
    (pycompiler.c:pyc_data_build), whose state no merge point may snapshot,
    as an inlined frame's never is. Its breaker checks, join points and flags
-   are the report's own. Borrowed: the report keeps it. NULL if out of
-   memory. */
+   are the report's own. Borrowed: the report keeps it. Only for a report
+   with MP_FLAGS_GEN_INLINABLE. */
 DEFINEFN PyObject *
 psyco_inline_merge_points(PyObject *mergepoints)
 {
     co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
-    if (report->inline_view == NULL) {
-        PyObject *view = PyCapsule_New(report, NULL, NULL);
-        if (view == NULL || PyCapsule_SetContext(view, report) < 0) {
-            Py_XDECREF(view);
-            PyErr_Clear();
-            return NULL;
-        }
-        report->inline_view = view;
-    }
+    psyco_assert(report->inline_view != NULL);
     return report->inline_view;
 }
 
