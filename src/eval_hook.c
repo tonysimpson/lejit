@@ -138,11 +138,12 @@ LeCode_Run(PyThreadState *tstate, PyObject *codebuf, le_frame_t *f)
    arguments, which the run holds a reference to, as a frame does: a
    caller may pass one only the call keeps alive (ceval's
    WITH_EXCEPT_START, the traceback), and the frame has a view only when
-   asked
-   (frames.c:keep_root). The caller has bound the arguments and made the
-   tests a frame would: no tracing, no cells or free variables, not a
-   generator's code. As ceval, the depth is counted and the eval_breaker
-   tested at the start. */
+   asked (frames.c:keep_root). It holds 'func' too, as a frame holds its
+   code: a caller may lend one only a dict keeps, which the call may
+   change (a module's __getattr__ deleting itself). The caller has bound
+   the arguments and made the tests a frame would: no tracing, no cells
+   or free variables, not a generator's code. As ceval, the depth is
+   counted and the eval_breaker tested at the start. */
 DEFINEFN PyObject *
 le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
                  PyObject *const *args, Py_ssize_t nargs)
@@ -156,6 +157,7 @@ le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
     extra_assert(RUN_ARGC(codebuf) == nargs);
     if (le_recursion_enter(tstate))
         return NULL;
+    Py_INCREF(func);
     for (i = 0; i < nargs; i++) Py_XINCREF(args[i]);
     psyco_frame_start_register_frameless(&fr, func, &finfo);
     if (le_eval_breaker_at_entry(tstate, (PyCodeObject *)func->func_code) <
@@ -171,6 +173,7 @@ le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
     le_recursion_leave(tstate);
     psyco_frame_start_unregister(&fr);
     for (i = 0; i < nargs; i++) Py_XDECREF(args[i]);
+    Py_DECREF(func);
     return result;
 }
 
