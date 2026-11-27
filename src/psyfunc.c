@@ -2087,6 +2087,34 @@ iter_cannot_raise(PyTypeObject *tp)
     return false;
 }
 
+/* the free variables' cells of the function 'vfunc' of code 'co' put in
+   the words of its record 'vrec', as its COPY_FREE_VARS would (genrecord.c:
+   le_gen_record_start does it in C): 1, or 0 where the cells aren't
+   known, or -1 on error */
+static int
+record_frees_put(PsycoObject *po, vinfo_t *vrec, vinfo_t *vfunc,
+                 PyCodeObject *co)
+{
+    vinfo_t *freebuf[MAX_CALL_FREES], **frees = NULL;
+    int nfrees = co->co_nfreevars, ofs = le_code_nlocalsplus(co) - nfrees;
+    int i, r = load_frees(po, vfunc, nfrees, freebuf, &frees);
+    for (i = 0; r > 0 && i < nfrees; i++) {
+        vinfo_t *cell = frees[i], *w;
+#if LE_HAS_FRAME_STACKREFS
+        w = psyco_stackref_from_steal(po, cell);
+#else
+        w = cell;
+        vinfo_incref(w);
+#endif
+        if (w == NULL || !psyco_put_nth_field(po, vrec, REC_words, ofs + i, w))
+            r = -1;
+        else
+            consume_reference(po, cell);
+        vinfo_xdecref(w, po);
+    }
+    return r;
+}
+
 /* The first step of the pending generator 'vgen' of code 'co'
    (vgen_startable), whose table is 't': if its start has an entry and nothing
    would stop a direct step (gen_run_tests), it becomes a virtual generator,
@@ -2182,6 +2210,13 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
         consume_reference(po, viter);
         vinfo_decref(viter, po);
         viter = NULL;
+    }
+    if (co->co_ncellvars == 0 && co->co_nfreevars > 0) {
+        r = record_frees_put(po, vrec, vfunc, co);
+        if (r < 0)
+            goto error;
+        if (r > 0)
+            return 1;
     }
     if ((co->co_ncellvars > 0 || co->co_nfreevars > 0) &&
         psyco_generic_call(po, le_gen_record_start,
