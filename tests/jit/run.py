@@ -8,8 +8,9 @@ once), and no more objects of any type the gc tracks left alive after
 them. That isn't compared for a case that calls lejit._core's test
 functions in its rounds, which the plain run doesn't. A case known to make
 more on a Python is listed for it in the cases directory's
-more_objects.txt, with the reason: that check is then expected to fail,
-and passing it fails the case.
+more_objects.txt, with the reason: that check is then expected to fail.
+One that makes no more doesn't fail, as counts differ between builds of
+one Python, but is named at the end, to be taken off the list.
 
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
@@ -45,6 +46,8 @@ ALLOCS_SLACK = 50
 # cases by whether LeJIT made fewer objects than plain CPython, as many, or
 # more, or asked lejit._core in their rounds so weren't compared
 OBJECTS = {'fewer': 0, 'equal': 0, 'more': 0, 'asks': 0}
+# cases more_objects.txt lists that made no more objects here
+NOT_MORE = []
 # each child runs with address-space randomisation off: what the leak check
 # counts can depend on where objects land (a table keyed by id() is sized
 # by them), so a plain run and a LeJIT run of the same case could differ
@@ -75,7 +78,9 @@ def run_child(modname, fname, calls, lejit_mode, warmup=9, env=None,
     cmd = ASLR_OFF + [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
            modname, fname, calls, lejit_mode, str(warmup),
            '1' if clear_type_cache else '0',
-           '1' if compiles_each_call else '0']
+           '1' if compiles_each_call else '0',
+           # a release build has no counter, and the runs stay as they were
+           '0' if '--release' in sys.argv else '1']
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
                          start_new_session=True)
     try:
@@ -228,14 +233,13 @@ def main():
             status = 'FAIL'
         elif xfail:
             status = 'xfail' if release else 'XPASS'
-        elif made in ('fewer', 'equal', 'more') and name in more_known:
+        elif made == 'more' and name in more_known:
             xfail = more_known[name]
-            if made == 'more':
-                status = 'xfail'
-                problem = 'more objects: ' + object_counts
-            else:
-                status = 'XPASS'
+            status = 'xfail'
+            problem = 'more objects: ' + object_counts
         else:
+            if made in ('fewer', 'equal') and name in more_known:
+                NOT_MORE.append(name)
             status = 'pass'
         counts[status] += 1
         if status != 'pass' or verbose:
@@ -261,4 +265,7 @@ if __name__ == '__main__':
         print('objects made with LeJIT against without: fewer=%(fewer)d equal=%(equal)d '
               'more=%(more)d; not compared, as the case asks lejit._core in its '
               'rounds: %(asks)d' % OBJECTS)
+    if NOT_MORE:
+        print('listed in more_objects.txt but made no more objects here: ' +
+              ', '.join(NOT_MORE))
     sys.exit(status)

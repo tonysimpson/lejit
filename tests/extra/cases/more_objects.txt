@@ -1,7 +1,7 @@
 # Cases where LeJIT makes more objects than plain CPython, on the Pythons
-# listed (tests/jit/run.py): their objects check is expected to fail there,
-# and one that passes fails. Each line: the case, its Pythons, the reason.
-# Take a Python off a case once it makes no more there.
+# listed (tests/jit/run.py): their objects check is expected to fail there.
+# Each line: the case, its Pythons, the reason. A Python comes off a case
+# once the case makes no more there (the runner names such cases).
 attr_stores.delattr_added_later                    3.7,3.8,3.9,3.10                   not looked at yet
 attr_stores.guard_refresh                          3.7,3.8,3.9,3.10                   not looked at yet
 attr_stores.property_added_later                   3.7,3.8,3.9,3.10                   not looked at yet

@@ -431,7 +431,7 @@ CASES = [
     ('warn_stacklevel', "[()]", {}),
     ('log_caller', "[()]", LOGS),
     ('log_kw_caller', "[()]", LOGS),
-    ('log_init_caller', "[()]", {}),
+    ('log_init_caller', "[()]", LOGS),
     ('log_gen_caller', "[()]", LOGS),
     ('warn_through', "[(1,), (2,)]", {}),
     ('c_warning_places', "[()]", {}),

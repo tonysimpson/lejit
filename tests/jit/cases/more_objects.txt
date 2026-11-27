@@ -1,7 +1,7 @@
 # Cases where LeJIT makes more objects than plain CPython, on the Pythons
-# listed (tests/jit/run.py): their objects check is expected to fail there,
-# and one that passes fails. Each line: the case, its Pythons, the reason.
-# Take a Python off a case once it makes no more there.
+# listed (tests/jit/run.py): their objects check is expected to fail there.
+# Each line: the case, its Pythons, the reason. A Python comes off a case
+# once the case makes no more there (the runner names such cases).
 agen_bodies.hooks                                  3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
 agen_bodies.tracing                                3.11,3.15                          not looked at yet
 arg_binding.builtin_errors                         3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
@@ -125,6 +125,7 @@ forward_star_kwargs.errors                         3.11,3.12,3.13,3.14,3.15     
 forward_star_kwargs.other_kwargs                   3.14,3.15                          not looked at yet
 frame_c_api.direct_callee                          3.11,3.12,3.13,3.14,3.15           not looked at yet
 frame_c_api.two_down                               3.11,3.12,3.13,3.14,3.15           not looked at yet
+frame_c_api.seen_here                              3.12                               not looked at yet (seen on CI's 3.12 image, not on pyenv's)
 frame_function.outer                               3.11,3.12,3.13,3.14,3.15           not looked at yet
 frame_identity.deep_walk                           3.14,3.15                          not looked at yet
 frame_identity.getframe_arguments                  3.12,3.13,3.14,3.15                not looked at yet
@@ -162,7 +163,6 @@ frames_seen_from_c.init_frames_caller              3.11,3.12                    
 frames_seen_from_c.kw_call_chain                   3.11,3.12,3.13,3.14,3.15           not looked at yet
 frames_seen_from_c.lasti_through_c                 3.14,3.15                          not looked at yet
 frames_seen_from_c.lineno_chain                    3.11,3.12,3.13,3.14,3.15           not looked at yet
-frames_seen_from_c.log_init_caller                 3.14,3.15                          not looked at yet
 frames_seen_from_c.pos_call_chain                  3.11,3.12,3.13,3.14,3.15           not looked at yet
 frames_seen_from_c.raised_middle                   3.11,3.12,3.13,3.14,3.15           not looked at yet
 frames_seen_from_c.replaced_functions              3.7,3.11,3.12,3.13,3.14,3.15       not looked at yet

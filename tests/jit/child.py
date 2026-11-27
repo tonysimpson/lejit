@@ -9,21 +9,26 @@ fn = getattr(mod, sys.argv[4])
 calls = eval(sys.argv[5], dict(vars(mod), nan=float('nan'), inf=float('inf')))
 # The objects check counts, in the same rounds as the leak check, the
 # object allocator's allocations (testing.c:le_allocs_begin, through ctypes
-# so the plain run needn't import lejit; a release build has no counter)
+# so the plain run needn't import lejit; not for a release build, which
+# has none)
 # and, by type, the objects the gc tracks that are alive after them against
 # those alive before them, and whether the case called lejit._core's test
 # functions meanwhile. Both start after the warm-up, so what compiling
 # makes and keeps isn't counted.
-import ctypes, gc, importlib.machinery, os
-core = os.path.join(sys.argv[1], 'lejit',
-                    '_core' + importlib.machinery.EXTENSION_SUFFIXES[0])
-try:
-    core = ctypes.PyDLL(core)
-    allocs_begin, allocs_end = core.le_allocs_begin, core.le_allocs_end
-    allocs_asked = core.le_allocs_asked
-    allocs_end.restype = allocs_asked.restype = ctypes.c_long
-except (OSError, AttributeError):
-    allocs_begin = allocs_end = allocs_asked = None
+import gc
+allocs_begin = allocs_end = allocs_asked = None
+counting = sys.argv[10] == '1'
+if counting:
+    import ctypes, importlib.machinery, os
+    core = os.path.join(sys.argv[1], 'lejit',
+                        '_core' + importlib.machinery.EXTENSION_SUFFIXES[0])
+    try:
+        core = ctypes.PyDLL(core)
+        allocs_begin, allocs_end = core.le_allocs_begin, core.le_allocs_end
+        allocs_asked = core.le_allocs_asked
+        allocs_end.restype = allocs_asked.restype = ctypes.c_long
+    except (OSError, AttributeError):
+        allocs_begin = allocs_end = allocs_asked = None
 # '0' plain, '1' a checked build of LeJIT, 'release' a release build, which
 # can't say whether it compiled the function
 use_lejit = sys.argv[6] != '0'
@@ -97,8 +102,9 @@ while True:
                 pass
         gc.collect()
     buffers = lejit._core._stats()['code_buffers'] if checked else 0
-    exec(COUNT_ALIVE)
-    alive_before = alive
+    if counting:
+        exec(COUNT_ALIVE)
+        alive_before = alive
     before = sys.getallocatedblocks()
     gc.disable()
     if allocs_begin:
@@ -119,10 +125,12 @@ while True:
         break
     repeats += 1
 out.append('leak: %d %d' % (leak, repeats))
-exec(COUNT_ALIVE)
-left = sorted((name, alive.get(name, 0) - alive_before.get(name, 0))
-              for name in set(alive) | set(alive_before)
-              if alive.get(name, 0) != alive_before.get(name, 0))
+left = []
+if counting:
+    exec(COUNT_ALIVE)
+    left = sorted((name, alive.get(name, 0) - alive_before.get(name, 0))
+                  for name in set(alive) | set(alive_before)
+                  if alive.get(name, 0) != alive_before.get(name, 0))
 out.append('objects: %d %d %r' % (allocs, asked, left))
 for line in out:
     print(line)
