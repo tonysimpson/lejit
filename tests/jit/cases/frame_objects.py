@@ -1,7 +1,7 @@
 # Compiled code makes a frame object only where CPython would have one:
 # each case counts the frame objects alive while its work holds them, the
 # same way plain and under LeJIT, and under LeJIT also that it made no
-# more than those (pyruntime.c:le_pyframe_new, mechanisms/frames.h:
+# more than those (frames.c:le_pyframe_new, mechanisms/frames.h:
 # le_frame_object, counted in lejit._core._stats()['frame_objects']), so
 # none was made and dropped on the side.
 import asyncio, gc, sys, types

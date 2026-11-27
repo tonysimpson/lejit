@@ -40,6 +40,10 @@ psyco_activation_returned(long *sp);
    inlined in it, if it is of code 'co' (borrowed), else NULL */
 EXTERNFN PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co);
+/* the function of the innermost compiled frame, if it is of code 'co' and
+   LeJIT knows it (borrowed), else NULL */
+EXTERNFN PyFunctionObject *
+psyco_innermost_function(PyCodeObject *co);
 /* how many frame objects of inlined frames are kept: compiled code
    leaving an inlined frame that ran Python then calls
    psyco_inline_frame_left, which lets its own go */
@@ -94,10 +98,19 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
 EXTERNFN PyObject *
 le_gen_make(PyFunctionObject *func);
 #endif
+/* A new frame object for a call running 'co' in 'globals', of the function
+   'func' where it is known (NULL: not known). Where frames are
+   interpreter frames, one with the function owns its frame, as
+   PyFrame_New's does, and is all that is made, as CPython's frame for the
+   call holds its function; one without holds a function of its own, which
+   PyFrame_New makes. NULL with an exception. */
+EXTERNFN PyFrameObject *
+le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
+               PyFunctionObject *func);
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
-le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
-               PyObject *globals); /* pyruntime.c */
+le_pyframe_new_by_cpython(PyThreadState *ts, PyCodeObject *co,
+                          PyObject *globals); /* pyruntime.c */
 /* a frame's place, as CPython gives it, while the instruction at 'pos'
    in its code 'co' calls: the instruction's last unit, past its caches */
 EXTERNFN int
@@ -170,6 +183,10 @@ struct stack_frame_info_s {
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
+    /* the frame's function, where the code making the call knows it as it
+       compiles (a constant its owner holds), else NULL: the frame object
+       made for the frame holds it (le_pyframe_new) */
+    PyFunctionObject *func;
     /* this call runs a generator's body on the generator's own frame,
        whose address is the word above the callee's own slot
        (psyfunc.c:psyco_gen_step) */

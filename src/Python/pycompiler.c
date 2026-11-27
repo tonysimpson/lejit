@@ -1102,14 +1102,14 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
     /* The real frame if the code has one (run by LeCode_Run), the one asked
        for, or the one that stood for the call when it caught an exception
        (its catcher word's, 'word'), so that the call's entries share one
-       frame, as CPython's do. Otherwise a minimalistic frame object,
-       working around the specific expectations of PyFrame_New(), which is
-       the only reasonable way to create frame objects (because of free
-       lists etc). Its f_back is the entry's over it
-       (psyco_frame_link_callee), or for the frame that catches the
-       exception its caller, when read (frames.c:catcher_caller). */
+       frame, as CPython's do. Otherwise a new one, holding the frame's
+       function where LeJIT knows it (le_pyframe_new). Its f_back is the
+       entry's over it (psyco_frame_link_callee), or for the frame that
+       catches the exception its caller, when read
+       (frames.c:catcher_caller). */
     PyFrameObject *result = existing_frame(code, word);
     le_frame_t *back = le_frame_current(tstate);
+    PyFunctionObject *func;
     if (result != NULL) {
         Py_INCREF(result);
         set_frame_place(result, lasti, lineno);
@@ -1117,8 +1117,9 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
     }
     /* frame objects are not created in stack order with Psyco, so it's
        probably better not to create plain wrong chained lists */
+    func = psyco_innermost_function(code);
     le_frame_set_current(tstate, NULL);
-    result = le_pyframe_new(tstate, code, globals);
+    result = le_pyframe_new(tstate, code, globals, func);
     le_frame_set_current(tstate, back);
     if (result != NULL) {
         /* a frame reused from the code's free one may hold a note */
@@ -10176,8 +10177,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             /* po->pr.val->array contains the new sub-frame that we
                should now start to compile, inlined into the parent frame */
             extra_assert(!po->pr.is_inlining);
-            /* store po->vlocals away */
-            v = psyco_save_inline_po(po);
+            /* store po->vlocals away, with the inlined frame's function */
+            v = psyco_save_inline_po(
+                po, po->pr.val->array->items[LOC_INLINE_FUNC]);
+            po->pr.val->array->items[LOC_INLINE_FUNC] = NULL;
             /* copy po->pr.val->array to po->vlocals */
             po = psyco_restore_inline_po(po, &po->pr.val->array);
             stack_a = po->vlocals.items + po->pr.stack_base;

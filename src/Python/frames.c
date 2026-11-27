@@ -114,6 +114,16 @@ inline_parent_lasti(PsycoObject *po)
             ->value);
 }
 
+/* the function of the frame inlined in 'po', where the call knows it */
+static PyFunctionObject *
+inlined_function(PsycoObject *po)
+{
+    vinfo_t *v = po->vlocals.items[INDEX_LOC_INLINING];
+    return (PyFunctionObject *)CompileTime_Get(
+               v->array->items[LOC_INLINE_FUNC]->source)
+        ->value;
+}
+
 /* the entry after a record's first for the inlined frame 'caller' runs
    in, which made the call */
 static void
@@ -121,6 +131,7 @@ finfo_inlined_caller(stack_frame_info_t *p, PsycoObject *caller)
 {
     Source sglobals = caller->vlocals.items[INDEX_LOC_GLOBALS]->source;
     p->co = caller->pr.co;
+    p->func = inlined_function(caller);
     p->nargs = -1;
     p->own_lasti = -1;
     p->back_lasti = inline_parent_lasti(caller);
@@ -158,6 +169,8 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
         p->globals = NULL; /* uncommon */
     if (inlining)
         finfo_inlined_caller(p + 1, caller);
+    else if (caller == NULL && callee->pr.is_inlining)
+        p->func = inlined_function(callee);
     return p;
 }
 
@@ -966,8 +979,53 @@ fill_noted_locals(PyFrameObject *f)
     locals_from_slot(f, slot, own);
 }
 
+#if LE_HAS_INTERPRETER_FRAME
+/* a frame object owning its frame, placed at its first traceable
+   instruction, as PyFrame_New's */
+static PyFrameObject *
+frame_object_of_call(PyCodeObject *co, PyFunctionObject *func)
+{
+    PyFrameObject *f = PyObject_GC_NewVar(
+        PyFrameObject, &PyFrame_Type, co->co_nlocalsplus + co->co_stacksize);
+    if (f == NULL)
+        return NULL;
+    /* every field before its frame is NULL or 0, but f_trace_lines: the
+       first, f_back, holds the size PyObject_GC_NewVar wrote, as the frame
+       object's header has none */
+    memset((char *)f + sizeof(PyObject), 0,
+           offsetof(PyFrameObject, _f_frame_data) - sizeof(PyObject));
+    f->f_trace_lines = 1;
+    f->f_frame = (le_frame_t *)f->_f_frame_data;
+    le_frame_init(f->f_frame, co, func, co->_co_firsttraceable,
+                  FRAME_OWNED_BY_FRAME_OBJECT);
+    PyObject_GC_Track(f);
+    return f;
+}
+#endif
+
+#if ALL_CHECKS
+long le_stat_frame_objects = 0;
+#endif
+
+DEFINEFN PyFrameObject *
+le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
+               PyFunctionObject *func)
+{
+#if ALL_CHECKS
+    le_stat_frame_objects++;
+#endif
+#if LE_HAS_INTERPRETER_FRAME
+    if (func != NULL)
+        return frame_object_of_call(co, func);
+#else
+    (void)func;
+#endif
+    return le_pyframe_new_by_cpython(ts, co, globals);
+}
+
 PSY_INLINE PyFrameObject *
-psyco_build_pyframe(PyObject *co, PyObject *globals, PyThreadState *tstate)
+psyco_build_pyframe(PyObject *co, PyObject *globals, PyFunctionObject *func,
+                    PyThreadState *tstate)
 {
     le_frame_t *back;
     PyFrameObject *result;
@@ -977,7 +1035,7 @@ psyco_build_pyframe(PyObject *co, PyObject *globals, PyThreadState *tstate)
        create plain wrong chained lists */
     back = le_frame_current(tstate);
     le_frame_set_current(tstate, NULL);
-    result = le_pyframe_new(tstate, (PyCodeObject *)co, globals);
+    result = le_pyframe_new(tstate, (PyCodeObject *)co, globals, func);
     if (result == NULL)
         OUT_OF_MEMORY();
     le_frame_set_lasti(le_frame_of(result), -1);
@@ -1632,7 +1690,8 @@ catcher_take(stack_frame_info_t **own, PyCodeObject *co);
    none. The frame, a new reference, or NULL. */
 static PyFrameObject *
 keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
-           code_t **ret, PyObject *co, PyObject *globals, int lasti)
+           code_t **ret, PyObject *co, PyObject *globals,
+           PyFunctionObject *func, int lasti)
 {
     activation_t *a = act_find(own);
     PyFrameObject *f;
@@ -1656,7 +1715,7 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     if (f != NULL)
         Py_INCREF(f);
     else
-        f = psyco_build_pyframe(co, globals, PyThreadState_GET());
+        f = psyco_build_pyframe(co, globals, func, PyThreadState_GET());
     le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
     /* running, as CPython's: frame.clear() refuses it */
     le_pyframe_set_executing(f, 1);
@@ -1685,6 +1744,15 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     return f;
 }
 
+/* the function of the compiled frame of 'tag' (kept_frame) where its
+   record knows it, else NULL */
+static PyFunctionObject *
+tag_function(long tag)
+{
+    long entry = (-tag) & (sizeof(long) - 1);
+    return (*(stack_frame_info_t **)(tag + entry))[entry].func;
+}
+
 /* 'tag' is the slot holding the frame's record, less one per inlined
    frame before it (pvisitframes) */
 static PyFrameObject *
@@ -1702,7 +1770,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         return keep_frame(
             own, slot, 0,
             act_find(own) != NULL ? NULL : return_address(own, rec), co,
-            globals, lasti);
+            globals, rec->func, lasti);
     }
     if ((entry == 1 && rec->nargs >= 0 && finfo_last(rec) == rec + 1 &&
          (rec + 1)->co == (PyCodeObject *)co) ||
@@ -1710,7 +1778,8 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
          rec->co == (PyCodeObject *)co))
         /* an inlined frame, in the compiled call it makes or in its own
            record: its parent's slot is the one holding them */
-        return keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals, lasti);
+        return keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals,
+                          rec[entry].func, lasti);
     return NULL;
 }
 
@@ -2034,6 +2103,18 @@ psyco_innermost_activation(PyCodeObject *co)
     return a->frame;
 }
 
+DEFINEFN
+PyFunctionObject *
+psyco_innermost_function(PyCodeObject *co)
+{
+    le_frame_t *real;
+    stack_frame_info_t **slot = innermost_slot(&real);
+    if (slot != NULL)
+        return (*slot)->co == co ? (*slot)->func : NULL;
+    return real != NULL && le_frame_code(real) == co ? le_frame_function(real)
+                                                     : NULL;
+}
+
 /* A frame object for a frame pvisitframes visits: a real frame, or a new
    emulated frame for a compiled one. New reference. */
 static PyFrameObject *
@@ -2056,7 +2137,8 @@ emulate_frame(const visited_frame_t *v)
         extra_assert(globals != NULL);
         if ((result = kept_frame(tag, co, globals, lasti)) != NULL)
             return result;
-        result = psyco_build_pyframe(co, globals, PyThreadState_GET());
+        result = psyco_build_pyframe(co, globals, tag_function(tag),
+                                     PyThreadState_GET());
         le_frame_set_lasti(le_frame_of(result), le_lasti_of(lasti));
         if (((PyCodeObject *)co)->co_stacksize >= 2) {
             le_pyframe_stack(result)[0] = LOCALS_NOTE;
@@ -3600,9 +3682,9 @@ root_copy(PyFrameObject *f)
     bool found;
     if (fr->psy_code != le_pyframe_code(f))
         return f;
-    c = psyco_build_pyframe((PyObject *)le_pyframe_code(f),
-                            le_frame_globals(le_frame_of(f)),
-                            PyThreadState_GET());
+    c = psyco_build_pyframe(
+        (PyObject *)le_pyframe_code(f), le_frame_globals(le_frame_of(f)),
+        le_frame_function(le_frame_of(f)), PyThreadState_GET());
     if (!slot_locals(*fr->psy_frames_start, le_pyframe_code(f),
                      le_frame_args(le_frame_of(c)), 0)) {
         Py_DECREF(c);
@@ -5087,7 +5169,10 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     else if (frameless)
         st->f = NULL; /* the caller makes the frame it needs */
     else {
-        st->f = le_pyframe_new(PyThreadState_GET(), co, globals);
+        st->f = le_pyframe_new(PyThreadState_GET(), co, globals,
+                               st->slot != NULL && (*st->slot)->co == co
+                                   ? (*st->slot)->func
+                                   : NULL);
         if (st->f == NULL) {
             Py_XDECREF(c);
             PyMem_Free(st);

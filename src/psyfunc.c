@@ -531,7 +531,7 @@ psyco_build_frame(PsycoObject *caller, struct fncall_arg_s *fncall,
 
 static vinfo_t *
 call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
-                       int recursion)
+                       vinfo_t *vfunc, int recursion)
 {
     /* note: 'recursion' is ignored */
     vinfo_t *vresult;
@@ -548,6 +548,12 @@ call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
         v->array = array_new(TOTAL_LOC_INLINE + fncall->po_size);
         v->array->items[LOC_INLINE_CO] = vinfo_new(
             CompileTime_New((long)fncall->co)); /* borrowed, as above */
+        /* borrowed: the constant the call knows it by holds it */
+        v->array->items[LOC_INLINE_FUNC] = vinfo_new(CompileTime_NewSk(
+            sk_new(vfunc != NULL && is_compiletime(vfunc->source)
+                       ? CompileTime_Get(vfunc->source)->value
+                       : 0,
+                   SkFlagFixed)));
         fncall_store_arguments(fncall, v->array->items + TOTAL_LOC_INLINE);
         array_release(fncall->inputvinfos);
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EInline)), v);
@@ -559,7 +565,7 @@ call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
 
 DEFINEFN
 vinfo_t *
-psyco_save_inline_po(PsycoObject *po)
+psyco_save_inline_po(PsycoObject *po, vinfo_t *func)
 {
     le_code_extra_t *x;
     int i = po->vlocals.count;
@@ -581,6 +587,7 @@ psyco_save_inline_po(PsycoObject *po)
     psyco_assert(x != NULL); /* made with the merge points */
     v->array->items[LOC_INLINE_SERIAL] =
         vinfo_new(CompileTime_NewSk(sk_new(x->serial, SkFlagFixed)));
+    v->array->items[LOC_INLINE_FUNC] = func;
     while (i--) {
         v->array->items[TOTAL_LOC_INLINE + i] = pp[i];
         pp[i] = NULL;
@@ -636,6 +643,7 @@ psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
     po->pr.next_instr = v ? CompileTime_Get(v->source)->value : 0;
     vinfo_xdecref(v, NULL);
     vinfo_xdecref(array->items[LOC_INLINE_SERIAL], NULL);
+    vinfo_xdecref(array->items[LOC_INLINE_FUNC], NULL);
     array_release(array);
 
     pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));
@@ -1324,7 +1332,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         /* inlining call: blocks compiled in the inlined frame are listed at
            the callee's join points until this owner dies (codemanager.c) */
         psyco_owner_pin((PyObject *)co);
-        result = call_with_inline_frame(po, &fncall, recursion);
+        result = call_with_inline_frame(po, &fncall, vfunc, recursion);
     }
     else {
         /* non-inlining call: the callee's entry compares the arguments' known
@@ -1337,6 +1345,9 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         }
         argcount = get_arguments_count(&mypo->vlocals);
         finfo = psyco_finfo(po, mypo);
+        if (vfunc != NULL && is_compiletime(vfunc->source))
+            finfo->func =
+                (PyFunctionObject *)CompileTime_Get(vfunc->source)->value;
 
         /* compile the function (this frees mypo) */
         codebuf = compile_callee(mypo, co);
@@ -1489,6 +1500,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
         else {
             argcount = get_arguments_count(&mypo->vlocals);
             finfo = psyco_finfo(po, mypo);
+            if (is_compiletime(vfunc->source))
+                finfo->func =
+                    (PyFunctionObject *)CompileTime_Get(vfunc->source)->value;
             if (mode == GENEXPR_DIRECT)
                 finfo->coro_func =
                     (PyFunctionObject *)CompileTime_Get(vfunc->source)->value;

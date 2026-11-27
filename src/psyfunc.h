@@ -91,7 +91,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
 
 /* for pycompiler.c */
 EXTERNFN vinfo_t *
-psyco_save_inline_po(PsycoObject *po);
+psyco_save_inline_po(PsycoObject *po, vinfo_t *func);
 EXTERNFN PsycoObject *
 psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a);
 

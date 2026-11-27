@@ -44,12 +44,14 @@
 #define INDEX_LOC_LOCALS_PLUS 4 /* start of local variables + stack */
 
 /* LOC_INLINING's array, while a frame is inlined: the parent's code
-   object, position and code serial (psyfunc.c:psyco_save_inline_po), then
+   object, position and code serial (psyfunc.c:psyco_save_inline_po), the
+   inlined frame's function where the call knows it (0 where not), then
    the parent's vlocals */
 #define LOC_INLINE_CO 0
 #define LOC_INLINE_NEXT_INSTR 1
 #define LOC_INLINE_SERIAL 2
-#define TOTAL_LOC_INLINE 3
+#define LOC_INLINE_FUNC 3
+#define TOTAL_LOC_INLINE 4
 
 /* A generator compiled into its consumer
    (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
