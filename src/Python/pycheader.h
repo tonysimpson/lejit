@@ -84,6 +84,9 @@
 #define GENEXPR_SUM_COMPLEX 11 /* acc the complex sum's state */
 #define GENEXPR_SUM_GENERIC 12 /* plain +, for good */
 #define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)
+/* the code whose body may run compiled on its own frame, with the slots
+   above (psyco_generator_mode) */
+#define LE_BODY_FLAGS (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)
 #define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + le_code_nlocalsplus(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
 #define GENEXPR_SLOT_COMP(co) (GENEXPR_SLOT_MODE(co) + 2)
@@ -118,10 +121,20 @@ typedef struct {
                              what may be a frame-locals proxy */
     char resume_pending;  /* test for tracing at the next instruction: after
                              an inlined frame's return, or at a handler */
-    char go_interpreted;  /* the frame goes on in ceval from the next
-                             instruction: a type-promotion site's
-                             megamorphic version (Psyco_NeedType) */
-    int call_site;        /* 1 + the CALL_* instruction being compiled, or 0 */
+    char inline_ran_python; /* the inlined frame made a call that may run
+                               Python, which may have written its caller's
+                               locals through a proxy */
+    char inline_left;       /* an inlined frame that ran Python returned: the
+                               instruction that called it lets its kept frame
+                               go (pycompiler.c:let_inline_frame_go) */
+    char go_interpreted;    /* the frame goes on in ceval from the next
+                               instruction: a type-promotion site's
+                               megamorphic version (Psyco_NeedType) */
+    char ex_call;           /* the call being compiled is an f(*a, **kw)
+                               call of a Python function, whose frame is
+                               counted without the recursion limit's test
+                               (psyfunc.c:psyco_call_pyfunc) */
+    int call_site; /* 1 + the CALL_* instruction being compiled, or 0 */
     struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                          which gives it its return address */
     PyObject *changing_globals; /* names of globals detected to change: saved

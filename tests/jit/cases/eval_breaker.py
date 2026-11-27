@@ -2,8 +2,8 @@
 # and on entry from the interpreter: other threads get the
 # GIL, signal handlers run and async exceptions arrive while a compiled loop
 # spins. Without the test these loops never end (the harness's timeout).
-import ctypes, functools, itertools, operator, os, signal, sys, threading, \
-    time, zlib
+import _thread, ctypes, functools, itertools, operator, os, signal, sys, \
+    threading, time, zlib
 
 
 class Box:
@@ -176,6 +176,50 @@ def signal_in_c_loop():
         signal.signal(signal.SIGALRM, old)
 
 
+class _InterruptingManager:
+    # a C call that marks SIGINT as arrived and handles nothing itself
+    __enter__ = staticmethod(functools.partial(_thread.interrupt_main))
+
+    def __init__(self, box):
+        self.box = box
+
+    def __exit__(self, *exc):
+        self.box.exited = exc[0].__name__ if exc[0] else 'no exception'
+
+
+def _loop_in_with(box):
+    try:
+        with _InterruptingManager(box):
+            # a loop, tested at its backward jump as in ceval (an inlined
+            # call is tested at no entry)
+            while box.n < 1000:
+                box.n += 1
+    except KeyboardInterrupt:
+        return 'interrupted'
+    return 'not interrupted'
+
+
+# an interrupt during __enter__: where ceval tests no eval_breaker after
+# its call, the KeyboardInterrupt is raised inside the with block, and
+# __exit__ sees it; elsewhere it is raised as the call ends, before the
+# block, and __exit__ isn't called. Raised at the loop's backward jump, it
+# is caught where ceval's exception table catches it: where ceval tests
+# after jumping, the jump itself may be in no handler's range; where it
+# tests before, the exception leaves the frame from such a jump
+def interrupt_in_enter():
+    old = signal.signal(signal.SIGINT, signal.default_int_handler)
+    box = Box()
+    box.n = 0
+    box.exited = 'not called'
+    try:
+        try:
+            return (_loop_in_with(box), box.exited)
+        except KeyboardInterrupt:
+            return ('left the frame', box.exited)
+    finally:
+        signal.signal(signal.SIGINT, old)
+
+
 _DATA = bytes(64 << 20)
 
 
@@ -343,11 +387,11 @@ def _raise_from_handler(n):
         raise
 
 
-def _interrupted(f, *args):
+def _interrupted(f, *args, after=0.002):
     old = signal.signal(signal.SIGALRM, signal.default_int_handler)
     try:
         try:
-            signal.setitimer(signal.ITIMER_REAL, 0.002)
+            signal.setitimer(signal.ITIMER_REAL, after)
             f(*args)
         except KeyboardInterrupt:
             return 'interrupted'
@@ -364,9 +408,12 @@ def signal_in_direct_recursion():
     return _interrupted(_tree, 60)
 
 
-# the same where every call raises, from a handler
+# the same where every call raises, from a handler. The signal lands at the
+# entry check of each of the two calls only now and then, as rarely as one
+# round in a thousand, and the first time it does compiles that check's
+# branch: the case warms up for thousands of rounds, so its timer is short
 def signal_in_recursion_from_handler():
-    return _interrupted(_raise_from_handler, 60)
+    return _interrupted(_raise_from_handler, 60, after=0.0002)
 
 
 CASES = [
@@ -378,6 +425,7 @@ CASES = [
     ('keyboard_interrupt', [()], {}),
     ('keyboard_interrupt_from_timer', [()], {}),
     ('signal_at_entry', [()], {}),
+    ('interrupt_in_enter', [()], {}),
     ('signal_in_c_loop', [()], {}),
     ('signal_in_c_call_from_c_loop', [()], {}),
     ('keyboard_interrupt_inlined_body', [()], {}),
@@ -386,5 +434,7 @@ CASES = [
     ('switch_interval', [()], {}),
     ('pending_call_reads_lines_at_entry', [()], {}),
     ('signal_in_direct_recursion', [()], {}),
-    ('signal_in_recursion_from_handler', [()], {}),
+    ('signal_in_recursion_from_handler', [()],
+     {'warmup': (5000, 'a call\'s entry check compiles its branch the first '
+                       'time the signal lands there')}),
 ]

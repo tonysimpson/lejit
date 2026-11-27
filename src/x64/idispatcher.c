@@ -313,6 +313,7 @@ psyco_unify(PsycoObject *po, vcompatible_t *lastmatch,
     extra_assert(lastmatch->diff ==
                  NullArray); /* unify with exact match only */
     psyco_assert_coherent(po);
+    extra_assert(!psyco_xmm_live(po)); /* snapshots hold no XMM register */
     dm.usages_size = sdepth + sizeof(vinfo_t **);
     dm.usages = (char *)PyMem_MALLOC(dm.usages_size);
     if (dm.usages == NULL)

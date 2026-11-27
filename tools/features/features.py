@@ -395,6 +395,25 @@ def audit_hooks(s):
     return _exported(s, 'PySys_Audit')
 
 
+def ctypes_call_audited(s):
+    """a call of a ctypes function raises the audit event
+    ctypes.call_function"""
+    # the body's braces are split by #if branches, so only its start is
+    # read: the audit comes before anything else
+    path = 'Modules/_ctypes/callproc.c'
+    toks = s.tokens(path)
+    if toks is None:
+        raise Unanswered('no %s' % path)
+    for i, t in enumerate(toks[:-1]):
+        if t.text != '_ctypes_callproc' or toks[i + 1].text != '(':
+            continue
+        close = ctokens.match_close(toks, i + 1)
+        if close + 1 < len(toks) and toks[close + 1].text == '{':
+            start = _texts(toks[close + 2:close + 120])
+            return '"ctypes.call_function"' in start, path + ':_ctypes_callproc'
+    raise Unanswered('no _ctypes_callproc in %s' % path)
+
+
 def arg_check_positional(s):
     """Argument Clinic's wrappers check positional counts with
     _PyArg_CheckPositional"""
@@ -678,10 +697,115 @@ def thread_local_tstate(s):
     return _not(_field(s, '_gilstate_runtime_state', 'tstate_current'))
 
 
+# the GIL's fields that Python/pyruntime.c:le_gil_release and le_gil_take
+# use, copying drop_gil and take_gil
+GIL_FIELDS = ('locked', 'last_holder', 'switch_number', 'mutex', 'cond',
+              'switch_mutex', 'switch_cond')
+
+
+def gil_per_interpreter(s):
+    """the GIL is the interpreter's (its ceval state's gil, a pointer), not
+    the runtime's (_PyRuntime.ceval.gil)"""
+    path, gil = s.struct('_gil_runtime_state')
+    if gil is None:
+        raise Unanswered('no struct _gil_runtime_state')
+    missing = [f for f in GIL_FIELDS if f not in gil]
+    if missing:
+        raise Unanswered('%s:_gil_runtime_state has no %s'
+                         % (path, ', '.join(missing)))
+    ipath, interp = s.struct('_ceval_state')
+    if interp is not None and '*' in interp.get('gil', ''):
+        return True, '%s:_ceval_state.gil' % ipath
+    rpath, runtime = s.struct('_ceval_runtime_state')
+    if runtime is not None and 'gil' in runtime:
+        return False, '%s:_ceval_runtime_state.gil' % rpath
+    raise Unanswered('the GIL is neither _ceval_state.gil (a pointer) nor'
+                     ' _ceval_runtime_state.gil')
+
+
+
+def get_finalizing(s):
+    """_PyRuntimeState_GetFinalizing reads the runtime's finalising thread
+    (else it is _PyRuntime.finalizing)"""
+    return _declared(s, '_PyRuntimeState_GetFinalizing')
+
+
+def interp_get_finalizing(s):
+    """an interpreter has a finalising thread of its own, read with
+    _PyInterpreterState_GetFinalizing"""
+    return _declared(s, '_PyInterpreterState_GetFinalizing')
+
+def _struct_texts(s, tag):
+    """(path, token texts) of the body of `struct tag {...}`, nested
+    structs' fields included, or (None, None)"""
+    for path, toks in s.headers_with(tag):
+        for i in range(len(toks) - 2):
+            if (toks[i].text == 'struct' and toks[i + 1].text == tag
+                    and toks[i + 2].text == '{'):
+                end = ctokens.match_close(toks, i + 2)
+                return path, _texts(toks[i + 3:end])
+    return None, None
+
+
+def tstate_status(s):
+    """a thread state's _status bits say whether it is active and bound
+    to its thread's gilstate (active, bound_gilstate)"""
+    path, texts = _struct_texts(s, '_ts')
+    if texts is None:
+        raise Unanswered('no struct _ts')
+    has = [_has_run(texts, [f, ':', '1']) for f in ('active', 'bound_gilstate')]
+    if has[0] != has[1]:
+        raise Unanswered('%s:_ts has only one of the bits active and'
+                         ' bound_gilstate' % path)
+    return has[0], '%s:_ts._status.active' % path
+
+
+def tstate_attach(s):
+    """a thread state is attached or detached (_ts.state), and keeps the
+    critical sections it holds (_ts.critical_section)"""
+    path, ts = s.struct('_ts')
+    if ts is None:
+        raise Unanswered('no struct _ts')
+    if ('state' in ts) != ('critical_section' in ts):
+        raise Unanswered('%s:_ts has only one of state and critical_section'
+                         % path)
+    return 'state' in ts, '%s:_ts.state' % path
+
+
+
+def tstate_holds_gil(s):
+    """a thread state says whether it holds the GIL in a field of its own,
+    holds_gil (else in its _status bits)"""
+    return _field(s, '_ts', 'holds_gil')
+
+
+def tstate_gil_requested(s):
+    """a thread state says whether it is waiting for the GIL
+    (gil_requested)"""
+    return _field(s, '_ts', 'gil_requested')
+
 def py_recursion_remaining(s):
     """a thread counts down the Python calls it may still make in
     py_recursion_remaining, apart from the C calls"""
     return _field(s, '_ts', 'py_recursion_remaining')
+
+
+def ex_call_skips_recursion_test(s):
+    """ceval's specialised f(*a, **kw) call of a Python function
+    (CALL_EX_PY) counts the frame it pushes in py_recursion_remaining
+    without testing the count, so recursion through such calls passes the
+    limit"""
+    path, case = _case_file(s, 'CALL_EX_PY')
+    if case is None:
+        return False, '%s: no TARGET(CALL_EX_PY)' % ', '.join(CASE_FILES)
+    where = '%s:TARGET(CALL_EX_PY)' % path
+    counts = _has_run(case, ['py_recursion_remaining', '--'])
+    tests = [i for i, t in enumerate(case[:-1]) if t == 'py_recursion_remaining'
+             and case[i + 1] in ('<', '<=', '>', '>=', '==')]
+    if not counts:
+        raise Unanswered('%s: no py_recursion_remaining--' % where)
+    return not tests and not _has_run(case, ['DISPATCH_INLINED']) and \
+        not _has_run(case, ['_Py_EnterRecursivePy']), where
 
 
 def current_exception(s):
@@ -694,6 +818,31 @@ def eval_breaker_gc(s):
     """the eval breaker also runs the cyclic GC (the interpreter's
     ceval.gc_scheduled), in _Py_HandlePending"""
     return _field(s, '_ceval_state', 'gc_scheduled', missing=False)
+
+
+def breaker_after_back_jump(s):
+    """ceval's JUMP_BACKWARD jumps before it tests eval_breaker, so an
+    exception the test raises is looked up in the exception table at the
+    code unit before the loop head, not at the jump"""
+    path, case = _case_file(s, 'JUMP_BACKWARD')
+    if case is None:
+        return False, '%s: no TARGET(JUMP_BACKWARD)' % ', '.join(CASE_FILES)
+    where = '%s:TARGET(JUMP_BACKWARD)' % path
+    # where the case goes on in a quickened one (JUMP_TO_INSTRUCTION)
+    at = _run_at(case, ['JUMP_TO_INSTRUCTION', '('])
+    if at is not None:
+        quick = case[at + 2]
+        path, case = _case_file(s, quick)
+        if case is None:
+            raise Unanswered('no TARGET(%s)' % quick)
+        where = '%s:TARGET(%s)' % (path, quick)
+    jump = _run_at(case, ['JUMPBY'])
+    tests = [i for i in (_run_at(case, [name]) for name in
+                         ('CHECK_EVAL_BREAKER', '_Py_HandlePending',
+                          'check_periodics')) if i is not None]
+    if jump is None or not tests:
+        raise Unanswered('%s: no JUMPBY or eval_breaker test' % where)
+    return jump < min(tests), where
 
 
 def eval_frame_pops(s):
@@ -749,31 +898,85 @@ def frame_funcobj(s):
     return _field(s, '_PyInterpreterFrame', 'f_funcobj', missing=False)
 
 
+def common_consts_stackrefs(s):
+    """the interpreter holds LOAD_COMMON_CONSTANT's objects
+    (common_consts) as _PyStackRefs, not object pointers"""
+    for path, toks in s.headers_with('common_consts'):
+        texts = _texts(toks)
+        if _has_run(texts, ['_PyStackRef', 'common_consts', '[']):
+            return True, '%s: _PyStackRef common_consts' % path
+        if _has_run(texts, ['PyObject', '*', 'common_consts', '[']):
+            return False, '%s: PyObject *common_consts' % path
+    return False, 'Include, every header: no common_consts'
+
+
 def c_stack_soft_limit(s):
     """a thread's C calls are checked by its stack pointer alone, against
-    c_stack_soft_limit: Py_EnterRecursiveCall's test fails only below it,
-    and Py_LeaveRecursiveCall does nothing"""
+    c_stack_soft_limit: the one test _Py_EnterRecursiveCallTstate calls
+    reads it and fails only below it, and Py_LeaveRecursiveCall does
+    nothing"""
     has, where = _field(s, '_PyThreadStateImpl', 'c_stack_soft_limit',
                         missing=False)
     if not has:
         return False, where
-    for name, empty in (('_Py_MakeRecCheck', False),
-                        ('_Py_LeaveRecursiveCall', True)):
-        defs = s.definitions(name)
-        if not defs:
-            raise Unanswered('Include, every header: no %s' % name)
-        for path, body in defs:
-            texts = _texts(body)
-            if (not texts) != empty or \
-                    not empty and 'c_stack_soft_limit' not in texts:
-                return False, '%s:%s' % (path, name)
-    return True, where + ', _Py_MakeRecCheck, _Py_LeaveRecursiveCall'
+    enters = s.definitions('_Py_EnterRecursiveCallTstate')
+    if not enters:
+        raise Unanswered('Include, every header: no '
+                         '_Py_EnterRecursiveCallTstate')
+    for path, body in enters:
+        texts = _texts(body)
+        tests = [name for k, name in enumerate(texts[:-1])
+                 if texts[k + 1] == '(' and
+                 any('c_stack_soft_limit' in _texts(test)
+                     for _, test in s.definitions(name))]
+        if len(tests) != 1:
+            return False, '%s:_Py_EnterRecursiveCallTstate' % path
+    leaves = s.definitions('_Py_LeaveRecursiveCall')
+    if not leaves:
+        raise Unanswered('Include, every header: no _Py_LeaveRecursiveCall')
+    for path, body in leaves:
+        if _texts(body):
+            return False, '%s:_Py_LeaveRecursiveCall' % path
+    return True, '%s, %s, _Py_LeaveRecursiveCall' % (where, tests[0])
 
 
 def c_recursion_remaining(s):
     """a thread counts down the C calls it may still make, in
     c_recursion_remaining, not only by its stack pointer"""
     return _field(s, '_ts', 'c_recursion_remaining')
+
+
+def gen_new_around_frame(s):
+    """PyGen_NewWithQualName, PyCoro_New and PyAsyncGen_New make a
+    generator around a frame object: a header outside internal/ declares
+    each"""
+    where = []
+    for name in ('PyGen_NewWithQualName', 'PyCoro_New', 'PyAsyncGen_New'):
+        has, path = _public(s, name)
+        if not has:
+            return False, path
+        where.append(path)
+    return True, ', '.join(where)
+
+
+def gen_keeps_code(s):
+    """a generator keeps its frame's code once the frame is cleared, for
+    gi_code and its dealloc: a header declares _PyFrame_ClearExceptCode"""
+    for path, toks in s.headers_with('_PyFrame_ClearExceptCode'):
+        if any(t.text == '_PyFrame_ClearExceptCode' for t in toks):
+            return True, '%s:_PyFrame_ClearExceptCode' % path
+    return False, 'every header: _PyFrame_ClearExceptCode'
+
+
+def gen_code_field(s):
+    """a generator holds its code in a field of its own (gi_code in
+    _PyGenObject_HEAD), not only in its frame"""
+    for path in s.headers:
+        with open(os.path.join(s.src, path), encoding='latin-1') as f:
+            text = ''.join(f.read().split())
+        if '#define_PyGenObject_HEAD(prefix)' in text:
+            return 'prefix##_code;' in text, '%s:_PyGenObject_HEAD' % path
+    return False, 'every header: _PyGenObject_HEAD'
 
 
 def frame_stackrefs(s):
@@ -1054,12 +1257,16 @@ def unpack_keeps_attribute_error(s):
 
 
 def delete_global_keyerror_only(s):
-    """DELETE_GLOBAL raises NameError only for a KeyError"""
-    found, evidence = _case_has(s, 'DELETE_GLOBAL', 'PyExc_KeyError')
+    """`del` of a global raises NameError only for a KeyError"""
+    # `del` is DELETE_GLOBAL, or STORE_GLOBAL of a NULL where that is gone
+    op = 'DELETE_GLOBAL'
+    if _case_file(s, op)[1] is None:
+        op = 'STORE_GLOBAL'
+    found, evidence = _case_has(s, op, 'PyExc_KeyError')
     if found:
         return found, evidence
     # from 3.13 PyDict_Pop tells a missing name from an error
-    return _case_has(s, 'DELETE_GLOBAL', 'PyDict_Pop(GLOBALS(), name, NULL)')
+    return _case_has(s, op, 'PyDict_Pop(GLOBALS(), name, NULL)')
 
 
 def _instructions(s):
@@ -1124,9 +1331,10 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
            'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
            'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR', 'SEND',
-           # gone from 3.12: the unary plus, the interactive print, import *
-           # and LIST_TO_TUPLE are CALL_INTRINSIC_1's
+           # gone from 3.12: the unary plus, the interactive print, import *,
+           # LIST_TO_TUPLE and ASYNC_GEN_WRAP are CALL_INTRINSIC_1's
            'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR', 'LIST_TO_TUPLE',
+           'ASYNC_GEN_WRAP',
            'JUMP_IF_FALSE_OR_POP', 'JUMP_IF_TRUE_OR_POP',
            # new in 3.12
            'END_FOR', 'RETURN_CONST', 'LOAD_FAST_CHECK', 'LOAD_FAST_AND_CLEAR',
@@ -1148,7 +1356,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'LOAD_SMALL_INT', 'LOAD_COMMON_CONSTANT', 'NOT_TAKEN', 'POP_ITER',
            'LOAD_SPECIAL', 'BUILD_TEMPLATE', 'BUILD_INTERPOLATION',
            # gone from 3.15: yield from's is GET_ITER with an argument
-           'GET_YIELD_FROM_ITER')
+           'GET_YIELD_FROM_ITER',
+           # gone from 3.16: del is PUSH_NULL and the store
+           'DELETE_ATTR', 'DELETE_GLOBAL')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1328,6 +1538,27 @@ CE = 'Python/ceval.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
+def running_stack_hidden(s):
+    """ceval marks the frame it runs as holding no words (stacktop -1), so
+    the gc sees none of its locals and stack until it pauses or calls"""
+    for path in ('Python/ceval.c', 'Include/internal/pycore_frame.h'):
+        toks = s.tokens(path)
+        if toks is not None and _has_run(_texts(toks), _c('stacktop = -1')):
+            return True, path
+    return False, 'Python/ceval.c, Include/internal/pycore_frame.h: no stacktop = -1'
+
+
+def _sum_exact_numbers(s):
+    """builtin_sum_impl converts ints to doubles (PyLong_AsDouble) and tests
+    no item with PyLong_Check, only PyLong_CheckExact"""
+    found, evidence = _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
+                                'PyLong_AsDouble(item)', missing=False)
+    if not found:
+        return found, evidence
+    return _not(_body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
+                          'PyLong_Check(item)'))
+
+
 def _sum_compensated(s):
     """builtin_sum_impl's float loop carries a compensation term: c += ... in
     its own loop, or a cs_add helper"""
@@ -1336,6 +1567,20 @@ def _sum_compensated(s):
         if found:
             return found, evidence
     return found, evidence
+
+
+def _finished_generator_unlinked(s):
+    """clear_gen_frame sets frame->previous to NULL before it clears the
+    frame (the two may have other statements between them)"""
+    body = s.body_of(s.tokens(CE) or [], 'clear_gen_frame')
+    if body is None:
+        return True, '%s: no clear_gen_frame' % CE
+    texts = _texts(body)
+    unlink = _run_at(texts, _c('frame->previous = NULL;'))
+    clear = _run_at(texts, _c('_PyFrame_ClearExceptCode(frame);'))
+    if clear is None:
+        raise Unanswered('%s:clear_gen_frame: no _PyFrame_ClearExceptCode(frame)' % CE)
+    return unlink is not None and unlink < clear, '%s:clear_gen_frame' % CE
 
 
 EXPORTS = [
@@ -1364,6 +1609,7 @@ def _export_detector(function):
 C_API = [
     ('PYDICT_NEWPRESIZED', pydict_newpresized),
     ('AUDIT_HOOKS', audit_hooks),
+    ('CTYPES_CALL_AUDITED', ctypes_call_audited),
     ('ARG_CHECK_POSITIONAL', arg_check_positional),
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
@@ -1416,6 +1662,15 @@ BYTECODE = [
                                    lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 1)'))),
     ('GET_ITER_INDEX', D('GET_ITER pushes the iterator then an index or NULL above it, which FOR_ITER reads and POP_ITER pops with it; SEND, END_SEND and CLEANUP_THROW have it between yield from\'s iterator and the value sent, as an await\'s PUSH_NULL leaves it',
                          lambda s: _case_has(s, 'GET_ITER', 'index_or_null'))),
+    ('RUNNING_STACK_HIDDEN', running_stack_hidden),
+    ('YIELD_VALUE_WRAPS', D('YIELD_VALUE in an async generator wraps the value it yields (_PyAsyncGenValueWrapperNew), which no instruction before it has',
+                            lambda s: _case_has(s, 'YIELD_VALUE', '_PyAsyncGenValueWrapperNew', missing=False))),
+    ('AWAITABLE_PUSHES_SEND_ARGS', D('GET_AWAITABLE pushes the NULL and the None that SEND reads above the iterator, which earlier code takes from PUSH_NULL and LOAD_CONST after it',
+                                     lambda s: _case_has(s, 'GET_AWAITABLE', 'PyStackRef_None', missing=False))),
+    ('ANEXT_PUSHES_SEND_ARGS', D('GET_ANEXT pushes the NULL and the None that SEND reads above the awaitable, which earlier code takes from PUSH_NULL and LOAD_CONST after it',
+                                 lambda s: _case_has(s, 'GET_ANEXT', 'PyStackRef_None', missing=False))),
+    ('TAGGED_LASTI', D('the lasti an exception handler is given, which RERAISE reads, is a tagged int on the frame\'s stack, not an int object',
+                       lambda s: _case_has(s, 'RERAISE', 'PyStackRef_UntagInt', missing=False))),
     ('CALL_EX_KWARGS_SLOT', D('CALL_FUNCTION_EX always has a slot for the keywords dict, NULL where the call has none',
                               lambda s: _case_has(s, 'CALL_FUNCTION_EX', 'kwargs_st = stack_pointer[-1]', missing=False))),
     ('BINARY_OP_SUBSCR', D('a subscript is BINARY_OP with NB_SUBSCR',
@@ -1428,7 +1683,11 @@ FRAMES = [
     ('FRAME_CLEARED_LAST_FIRST', D('a frame that ends releases its value stack and locals last to first (_PyFrame_ClearLocals), not first to last',
                                    lambda s: _body_has(s, 'Python/frame.c', '_PyFrame_ClearLocals', 'sp--', missing=False))),
     ('FINISHED_GENERATOR_UNLINKED', D('a generator\'s frame is cut from its caller before it is cleared (clear_gen_frame, or before it had one, each time it stops), so a generator that has ended or raised leaves no f_back',
-                                      lambda s: _body_has(s, CE, 'clear_gen_frame', 'frame->previous = NULL; _PyFrame_ClearExceptCode(frame);', missing=True))),
+                                      _finished_generator_unlinked)),
+    ('GEN_CLOSE_UNRUN', D('closing a generator paused at a yield in no try block of its body\'s own (RESUME_OPARG_DEPTH1_MASK) clears it without running it (gen_close)',
+                          lambda s: _body_has(s, 'Objects/genobject.c', 'gen_close', 'oparg & RESUME_OPARG_DEPTH1_MASK', missing=False))),
+    ('GEN_CLOSE_LOCALS_ONLY', D('that close releases only the frame\'s locals, and the rest of the frame when the generator goes (gen_close: _PyFrame_ClearLocals)',
+                                lambda s: _body_has(s, 'Objects/genobject.c', 'gen_close', '_PyFrame_ClearLocals', missing=False))),
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
@@ -1438,6 +1697,9 @@ FRAMES = [
                                lambda s: _file(s, 'Include/internal/pycore_interpframe.h'))),
     ('FRAME_STACKREFS', frame_stackrefs),
     ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
+    ('GEN_NEW_AROUND_FRAME', gen_new_around_frame),
+    ('GEN_KEEPS_CODE', gen_keeps_code),
+    ('GEN_CODE_FIELD', gen_code_field),
     ('GETFRAME_AUDITS_RESULT', D('sys._getframe\'s audit event names the frame it returns, after the walk (none when the stack is too shallow), not the current frame before it',
                                  lambda s: _body_has(s, 'Python/sysmodule.c', 'sys__getframe_impl', '"sys._getframe", "(O)", pyFrame', missing=False))),
 ]
@@ -1457,6 +1719,13 @@ STATE = [
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',
                           lambda s: _file(s, 'Include/internal/pycore_interp.h'))),
     ('EVAL_HOOK_TSTATE', eval_hook_tstate),
+    ('GIL_PER_INTERPRETER', gil_per_interpreter),
+    ('GET_FINALIZING', get_finalizing),
+    ('INTERP_GET_FINALIZING', interp_get_finalizing),
+    ('TSTATE_STATUS', tstate_status),
+    ('TSTATE_ATTACH', tstate_attach),
+    ('TSTATE_HOLDS_GIL', tstate_holds_gil),
+    ('TSTATE_GIL_REQUESTED', tstate_gil_requested),
     ('GENERATOR_RETURN_KIND', generator_return_kind),
     ('LAST_PROFILED_FRAME', last_profiled_frame),
     ('SIGNALS_PENDING', signals_pending),
@@ -1472,14 +1741,17 @@ STATE = [
     ('INTERP_MONITORING_VERSION', interp_monitoring_version),
     ('THREAD_LOCAL_TSTATE', thread_local_tstate),
     ('PY_RECURSION_REMAINING', py_recursion_remaining),
+    ('EX_CALL_SKIPS_RECURSION_TEST', ex_call_skips_recursion_test),
     ('C_RECURSION_REMAINING', c_recursion_remaining),
     ('C_STACK_SOFT_LIMIT', c_stack_soft_limit),
     ('CURRENT_EXCEPTION', current_exception),
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),
     ('FRAME_FUNCOBJ', frame_funcobj),
+    ('COMMON_CONSTS_STACKREFS', common_consts_stackrefs),
     ('FRAME_EXECUTABLE', frame_executable),
     ('FRAME_INSTR_PTR', frame_instr_ptr),
+    ('BREAKER_AFTER_BACK_JUMP', breaker_after_back_jump),
     ('TSTATE_CURRENT_FRAME', tstate_current_frame),
     ('TSTATE_EVAL_BREAKER', tstate_eval_breaker),
 ]
@@ -1530,6 +1802,8 @@ OBJECTS = [
     ('SUM_COMPLEX_COMPENSATED', D('sum() adds complex numbers with compensated summation of each part',
                                   lambda s: _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
                                                       'PyComplex_CheckExact(result)', missing=False))),
+    ('SUM_EXACT_NUMBERS', D('sum()\'s float loop adds ints with PyLong_AsDouble, and it and the complex loop take only exact ints and floats: a bool or a subclass leaves the loop, for the sum + item',
+                            _sum_exact_numbers)),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
@@ -1568,6 +1842,9 @@ CEVAL = [
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
     ('UNPACK_KEEPS_ATTRIBUTE_ERROR', unpack_keeps_attribute_error),
+    ('BREAKER_SKIPPED_AFTER_LOAD_SPECIAL', D('the eval_breaker test after a CALL is skipped where the code unit before the CALL is LOAD_SPECIAL (check_periodics_at_end), so an interrupt during __enter__ is raised inside the with block',
+                                             lambda s: _body_has(s, 'Python/ceval_macros.h', 'check_periodics_at_end',
+                                                                 'LOAD_SPECIAL', missing=False))),
     ('RAISE_CAUSE_CHECKED', D('raise ... from a class whose call doesn\'t make an exception is a TypeError (do_raise)',
                               lambda s: _first_body_has(s, [(CE, 'do_raise'), ('Python/ceval.h', 'do_raise')],
                                                         'PyExceptionInstance_Check(fixed_cause)'))),
@@ -1647,7 +1924,7 @@ def render(found, ops, version, origin):
 
 def target_version(python):
     """The version (sys.version) of the interpreter being built for."""
-    r = subprocess.run([python, '-I', '-c', 'import sys; print(sys.version.split()[0])'],
+    r = subprocess.run([python, '-I', '-S', '-c', 'import sys; print(sys.version.split()[0])'],
                        stdout=subprocess.PIPE, universal_newlines=True, timeout=60)
     if r.returncode != 0:
         raise FeatureError('cannot run %s' % python)

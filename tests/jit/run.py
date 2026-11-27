@@ -7,13 +7,15 @@ run doesn't.
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
-(no leak check), 'leaks_with_aslr': reason (no leak check when address-space
-randomisation can't be turned off: what it counts depends on addresses),
-'warmup': (rounds, reason), 'clear_type_cache': reason (the
-leak check empties CPython's type cache first; only where that keeps the
-types' version tags, as from 3.11), 'checked': reason (needs a checked build),
+(no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
+leak check empties CPython's type cache around the rounds, and runs the
+calls once more before them, as emptying it can make compiled code compile
+again),
+'checked': reason (needs a checked build),
 'expected': [result, ...] (LeJIT's results must be these, one per call, not
-plain CPython's: for a language rule some CPython gets wrong).
+plain CPython's: for a language rule some CPython gets wrong),
+'compiles_each_call': reason (the function makes and compiles new code on
+every call, so the leak check's rounds always compile and aren't repeated).
 
 --release tests a release build, which can't say what it compiled: results
 and leaks are checked, but not whether each function compiled, an 'xfail'
@@ -51,12 +53,13 @@ def kill_group(p):
 
 
 def run_child(modname, fname, calls, lejit_mode, warmup=9, env=None,
-              clear_type_cache=False):
+              clear_type_cache=False, compiles_each_call=False):
     if not isinstance(calls, str):
         calls = repr(calls)
     cmd = ASLR_OFF + [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
            modname, fname, calls, lejit_mode, str(warmup),
-           '1' if clear_type_cache else '0']
+           '1' if clear_type_cache else '0',
+           '1' if compiles_each_call else '0']
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
                          start_new_session=True)
     try:
@@ -98,8 +101,7 @@ def main():
         CASES = os.path.abspath(args[0])
     verbose = '-v' in args
     release = '--release' in args
-    aslr_off = aslr_off_works()
-    if not aslr_off:
+    if not aslr_off_works():
         print('address-space randomisation stays on: setarch -R is refused here')
         ASLR_OFF[:] = []
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
@@ -114,22 +116,27 @@ def main():
         # rounds can depend on the seed (a subinterpreter's, by tens of
         # blocks), more than the leak check allows between two seeds
         clear = 'clear_type_cache' in opts
+        fresh = 'compiles_each_call' in opts
         env = dict(os.environ)
         env.setdefault('PYTHONHASHSEED', str(random.randrange(4294967296)))
-        expected, ref_err = run_child(modname, fname, calls, '0', warmup, env, clear)
+        expected, ref_err = run_child(modname, fname, calls, '0', warmup, env, clear,
+                                       fresh)
         if expected is None:
             print('ERROR %s: reference run failed: %s' % (name, ref_err))
             counts['FAIL'] += 1
             continue
         got, err = run_child(modname, fname, calls, 'release' if release else '1',
-                             warmup, env, clear)
+                             warmup, env, clear, fresh)
         problem = None
+        repeated = ''
         if got is None:
             problem = err
         else:
             extra = [l for l in err if l not in ref_err]
             leak_ref = int(expected.pop().split()[1])
-            leak_lejit = int(got.pop().split()[1])
+            leak_lejit, repeats = map(int, got.pop().split()[1:])
+            if repeats:
+                repeated = 'code compiled during the rounds, so they were run %d times' % (repeats + 1)
             results = got if release else got[:-1]
             if 'expected' in opts:
                 expected = ['ok ' + repr(r) for r in opts['expected']]
@@ -140,10 +147,11 @@ def main():
                     problem = 'compiled, but expected to be interpreted'
             elif not release and got[-1] != 'compiled: yes':
                 problem = got[-1]
-            elif (leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks') and
-                  (aslr_off or not opts.get('leaks_with_aslr'))):
+            elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
+                if repeated:
+                    problem += '; ' + repeated
             elif extra:
                 problem = 'stderr the plain run lacks: %s' % ' | '.join(extra[:3])
         xfail = opts.get('xfail')
@@ -162,6 +170,8 @@ def main():
                 line += ': ' + problem
             if xfail:
                 line += '  [xfail: %s]' % xfail
+            if repeated and not problem:
+                line += '  [%s]' % repeated
             print(line)
     print(' '.join('%s=%d' % kv for kv in counts.items()))
     return 1 if counts['FAIL'] or counts['XPASS'] else 0

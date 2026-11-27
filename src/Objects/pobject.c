@@ -25,6 +25,7 @@
 #include "../codemanager.h"
 #include "pboolobject.h"
 #include "punicodeobject.h"
+#include "../segments.h"
 
 DEFINEFN
 PyTypeObject *
@@ -1273,15 +1274,13 @@ cimpl_super_lookup_changed(PyTypeObject *tp, PyTypeObject *cls, PyObject *name,
 
 DEFINEFN
 int
-PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
-                        vinfo_t *self, PyObject *name, bool method, void *key,
-                        PyObject **f)
+PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vclass, vinfo_t *self,
+                        PyObject *name, void *key, PyObject **f)
 {
     PyObject *cls, *descr, *kind;
     PyTypeObject *tp;
     int r;
-    if (!psyco_knowntobe(vsuper, (long)&PySuper_Type) ||
-        !PyUnicode_CheckExact(name) ||
+    if (!PyUnicode_CheckExact(name) ||
         PyUnicode_CompareWithASCIIString(name, "__class__") == 0)
         return 0;
     r = psyco_pyobj_atcompiletime_mega(po, vclass, &cls);
@@ -1290,11 +1289,8 @@ PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
     r = need_type_mega(po, self, &tp);
     if (r <= 0)
         return r;
-    /* typeobject.c:supercheck's case of an instance, and for a method a
-       type whose method load is the generic one */
-    if ((method && tp->tp_getattro != PyObject_GenericGetAttr) ||
-        PyType_IsSubtype(tp, &PyType_Type) ||
-        !PyType_IsSubtype(tp, (PyTypeObject *)cls))
+    /* typeobject.c:supercheck's case of an instance */
+    if (PyType_IsSubtype(tp, &PyType_Type))
         return 0;
     r = super_lookup(po, tp, (PyTypeObject *)cls, key, name, &descr, &kind);
     if (r < 0)
@@ -1306,12 +1302,63 @@ PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
                                   (long)kind) == NULL
                    ? -1
                    : 0;
-    if (descr == NULL || !PyFunction_Check(descr))
+    /* tp's MRO and slots can have changed when a respawn replays this, so
+       they are read only under the guard. For a method load ceval asks
+       for the method form only where tp's tp_getattro is the generic one,
+       but a function called with self or bound to it does the same, so
+       tp_getattro doesn't matter. */
+    if (!PyType_IsSubtype(tp, (PyTypeObject *)cls) || descr == NULL ||
+        !PyFunction_Check(descr))
         return 0;
     psyco_owner_pin(descr); /* the compiled code calls it */
     *f = descr;
     return 1;
 }
+
+#if LE_STACK_SEGMENTS
+/* the name in an interned str made once, or NULL */
+static PyObject *
+interned(PyObject **cache, const char *name)
+{
+    if (*cache == NULL)
+        *cache = PyUnicode_InternFromString(name);
+    return *cache;
+}
+
+/* The load of 'name' from an instance of 'tp' is a call of a Python
+   function that CPython makes with no C stack: a property's getter, or the
+   type's own __getattribute__ where it has no __getattr__ (ceval's
+   LOAD_ATTR_PROPERTY and LOAD_ATTR_GETATTRIBUTE_OVERRIDDEN). */
+static bool
+load_calls_python(PyTypeObject *tp, PyObject *name)
+{
+    static PyObject *s_getattribute, *s_getattr, *s_fget;
+    PyObject *descr, *fget;
+    bool python;
+    if (interned(&s_getattribute, "__getattribute__") == NULL ||
+        interned(&s_getattr, "__getattr__") == NULL ||
+        interned(&s_fget, "fget") == NULL) {
+        PyErr_Clear();
+        return false;
+    }
+    if (tp->tp_getattro != PyObject_GenericGetAttr) {
+        descr = _PyType_Lookup(tp, s_getattribute);
+        return descr != NULL && Py_TYPE(descr) == &PyFunction_Type &&
+               _PyType_Lookup(tp, s_getattr) == NULL;
+    }
+    descr = _PyType_Lookup(tp, name);
+    if (descr == NULL || Py_TYPE(descr) != &PyProperty_Type)
+        return false;
+    fget = PyObject_GetAttr(descr, s_fget);
+    if (fget == NULL) {
+        PyErr_Clear();
+        return false;
+    }
+    python = Py_TYPE(fget) == &PyFunction_Type;
+    Py_DECREF(fget);
+    return python;
+}
+#endif
 
 /* 'generic' is the function the compiled code calls when the type has
    changed: PyObject_GetAttr from PsycoObject_GetAttr, because the change
@@ -1367,6 +1414,12 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
     }
 
     /* the type is in a state that gives the kind compiled */
+#if LE_STACK_SEGMENTS
+    if (descr == LOAD_GENERIC && load_calls_python(tp, name))
+        return psyco_generic_call(po, le_call_as_direct,
+                                  CfCommonNewRefPyObject, "lvv", (long)generic,
+                                  obj, vname);
+#endif
     if (descr == LOAD_GENERIC)
         goto generic;
     if (descr != NULL) {
@@ -1619,13 +1672,19 @@ DEFINEVAR uint64_t le_dict_version = (uint64_t)1 << 63;
 
 #if !LE_HAS_DICT_VERSION_TAG
 /* the counts, open addressed by dict address: each a record of its own,
-   so its address stays when the table grows */
+   so its address stays when the table grows. Compiled code reads them, so
+   the first are kept in LeJIT's own storage, each on a cache line: on the
+   heap their place moves with every allocation made before them, and that
+   alone moved a loop's cycles by 2-3%. */
 typedef struct {
     PyDictObject *dict;
     uint64_t count;
-} dict_count_t;
+} __attribute__((aligned(64))) dict_count_t;
 static dict_count_t **dict_counts;
 static size_t dict_counts_size, dict_counts_used;
+#define DICT_COUNTS_POOL 256
+static dict_count_t dict_counts_pool[DICT_COUNTS_POOL];
+static size_t dict_counts_pool_used;
 /* -2 until first asked for, -1 if none could be had */
 static int dict_watcher_id = -2;
 
@@ -1687,7 +1746,9 @@ le_dict_counter(PyDictObject *mp)
     i = dict_count_slot(dict_counts, dict_counts_size, mp);
     c = dict_counts[i];
     if (c == NULL) {
-        c = PyMem_RawMalloc(sizeof(dict_count_t));
+        c = dict_counts_pool_used < DICT_COUNTS_POOL
+                ? &dict_counts_pool[dict_counts_pool_used++]
+                : aligned_alloc(_Alignof(dict_count_t), sizeof(dict_count_t));
         if (c == NULL)
             OUT_OF_MEMORY();
         c->dict = mp;

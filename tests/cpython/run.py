@@ -4,7 +4,7 @@ interpreter's test package runs except BANNED, and every test except SKIPPED.
 
     python3.X tests/cpython/run.py [-j N] [module ...]
 """
-import fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile
+import contextlib, fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile, threading
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import ROOT
@@ -117,6 +117,9 @@ SKIPPED = {
     "the thread's innermost frame "
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
         'test.test_external_inspection.TestGetStackTrace.test_self_trace',
+    'fails in plain CPython under load: 0 GIL holders seen while the main '
+    'thread runs its busy loop':
+        'test.test_external_inspection.TestGetStackTrace.test_only_active_thread',
     'skipped when the machine converts fast enough':
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '
@@ -138,8 +141,8 @@ SKIPPED = {
         'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_class_load_attr_specialization_static_type',
     "C code that reads the running frame itself (sys._current_frames, "
-    "tracemalloc, another process reading the stack, a _warnings module imported after LeJIT started, type()'s "
-    "and typing.TypeAliasType's __module__) sees the nearest frame ceval runs, not the compiled ones":
+    "tracemalloc, another process reading the stack, a _warnings module imported after LeJIT started, "
+    "type()'s __module__) sees the nearest frame ceval runs, not the compiled ones":
         'test.test_sys.SysModuleTest.test_current_frames '
         'test.test_sys.SysModuleTest.test_current_exceptions '
         'test.test_tracemalloc.TestCAPI.* '
@@ -157,10 +160,6 @@ SKIPPED = {
         'test.test_warnings.CWarnTests.test_stacklevel_import '
         'test.test_builtin.TestType.test_new_type '
         'test.test_builtin.TestType.test_type_name '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_basic '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_generic '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_not_generic '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_keywords '
         'test.test_external_inspection.TestGetStackTrace.test_self_trace',
     "a compiled frame's line, frame object or f_back isn't always what "
     'CPython gives':
@@ -178,17 +177,9 @@ SKIPPED = {
         'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_formatunraisable',
     "an inlined frame's f_locals is empty once its call has returned":
         'test.test_frame.TestFrameLocals.test_constructor',
-    "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
-    'PyFrame_GetVar) misses those compiled code has set':
-        'test.test_capi.test_eval.Tests.test_eval_getlocals '
-        'test.test_frame.TestCAPI.test_getvar '
-        'test.test_capi.test_frame.FrameTest.test_getvar',
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
         'test.test_sys_settrace.*.test_20_async_for_loop',
-    'a failed task the test drops is freed only by the gc, so its '
-    'exception handler runs late':
-        'test.test_asyncio.test_futures2.PyFutureTests.test_task_exc_handler_correct_context',
     'tracing that starts in a running frame (pdb.set_trace)':
         'test.test_sys_settrace.*.test_09_settrace_and_raise '
         'test.test_pdb.test_* '
@@ -256,9 +247,36 @@ SKIPPED = {
         'test.test_poplib.TestPOP3_SSLClass.* '
         'test.test_poplib.TestPOP3_TLSClass.* '
         'test.test_poplib.TestPOP3Class.test_stls*',
-    'binds a port find_unused_port chose, and skips itself when another '
-    'process took it first':
-        'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    "plain CPython 3.14's own run in CI's container misses profile "
+    "events (testfunc's first call of helper) with the simulated timer, "
+    "so its counts and times differ; it doesn't fail outside CI":
+        'test.test_profile.ProfileTest.test_cprofile',
+    'counts on catching at least one signal while it flips between a '
+    'Python handler and SIG_IGN, which CPython says it may not (every one '
+    'can arrive under SIG_IGN); plain 3.8 misses them all too, and LeJIT '
+    'more often':
+        'test.test_signal.StressTest.test_stress_modifying_handlers',
+    'binds a port find_unused_port chose, and fails or skips itself when '
+    'another process took it first':
+        'test.test_smtplib.DebuggingServerTests.testSourceAddress '
+        'test.test_ftplib.*.test_source_address* '
+        'test.test_asyncio.test_sendfile.*.test_sendfile '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_force_fallback '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_force_unsupported_native '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_for_closing_transp '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_pre_and_post_data '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_pre_and_post_data '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_partial '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_partial '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_close_peer_after_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_ssl_close_peer_after_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_close_peer_in_the_middle_of_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_fallback_close_peer_in_the_middle_of_receiving '
+        'test.test_asyncio.test_sendfile.*.test_sendfile_prevents_bare_write '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_exception '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_exception_sync_callback '
+        'test.test_asyncio.test_streams.StreamTests.test_unhandled_cancel',
     'skips itself on a sporadic ENOTCONN, so the plain and LeJIT runs can '
     'skip different counts':
         'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF '
@@ -288,6 +306,12 @@ SKIPPED = {
     'busy machine can miss whatever runs the test':
         'test.test_epoll.TestEPoll.test_unregister_closed',
 }
+
+# Modules that never run at the same time as each other: test_perf_profiler
+# deletes every /tmp/perf-*.map it didn't see at setUp, and test_perfmaps
+# reads the one it writes.
+ONE_AT_A_TIME = {'test_perf_profiler', 'test_perfmaps'}
+one_at_a_time = threading.Lock()
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
 # so CPython aborts at it, LeJIT's own callback makes these abort.
@@ -409,7 +433,8 @@ def run(mode, name):
 
 
 def check(name):
-    plain, with_lejit = run('plain', name), run('lejit', name)
+    with one_at_a_time if name in ONE_AT_A_TIME else contextlib.nullcontext():
+        plain, with_lejit = run('plain', name), run('lejit', name)
     if plain[0] == with_lejit[0] and set(plain[1]) == set(with_lejit[1]):
         return True, 'ok     %-24s %s' % (name, plain[0])
     report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain[0], with_lejit[0])]

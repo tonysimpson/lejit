@@ -225,6 +225,8 @@ le_instr(le_code_t c, int pos)
                 in.op = UNARY_POSITIVE;
             else if (in.arg == INTRINSIC_LIST_TO_TUPLE)
                 in.op = LIST_TO_TUPLE;
+            else if (in.arg == INTRINSIC_ASYNC_GEN_WRAP)
+                in.op = ASYNC_GEN_WRAP;
             break;
 #endif
         /* LeJIT holds its own reference to what a borrowed load loads */
@@ -242,6 +244,11 @@ le_instr(le_code_t c, int pos)
             in.arg = 0;
             break;
 #endif
+        /* where it has an argument, it says where the await it ends
+           started, for monitoring: it doesn't jump */
+        case END_ASYNC_FOR:
+            in.target = -1;
+            break;
         /* marks a branch not taken, for monitoring */
         case NOT_TAKEN:
             in.op = NOP;
@@ -447,6 +454,7 @@ le_op_flags(int op)
         case CONVERT_VALUE:
         case PRINT_EXPR:
         case CALL_INTRINSIC_1: /* mergepoints.c:compiled_intrinsic's */
+        case CALL_INTRINSIC_2: /* mergepoints.c:compiled_intrinsic's */
         case LOAD_BUILD_CLASS:
 #if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
         case LOAD_ASSERTION_ERROR:
@@ -556,10 +564,13 @@ le_op_flags(int op)
         case WITH_CLEANUP_FINISH:
         /* generators */
         case GEN_START:
-        /* in a plain function too: an async generator expression's
-           outermost iterable */
-        case GET_AITER:
             return LE_OPF_COMPILED_IN_BLOCKS;
+        /* async for; GET_AITER in a plain function too, for an async
+           generator expression's outermost iterable */
+        case GET_AITER:
+        case GET_ANEXT:
+        case END_ASYNC_FOR:
+            return LE_OPF_COMPILED;
         case YIELD_FROM:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
 #if LE_HAS_OPCODE_SEND
@@ -574,6 +585,10 @@ le_op_flags(int op)
         case END_SEND:
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
 #endif
+        /* an async generator's yield wraps its value, which tells asend()
+           it from what an await in the body yields */
+        case ASYNC_GEN_WRAP:
+            return LE_OPF_COMPILED;
         /* async with, in a coroutine's body */
         case BEFORE_ASYNC_WITH:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;

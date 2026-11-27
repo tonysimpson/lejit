@@ -80,6 +80,52 @@ extern void *
 le_ref_tracer_word(void);
 #endif
 
+/* the live XMM registers stored below RSP and loaded back, around a call
+   on a path that must leave the state as it was; 'area' is the bytes used */
+static int
+xmm_live_count(PsycoObject *po)
+{
+    reg_t rg;
+    int n = 0;
+    for (rg = REG_X64_XMM8; rg <= REG_X64_XMM14; rg++)
+        n += REG_NUMBER(po, rg) != NULL;
+    return n;
+}
+static code_t *
+xmm_save_live(PsycoObject *po, code_t *code, int *area)
+{
+    reg_t rg;
+    int n = 0;
+    *area = 8 * xmm_live_count(po);
+    SUB_R_I8(REG_X64_RSP, *area);
+    po->stack_depth += *area;
+    n = 0;
+    for (rg = REG_X64_XMM8; rg <= REG_X64_XMM14; rg++)
+        if (REG_NUMBER(po, rg) != NULL) {
+            MOVSD_O_XMM(REG_X64_RSP, 8 * n, XMM_HW(rg));
+            n++;
+        }
+    return code;
+}
+static code_t *
+xmm_restore_live(PsycoObject *po, code_t *code, int area)
+{
+    reg_t rg;
+    int n = 0;
+    extra_assert(8 * xmm_live_count(po) == area);
+#if ALL_CHECKS
+    code = psyco_clobber_xmm(code); /* as the C code may */
+#endif
+    for (rg = REG_X64_XMM8; rg <= REG_X64_XMM14; rg++)
+        if (REG_NUMBER(po, rg) != NULL) {
+            MOVSD_XMM_O(XMM_HW(rg), REG_X64_RSP, 8 * n);
+            n++;
+        }
+    ADD_R_I8(REG_X64_RSP, area);
+    po->stack_depth -= area;
+    return code;
+}
+
 /* 'fn' is the dealloc to call, or NULL for the object's type's; with a ref
    tracer that _Py_Dealloc reports to, _Py_Dealloc is called instead while
    one is set: the word is compared with 0 before each call */
@@ -89,6 +135,8 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
 {
     /* the tracer word, and what to call while a tracer is set */
     void *tracer = NULL, *traced = NULL;
+    char xmm_call = po->xmm_call;
+    int xmm_live = xmm_live_count(po), xmm_area = 0;
 #if LE_HAS_DEALLOC_HOOKS
     if (fn != _Py_Dealloc && (tracer = le_ref_tracer_word()) == NULL)
         fn = _Py_Dealloc;
@@ -101,12 +149,18 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
        alone */
     NEED_CC_REG(rg);
     CMP_I8_DA(0, rg);
-    BEGIN_SHORT_COND_JUMP(1, CC_S);
+    BEGIN_COND_JUMP_OF(1, CC_S, xmm_live > 0);
     LE_SUB_OB_REFCNT(rg);
 #else
     DEC_OB_REFCNT_NZ(rg);
 #endif
-    BEGIN_SHORT_COND_JUMP(0, CC_NE); /* NE is the not zero flag */
+    /* NE is the not zero flag; saving XMM registers makes the path too
+       long for an 8-bit jump */
+    BEGIN_COND_JUMP_OF(0, CC_NE, xmm_live > 0);
+    if (xmm_live > 0) {
+        code = xmm_save_live(po, code, &xmm_area);
+        po->xmm_call = XMM_CALL_KEPT;
+    }
 #if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
     if (tracer != NULL && fn == NULL) {
         /* the type is known only at run time: _Py_Dealloc for one the GC
@@ -161,9 +215,12 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
         CALL_SET_ARG_FROM_REG(rg, 0);
         END_CALL_I(fn);
     }
-    END_SHORT_JUMP(0);
+    if (xmm_area > 0)
+        code = xmm_restore_live(po, code, xmm_area);
+    po->xmm_call = xmm_call;
+    END_JUMP_OF(0);
 #if LE_HAS_IMMORTAL_OBJECTS
-    END_SHORT_JUMP(1);
+    END_JUMP_OF(1);
 #endif
     return code;
 }
@@ -268,17 +325,27 @@ rip_near(code_t *at, void *addr)
         else                                                \
             MOV_R_I(rg, (long)(addr));                      \
     } while (0)
-#define CALL_GLUE(fn, near)                                \
-    do {                                                   \
-        if (near) {                                        \
-            le_trace_call((code_t *)code, (code_t *)(fn)); \
-            WRITE_1(0xE8);                                 \
-            WRITE_32BIT((long)(fn) - ((long)code + 4));    \
-        }                                                  \
-        else {                                             \
-            MOV_R_I(REG_TRANSIENT_1, (long)(fn));          \
-            CALL_R(REG_TRANSIENT_1);                       \
-        }                                                  \
+/* a call to the glue 'fn' from code that starts at 'start'; with XMM
+   values live, to its copy that keeps them */
+#define CALL_GLUE(fn, start)                             \
+    do {                                                 \
+        code_t *_glue = (fn);                            \
+        char _xmm_call = po->xmm_call;                   \
+        if (psyco_xmm_live(po)) {                        \
+            _glue = psyco_glue_keeping_xmm(_glue);       \
+            po->xmm_call = XMM_CALL_KEPT;                \
+        }                                                \
+        if (rip_near(start, _glue)) {                    \
+            le_trace_call((code_t *)code, _glue);        \
+            WRITE_1(0xE8);                               \
+            WRITE_32BIT((long)_glue - ((long)code + 4)); \
+            le_reloc_note(code - 4, LE_RELOC_JUMP, 4);   \
+        }                                                \
+        else {                                           \
+            MOV_R_I(REG_TRANSIENT_1, (long)_glue);       \
+            CALL_R(REG_TRANSIENT_1);                     \
+        }                                                \
+        po->xmm_call = _xmm_call;                        \
     } while (0)
 static void
 load_operand(PsycoObject *po, code_t **pcode, Source src, reg_t rg,
@@ -459,7 +526,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     s->done[0] = code;
     WRITE_2(0x0F, 0x80 | CC_NE);
     code += 4;
-    CALL_GLUE(psyco_dealloc_rax_glue, rip_near(start, psyco_dealloc_rax_glue));
+    CALL_GLUE(psyco_dealloc_rax_glue, start);
     s->done[1] = code;
     WRITE_1(0xE9);
     code += 4;
@@ -616,7 +683,7 @@ probe:
     }
 #endif
     *pmiss = code;
-    CALL_GLUE(s->miss_glue, rip_near(start, s->miss_glue));
+    CALL_GLUE(s->miss_glue, start);
     TEST_DR_DR(REG_X64_RAX, REG_X64_RAX);
     extra_assert(nj <= STORE_MAX_MISS_JUMPS);
     *pnj = nj;
@@ -979,7 +1046,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
     POINT(jmiss, nmiss, code);
     MOV_R_R(REG_X64_RDI, REG_X64_RCX);
     LOAD_ADDRESS(REG_X64_RSI, s->cache, rip_near(start, s->cache));
-    CALL_GLUE(s->miss_glue, rip_near(start, s->miss_glue));
+    CALL_GLUE(s->miss_glue, start);
     MOV_R_R(rg, REG_X64_RAX);
     POINT(jdone, ndone, code);
     END_CODE
@@ -1222,6 +1289,8 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
                                   tags[1], true);
         patch->end = code;
         patch->fresh = NULL;
+        LE_RELOC_SLOT(&patch->start);
+        LE_RELOC_SLOT_END(&patch->end);
     }
     else if (entry != NULL) {
         code_t *js[2];
@@ -1240,6 +1309,9 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
         MOV_R_I(REG_X64_RAX, (long)value);
         CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1, offset + sizeof(PyObject *));
         entry->at_value = (dword_t *)code - 1;
+        LE_RELOC_SLOT(&entry->at_shape);
+        LE_RELOC_SLOT(&entry->at_key);
+        LE_RELOC_SLOT(&entry->at_value);
         for (i = 0; i < 2; i++) {
             extra_assert(code - (js[i] + 2) < 128);
             js[i][1] = (code_t)(code - (js[i] + 2));
@@ -1294,6 +1366,7 @@ psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
         if (FITS_IN_32BITS(fresh - patch->end) &&
             FITS_IN_32BITS(fresh - patch->start)) {
             patch->fresh = fresh;
+            LE_RELOC_SLOT(&patch->fresh);
             code = fresh + GLOBAL_ABSENT_CODE_MAX - SIZE_OF_FAR_JUMP;
             le_trace_begin_simple_code(code);
             JUMP_TO(patch->end);
@@ -1367,6 +1440,8 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
     check->at_key = (dword_t *)code - 1;
     FAR_COND_JUMP_TO(stub, CC_NE);
     check->at_value = NULL;
+    LE_RELOC_SLOT(&check->at_shape);
+    LE_RELOC_SLOT(&check->at_key);
     END_CODE
 }
 
@@ -1433,6 +1508,9 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     WRITE_2(0x70 | CC_NE, 0);
     MOV_R_O32(rg, REG_TRANSIENT_1, offset + sizeof(PyObject *));
     entry->at_value = (dword_t *)code - 1;
+    LE_RELOC_SLOT(&entry->at_shape);
+    LE_RELOC_SLOT(&entry->at_key);
+    LE_RELOC_SLOT(&entry->at_value);
 #if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
     /* a proxy is the miss's to replace with its module */
     MOV_R_I(REG_X64_RAX, (long)&PyLazyImport_Type);
@@ -1449,7 +1527,7 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
         le_trace_jump_cond(jmiss[i], jmiss[i] + 2, code);
     }
     LOAD_ADDRESS(REG_X64_RDI, arg, rip_near(start, arg));
-    CALL_GLUE(miss_glue, rip_near(start, miss_glue));
+    CALL_GLUE(miss_glue, start);
     MOV_R_R(rg, REG_X64_RAX);
     extra_assert(code - (jdone + 2) < 128);
     jdone[1] = (code_t)(code - (jdone + 2));
@@ -1460,6 +1538,33 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     REG_NUMBER(po, rg) = v;
     return v;
 }
+
+#if !LE_HAS_LONG_VALUE
+DEFINEFN vinfo_t *
+psyco_long_size_times_digit(PsycoObject *po, vinfo_t *v, vinfo_t *size)
+{
+    vinfo_t *r;
+    reg_t rg, base;
+    BEGIN_CODE
+    NEED_CC();
+    COPY_IN_REG(size, rg);
+    if (is_runtime(v->source) && !RUNTIME_REG_IS_NONE(v))
+        base = RUNTIME_REG(v);
+    else {
+        base = REG_TRANSIENT_1;
+        LOAD_REG_FROM(v->source, base);
+    }
+    TEST_R_R(rg, rg);
+    BEGIN_SHORT_COND_JUMP(0, CC_E);
+    MOV_DR_O(REG_TRANSIENT_1, base, CPY_OFFSET(PyLongObject, ob_digit));
+    IMUL_R_R(rg, REG_TRANSIENT_1);
+    END_SHORT_JUMP(0);
+    END_CODE
+    r = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = r;
+    return r;
+}
+#endif
 
 #if LE_HAS_FRAME_STACKREFS
 _Static_assert(Py_TAG_REFCNT == 1 && offsetof(_PyStackRef, bits) == 0 &&

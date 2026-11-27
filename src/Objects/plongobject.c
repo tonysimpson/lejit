@@ -22,18 +22,21 @@
 #include "pboolobject.h"
 #include "pfloatobject.h"
 #include "ptupleobject.h"
+#include "../pycodegen.h"
 
 /* MEDIUM_VALUE(v) of an int that is one digit at run time, as a new
    reference in *pval. Returns 1; 0 if it isn't one digit (the caller falls
    back); -1 on error or promotion. */
 static int
-plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
+read_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
 {
     vinfo_t *size, *digit0, *t;
     condition_code_t cc;
+    vinfo_t *w = PsycoLong_IsVirtual(v) || is_runtime(v->source)
+                     ? vinfo_getitem(v, iLONG_VALUE)
+                     : NULL;
 
-    if (PsycoLong_IsVirtual(v)) {
-        vinfo_t *w = v->array->items[iLONG_VALUE];
+    if (w != NULL) {
         /* -PyLong_MASK <= w <= PyLong_MASK, as one unsigned comparison */
         t = integer_add_i(po, w, PyLong_MASK, false);
         if (t == NULL)
@@ -83,6 +86,12 @@ plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
         return -1;
     if (!runtime_condition_t(po, cc))
         return 0;
+    if (is_runtime(size->source)) {
+        /* a branch to a path of its own for zero would compile the rest of
+           the code once more for each int that can be zero */
+        *pval = psyco_long_size_times_digit(po, v, size);
+        return *pval != NULL ? 1 : -1;
+    }
     /* zero has no digit to read */
     cc = integer_cmp_i(po, size, 0, Py_EQ);
     if (cc == CC_ERROR)
@@ -98,6 +107,21 @@ plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
     *pval = integer_mul(po, size, digit0, false);
     return *pval != NULL ? 1 : -1;
 #endif
+}
+
+/* the same; a run-time int keeps the value read as its [iLONG_VALUE], so
+   reading it again costs only the range test */
+static int
+plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
+{
+    bool kept = PsycoLong_IsVirtual(v) || !is_runtime(v->source) ||
+                vinfo_getitem(v, iLONG_VALUE) != NULL;
+    int r = read_medium_value(po, v, pval);
+    if (r == 1 && !kept) {
+        vinfo_incref(*pval);
+        vinfo_setitem(po, v, iLONG_VALUE, *pval);
+    }
+    return r;
 }
 
 DEFINEFN int
@@ -207,13 +231,15 @@ DEFINEFN
 vinfo_t *
 PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v)
 {
-    /* the backend has no int-to-double conversion: a C helper. A virtual
-       int's word converts directly; (double)long rounds to nearest even,
-       as PyLong_AsDouble does. */
-    if (PsycoLong_IsVirtual(v))
+    /* a virtual int's word converts directly; (double)long rounds to
+       nearest even, as PyLong_AsDouble does */
+    if (PsycoLong_IsVirtual(v)) {
+        vinfo_t *word = v->array->items[iLONG_VALUE];
+        if (is_runtime(word->source))
+            return psyco_float_from_word(po, word);
         return psyco_generic_call(po, cimpl_fp_from_long,
-                                  CfPure | CfReturnTypeDouble, "v",
-                                  v->array->items[iLONG_VALUE]);
+                                  CfPure | CfReturnTypeDouble, "v", word);
+    }
     return psyco_generic_call(po, PyLong_AsDouble,
                               CfPyErrCheck | CfReturnTypeDouble, "v", v);
 }

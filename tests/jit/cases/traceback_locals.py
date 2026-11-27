@@ -151,6 +151,42 @@ def dies_by_count(n):
     return dead
 
 
+def read_tb_locals(tb):
+    return sorted((k, v) for k, v in tb.tb_frame.f_locals.items()
+                  if k in ('x', 'm'))
+
+
+def ignore(tb):
+    return None
+
+
+def relay_tb(read, tb):               # inlined: its callee reads the catcher
+    return read(tb)
+
+
+def relay_tb_through_c(read, tb):     # the same, through map
+    return [*map(read, (tb,))]
+
+
+def caught_then_inlined(n):
+    # the catching frame's locals as they are when read, from a call in an
+    # inlined frame, and no reference more to them when nothing reads them
+    x = n
+    try:
+        raise KeyError(n)
+    except KeyError as e:
+        exc = e
+        tb = e.__traceback__
+    x = n * 10
+    m = 'later'
+    before = sys.getrefcount(exc)
+    relay_tb(ignore, tb)
+    relay_tb_through_c(ignore, tb)
+    held = sys.getrefcount(exc) - before
+    return relay_tb(read_tb_locals, tb), relay_tb_through_c(read_tb_locals,
+                                                            tb), held
+
+
 CASES = [
     ('kept', [(3,)], {}),
     ('inlined', [(4,)], {}),
@@ -160,4 +196,5 @@ CASES = [
     ('dead_local', [(2,)], {}),
     ('finally_changes', [(3,)], {}),
     ('dies_by_count', [(1,)], {}),
+    ('caught_then_inlined', [(3,)], {}),
 ]

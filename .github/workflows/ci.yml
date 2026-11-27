@@ -60,22 +60,21 @@ jobs:
     # the official images give exact CPython releases, built as shared
     # libraries with their headers
     container: python:${{ matrix.python }}-bookworm
-    # builds the extension on versions it isn't yet installed on (3.11 on);
-    # changes nothing on the others
-    env:
-      LEJIT_DEV_FALLBACK: skip
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9"]
+        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9",
+                 "3.13.2", "3.14.10"]
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi, libunwind and setuptools
+      - name: Install libffi, libunwind, setuptools and cffi
         run: |
           apt-get update
           apt-get install -y --no-install-recommends libffi-dev libunwind-dev
           # the 3.12 images and later have no setuptools
           python -c 'import setuptools' 2>/dev/null || pip install setuptools
+          # for tests/jit's cffi cases, which are skipped without it
+          pip install cffi
       # the source detector's releases, fetched from python.org once
       - uses: actions/cache@v4
         with:
@@ -121,8 +120,6 @@ jobs:
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
-    env:
-      LEJIT_DEV_FALLBACK: skip
     strategy:
       fail-fast: false
       matrix:
@@ -148,24 +145,18 @@ jobs:
         run: python tests/jit/run.py --release
 
   # every supported version, on full runs: the checked and release builds
-  # must compile and load, and on the versions make check doesn't run on yet
-  # the release build mustn't change the smoke test's output
+  # must compile and load
   build:
     name: build (${{ matrix.python }})
     needs: changes
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
-    env:
-      LEJIT_DEV_FALLBACK: skip
     strategy:
       fail-fast: false
       matrix:
         python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9",
                  "3.13.2", "3.14.10", "3.15.2"]
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi, libunwind and setuptools
@@ -177,16 +168,11 @@ jobs:
         run: make checked-build PY=python && python tests/jit/build_info.py
       - name: Release build
         run: make build PY=python && python tests/jit/build_info.py
-      - name: Smoke test
-        if: >-
-          needs.changes.outputs.full == 'true' &&
-          (matrix.python == '3.13.2' || matrix.python == '3.14.10')
-        run: diff <(python tests/jit/smoke.py plain 2>&1) <(python tests/jit/smoke.py lejit 2>&1)
 
-  # Pythons LeJIT doesn't support yet: installing builds no extension, and
-  # start() warns and does nothing
+  # a plain install where no wheel is built: it builds the extension, and
+  # start() starts with no warning
   install-newer:
-    name: install only (${{ matrix.python }})
+    name: install (${{ matrix.python }})
     needs: changes
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
@@ -197,6 +183,10 @@ jobs:
         python: ["3.11.11", "3.12.9", "3.13.2", "3.14.10", "3.15.2"]
     steps:
       - uses: actions/checkout@v4
+      - name: Install libffi and libunwind
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
       - name: Install
         run: |
           pip install .
@@ -206,10 +196,54 @@ jobs:
           with warnings.catch_warnings(record=True) as w:
               warnings.simplefilter('always')
               lejit.start()
-          assert lejit._core is None, 'an extension was built'
-          assert [x.category for x in w] == [RuntimeWarning], w
+          assert lejit._core is not None, 'no extension was built'
+          assert not w, [str(x.message) for x in w]
           "
 
+  # uv's own interpreters (python-build-standalone: clang, link-time
+  # optimisation, BOLT, and the tail-call interpreter from 3.14): lejit
+  # installs, and check() finds no difference, also where a .pth starts
+  # LeJIT for every program
+  install-uv:
+    name: install (uv ${{ matrix.python }})
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install libffi and libunwind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+      - name: Install
+        run: |
+          uv venv --python-preference only-managed --python ${{ matrix.python }} "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv" .
+      - name: Check
+        run: |
+          py="$RUNNER_TEMP/venv/bin/python"
+          cd /
+          check='
+          import warnings, lejit
+          with warnings.catch_warnings(record=True) as w:
+              warnings.simplefilter("always")
+              diffs = lejit.check()
+          assert lejit._core is not None, "no extension was built"
+          assert not diffs and not w, (sorted(diffs), [str(x.message) for x in w])
+          '
+          "$py" -c "$check"
+          # again with LeJIT started by site, for every program in the venv
+          site=$("$py" -c "import site; print(site.getsitepackages()[0])")
+          echo 'import lejit; lejit.start()' > "$site/lejit_autostart.pth"
+          LEJIT_START_CHECK=warning timeout -s KILL 300 "$py" -c "$check"
+
+  # a Python newer than LeJIT runs on: installing builds no extension, and
+  # start() warns and does nothing
   install-main:
     name: install only (CPython main)
     needs: changes
@@ -242,7 +276,7 @@ jobs:
           "
 
   # the installed detector agrees with the source one, and the message probes
-  # find their messages, on the versions the port has reached that make check
+  # find their messages, on the version the port has reached that make check
   # doesn't run on yet
   detectors-newer:
     name: detectors (${{ matrix.python }})
@@ -253,7 +287,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.13.2", "3.15.2"]
+        python: ["3.15.2"]
     steps:
       - uses: actions/checkout@v4
       - name: Detectors agree with the source
@@ -303,10 +337,22 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # cibuildwheel 3 dropped Python 3.7
+      # cibuildwheel 3 dropped Python 3.7 and 3.8, and 2.x stops before 3.15:
+      # 2.x builds 3.7-3.10, 4.x 3.11-3.15
       - uses: pypa/cibuildwheel@v2.23.3
         env:
           CIBW_BUILD: "cp37-* cp38-* cp39-* cp310-*"
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_ALL_LINUX: >-
+            dnf install -y epel-release &&
+            dnf install -y libffi-devel libunwind-devel
+          CIBW_TEST_COMMAND: >-
+            python -c "import lejit; lejit.start(check=True, error=True); print(sorted(lejit.check()))"
+      - uses: pypa/cibuildwheel@v4.3.5
+        env:
+          CIBW_BUILD: "cp311-* cp312-* cp313-* cp314-* cp315-*"
           CIBW_SKIP: "*-musllinux_*"
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
@@ -326,7 +372,7 @@ jobs:
   passed:
     name: all jobs passed
     needs: [changes, check, encoder, release, build, install-newer,
-            install-main, detectors-newer, format, lint, wheels]
+            install-uv, install-main, detectors-newer, format, lint, wheels]
     if: ${{ always() && !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     steps:

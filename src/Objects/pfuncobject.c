@@ -11,12 +11,14 @@
  * known at run time is not promoted, only its code
  * (psyfunc.c:psyco_call_closure).
  */
+#include "../Python/genrecord.h"
 #include "pfuncobject.h"
 #include "../psyfunc.h"
 #include "pclassobject.h"
 #include "pabstract.h"
 #include "pdictobject.h"
 #include "ptupleobject.h"
+#include "../segments.h"
 
 /***************************************************************/
 /***   Virtual functions                                     ***/
@@ -228,6 +230,48 @@ PsycoGenexpr_Check(vinfo_t *v)
            VirtualTime_Get(v->source) == &psyco_pending_genexpr;
 }
 
+#if LE_RESUMES_GENERATORS_DIRECTLY
+static source_virtual_t psyco_virtual_gen;
+
+static bool
+compute_vgen(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *f = vinfo_getitem(v, iGENEXPR_FUNC);
+    vinfo_t *rec = vinfo_getitem(v, iVGEN_RECORD);
+    vinfo_t *g;
+    int i;
+    if (f == NULL || rec == NULL)
+        return false;
+    g = psyco_generic_call(po, le_gen_record_escape, CfCommonNewRefPyObject,
+                           "vv", rec, f);
+    if (g == NULL)
+        return false;
+    for (i = iGENEXPR_FUNC; i <= iGENEXPR_GLOBALS; i++) {
+        vinfo_xdecref(v->array->items[i], po);
+        v->array->items[i] = NULL;
+    }
+    vinfo_move(po, v, g);
+    return true;
+}
+
+DEFINEFN void
+PsycoVgen_FromPending(PsycoObject *po, vinfo_t *v, vinfo_t *rec)
+{
+    vinfo_decref(v->array->items[iGENEXPR_ARGS], po);
+    v->array->items[iVGEN_RECORD] = rec;
+    vinfo_xdecref(v->array->items[iGENEXPR_GLOBALS], po);
+    v->array->items[iGENEXPR_GLOBALS] = NULL;
+    v->source = VirtualTime_New(&psyco_virtual_gen);
+}
+
+DEFINEFN bool
+PsycoVgen_Check(vinfo_t *v)
+{
+    return is_virtualtime(v->source) &&
+           VirtualTime_Get(v->source) == &psyco_virtual_gen;
+}
+#endif
+
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
 
@@ -380,14 +424,13 @@ field_changed(PsycoObject *po, PyObject *f, defield_t df, PyObject *expected)
 #define FUNC_kwdefaults_now FMUT(FUNC_kwdefaults)
 
 #ifdef Py_TPFLAGS_HAVE_VECTORCALL
+DEFINEVAR vectorcallfunc le_usual_vectorcall;
 /* CPython calls a function through its vectorcall function, which C code
    may have replaced: emits 'func's is not the usual one' and says if it
    is true at run time */
 #define FUNC_vectorcall_now                                          \
     STRUCT_FIELD_BUILD(PyFunctionObject, vectorcallfunc, vectorcall, \
                        NO_PREV_FIELD, FIELD_MUTABLE)
-/* the vectorcall function a new function has (psy_funcobject_init) */
-static vectorcallfunc usual_vectorcall;
 static int
 vectorcall_replaced(PsycoObject *po, vinfo_t *func)
 {
@@ -396,7 +439,7 @@ vectorcall_replaced(PsycoObject *po, vinfo_t *func)
     condition_code_t cc;
     if (vnow == NULL)
         return -1;
-    vusual = vinfo_new(CompileTime_New((long)usual_vectorcall));
+    vusual = vinfo_new(CompileTime_New((long)le_usual_vectorcall));
     cc = integer_cmp(po, vnow, vusual, Py_NE);
     vinfo_decref(vusual, po);
     vinfo_decref(vnow, po);
@@ -411,11 +454,13 @@ vectorcall_replaced(PsycoObject *po, vinfo_t *func)
    vectorcall as ceval makes it where the arguments are known one by one,
    else through its tp_call. The function runs Python code, which tests
    eval_breaker itself: the call leaves no test after it to do
-   (pycompiler.c:breaker_after_call), as tp_call doesn't. */
+   (pycompiler.c:breaker_after_call), as tp_call doesn't. With
+   'as_direct', it stands for a call CPython makes with no C stack, and is
+   made by segments.c:le_call_as_direct. */
 DEFINEFN
 vinfo_t *
 PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
-                       vinfo_t *kw)
+                       vinfo_t *kw, bool as_direct)
 {
     PyObject *kwnames = NULL;
     vinfo_t **kwvalues = NULL;
@@ -423,18 +468,37 @@ PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
     char blocking = po->blocking_call;
     int n = is_virtualtime(arg->source) ? PsycoTuple_Load(arg) : -1;
     bool keywords = kw != NULL && !psyco_known_NULL(kw);
+#if !LE_STACK_SEGMENTS
+    as_direct = false; /* CPython's calls take C stack too */
+#endif
     if (keywords)
         kwnames = PsycoDict_PendingNames(kw, &kwvalues);
     if (n >= 0 && (!keywords || kwnames != NULL)) {
-        r = psyco_vectorcall(po, vfunc, NULL, &PsycoTuple_GET_ITEM(arg, 0), n,
-                             kwnames, kwvalues);
+#if LE_STACK_SEGMENTS
+        if (as_direct)
+            r = psyco_vectorcall_as_direct(
+                po, vfunc, &PsycoTuple_GET_ITEM(arg, 0), n, kwnames, kwvalues);
+        else
+#endif
+            r = psyco_vectorcall(po, vfunc, NULL, &PsycoTuple_GET_ITEM(arg, 0),
+                                 n, kwnames, kwvalues);
         if (r == NULL && PycException_Occurred(po))
             return NULL;
     }
-    if (r == NULL && keywords)
+#if LE_STACK_SEGMENTS
+    if (r == NULL && as_direct && keywords)
+        r = psyco_generic_call(po, le_call_as_direct, CfCommonNewRefPyObject,
+                               "lvvv", (long)le_function_tp_call(), vfunc, arg,
+                               kw);
+    else if (r == NULL && as_direct)
+        r = psyco_generic_call(po, le_call_as_direct, CfCommonNewRefPyObject,
+                               "lvvl", (long)le_function_tp_call(), vfunc, arg,
+                               (long)0);
+#endif
+    if (r == NULL && !as_direct && keywords)
         r = psyco_generic_call(po, le_function_tp_call(),
                                CfCommonNewRefPyObject, "vvv", vfunc, arg, kw);
-    else if (r == NULL)
+    else if (r == NULL && !as_direct)
         r = psyco_generic_call(po, le_function_tp_call(),
                                CfCommonNewRefPyObject, "vvl", vfunc, arg,
                                (long)0);
@@ -455,6 +519,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     vinfo_t *result, *vf;
     PyObject *kwdefs = NULL;
     int tuple_size;
+    bool as_direct = true;
 
     /* the code and the defaults are those compiled while f still has
        them */
@@ -462,8 +527,11 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
 #ifdef Py_TPFLAGS_HAVE_VECTORCALL
     /* as vectorcall_replaced, read when compiling the call */
     if (*(vectorcallfunc *)((char *)f + Py_TYPE(f)->tp_vectorcall_offset) !=
-        usual_vectorcall)
+        le_usual_vectorcall) {
+        /* CPython calls it from C too */
+        as_direct = false;
         goto fallback;
+    }
 #endif
     switch (field_changed(po, f, FUNC_code_now, (PyObject *)co)) {
         case 0:
@@ -540,7 +608,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
 fallback:
     Py_INCREF(f);
     vf = vinfo_new(CompileTime_NewSk(sk_new((long)f, SkFlagPyObj)));
-    result = PsycoFunction_RealCall(po, vf, arg, kw);
+    result = PsycoFunction_RealCall(po, vf, arg, kw, as_direct);
     vinfo_decref(vf, po);
     return result;
 }
@@ -648,7 +716,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
     }
 
 fallback:
-    return PsycoFunction_RealCall(po, func, arg, kw);
+    return PsycoFunction_RealCall(po, func, arg, kw, true);
 }
 
 static vinfo_t *
@@ -699,7 +767,7 @@ psy_funcobject_init(void)
         PyObject *f = glob && co ? PyFunction_New((PyObject *)co, glob) : NULL;
         if (f == NULL)
             OUT_OF_MEMORY();
-        usual_vectorcall = ((PyFunctionObject *)f)->vectorcall;
+        le_usual_vectorcall = ((PyFunctionObject *)f)->vectorcall;
         Py_DECREF(f);
         Py_DECREF(co);
         Py_DECREF(glob);
@@ -713,4 +781,7 @@ psy_funcobject_init(void)
     INIT_SVIRTUAL_NOCALL(psyco_computed_function, compute_function, 1);
     /* a generator has an identity: made real before any call */
     INIT_SVIRTUAL_NOCALL(psyco_pending_genexpr, compute_genexpr, 1);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    INIT_SVIRTUAL_NOCALL(psyco_virtual_gen, compute_vgen, 1);
+#endif
 }

@@ -127,6 +127,19 @@ def AUDIT_HOOKS():
 
 
 @probe
+def CTYPES_CALL_AUDITED():
+    """a call of a ctypes function raises the audit event
+    ctypes.call_function (run)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+    sys.addaudithook(lambda event, args: event == 'ctypes.call_function'
+                     and seen.append(args))
+    ctypes.CDLL(None).abs(-3)
+    return bool(seen), 'CDLL(None).abs(-3) audited: %s' % bool(seen)
+
+
+@probe
 def ARG_CHECK_POSITIONAL():
     """libpython exports _PyArg_CheckPositional (ctypes)"""
     return _exported('_PyArg_CheckPositional')
@@ -479,6 +492,156 @@ def NAME_ERROR_NAME():
     if not isinstance(e, NameError):
         raise Unanswered('no NameError: %r' % e)
     return getattr(e, 'name', None) == 'undefined_zzz', 'NameError.name'
+
+
+@probe
+def BREAKER_SKIPPED_AFTER_LOAD_SPECIAL():
+    """a signal that __enter__ (a C call, LOAD_SPECIAL's) marks as arrived
+    is handled inside the with block, where __exit__ sees its exception,
+    not as the call ends (run)"""
+    if not _real_op('LOAD_SPECIAL'):
+        return False, 'no LOAD_SPECIAL'
+    import _thread, functools, signal
+
+    class Raised(Exception):
+        pass
+
+    def handler(signum, frame):
+        raise Raised()
+
+    exited = []
+
+    class Manager:
+        # (os.kill would run the handler itself)
+        __enter__ = staticmethod(functools.partial(_thread.interrupt_main,
+                                                   signal.SIGUSR1))
+
+        def __exit__(self, *exc):
+            exited.append(exc[0])
+
+    old = signal.signal(signal.SIGUSR1, handler)
+    try:
+        try:
+            with Manager():
+                len(())
+        except Raised:
+            pass
+        else:
+            raise Unanswered('the handler raised nothing')
+    finally:
+        signal.signal(signal.SIGUSR1, old)
+    return bool(exited), '__exit__ saw %r' % exited
+
+
+def _table_entries(code):
+    """code's exception table: [start, end, target, depth << 1 | lasti],
+    in code units"""
+    entries, item, entry = [], 0, []
+    for byte in code.co_exceptiontable:
+        item = item << 6 | byte & 63
+        if not byte & 64:
+            entry.append(item)
+            item = 0
+            if len(entry) == 4:
+                entry[1] += entry[0]
+                entries.append(entry)
+                entry = []
+    return entries
+
+
+def _table(entries):
+    """the exception table of entries, as _table_entries gives them"""
+    out = bytearray()
+    for start, end, target, depth_lasti in entries:
+        for n, item in enumerate((start, end - start, target, depth_lasti)):
+            chunks = []
+            while True:
+                chunks.insert(0, item & 63)
+                item >>= 6
+                if not item:
+                    break
+            for i, chunk in enumerate(chunks):
+                out.append(chunk | (64 if i < len(chunks) - 1 else 0)
+                           | (128 if n == 0 and i == 0 else 0))
+    return bytes(out)
+
+
+@probe
+def EX_CALL_SKIPS_RECURSION_TEST():
+    """recursion through f(*a) passes the recursion limit: ceval's
+    specialised call counts the frame without testing the count (run)"""
+    def down(n, *a):
+        return down(n - 1, *a) + 1 if n else 0
+
+    def depth():
+        f, n = sys._getframe(), 0
+        while f is not None:
+            f, n = f.f_back, n + 1
+        return n
+    old = sys.getrecursionlimit()
+    sys.setrecursionlimit(depth() + 200)
+    try:
+        down(1000)
+        passed = True
+    except RecursionError:
+        passed = False
+    finally:
+        sys.setrecursionlimit(old)
+    return passed, 'down(1000) through f(*a) at a limit 200 deeper %s' % (
+        'returns' if passed else 'raises RecursionError')
+
+
+@probe
+def BREAKER_AFTER_BACK_JUMP():
+    """a signal handled at a loop's backward jump is caught by an exception
+    table entry for the code unit before the loop head alone (run: a loop
+    whose table is cut to that entry, with another thread sending the
+    signal)"""
+    if not _real_op('JUMP_BACKWARD'):
+        return False, 'no JUMP_BACKWARD'
+    import _thread, signal, threading, time
+
+    class Raised(Exception):
+        pass
+
+    def handler(signum, frame):
+        raise Raised()
+
+    def loop():
+        try:
+            while True:
+                pass
+        except Raised:
+            return 'caught'
+
+    code = loop.__code__
+    jumps = [i for i in dis.get_instructions(code)
+             if i.opname == 'JUMP_BACKWARD']
+    if len(jumps) != 1:
+        raise Unanswered('the loop has %d JUMP_BACKWARD' % len(jumps))
+    head = jumps[0].argval // 2
+    entries = _table_entries(code)
+    body = [e for e in entries if e[0] <= head < e[1]]
+    if len(body) != 1 or head == 0:
+        raise Unanswered('no one exception table entry covers the loop head')
+    handler_at = body[0][2]
+    cut = [[head - 1, head, handler_at, body[0][3]]] + [
+        e for e in entries if e[0] >= handler_at]
+    f = types.FunctionType(code.replace(co_exceptiontable=_table(cut)),
+                           globals(), 'loop', None, loop.__closure__)
+    old = signal.signal(signal.SIGUSR1, handler)
+    sender = threading.Thread(
+        target=lambda: (time.sleep(0.01), _thread.interrupt_main(signal.SIGUSR1)))
+    try:
+        sender.start()
+        try:
+            result = f()
+        except Raised:
+            result = 'raised from the loop'
+    finally:
+        sender.join()
+        signal.signal(signal.SIGUSR1, old)
+    return result == 'caught', result
 
 
 @probe
@@ -972,6 +1135,19 @@ def SUM_COMPLEX_COMPENSATED():
 
 
 @probe
+def SUM_EXACT_NUMBERS():
+    """sum([1e100, True, -1e100]) loses the True, which leaves the float
+    loop; where that loop adds no int compensated, it can't be seen, and
+    the loop takes a subclass as its int, as it did then (run)"""
+    if sum([1e100, 1, -1e100]) == 0.0:
+        return False, 'sum([1e100, 1, -1e100]) is 0.0'
+    r = sum([1e100, True, -1e100])
+    if r not in (0.0, 1.0):
+        raise Unanswered('sum([1e100, True, -1e100]) is %r' % r)
+    return r == 0.0, 'sum([1e100, True, -1e100]) is %r' % r
+
+
+@probe
 def LOAD_GLOBAL_NULL_BIT():
     """a call of a global loads it with LOAD_GLOBAL whose argument is the
     name's index (0) shifted left once, plus one for the NULL it pushes
@@ -1114,6 +1290,49 @@ def FINISHED_GENERATOR_UNLINKED():
 
 
 @probe
+def GEN_CLOSE_UNRUN():
+    """a generator paused at a yield in no try block, which RESUME's
+    argument tells from one in a try block (dis), is left where it paused
+    by close (run)"""
+    def g():
+        yield sys._getframe()
+
+    def in_try():
+        try:
+            yield 1
+        finally:
+            pass
+
+    def resume_arg(f):
+        ins = list(dis.get_instructions(f))
+        after = [b for a, b in zip(ins, ins[1:]) if a.opname == 'YIELD_VALUE']
+        return after[0].arg if after and after[0].opname == 'RESUME' else None
+    if resume_arg(g) is None or resume_arg(g) == resume_arg(in_try):
+        return False, 'dis: RESUME after a yield has argument %r in a try block too' % resume_arg(g)
+    gen = g()
+    f = next(gen)
+    before = f.f_lasti
+    gen.close()
+    return f.f_lasti == before, 'run: f_lasti %d before close, %d after' % (before, f.f_lasti)
+
+
+@probe
+def GEN_CLOSE_LOCALS_ONLY():
+    """a generator closed at a yield in no try block still holds its
+    function until it goes (run: a weak reference)"""
+    import weakref
+    ns = {}
+    exec('def g():\n    yield 1\n', ns)
+    gen = ns['g']()
+    next(gen)
+    r = weakref.ref(ns.pop('g'))
+    gen.close()
+    alive = r() is not None
+    del gen
+    return alive, 'run: the function %s after close' % ('kept' if alive else 'released')
+
+
+@probe
 def FOR_ITER_EXIT_PAST_POP_TOP():
     """a for loop ends with END_FOR then POP_TOP, END_FOR popping one value
     (dis, dis.stack_effect)"""
@@ -1140,6 +1359,86 @@ def GET_ITER_INDEX():
     op = dis.opmap['GET_ITER']
     pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
     return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
+
+
+@probe
+def YIELD_VALUE_WRAPS():
+    """an async generator's yield is YIELD_VALUE alone, with no
+    ASYNC_GEN_WRAP or CALL_INTRINSIC_1 before it (dis)"""
+    ns = {}
+    exec('async def f():\n    yield 1\n', ns)
+    ins = [x.opname for x in dis.get_instructions(ns['f'])]
+    if 'YIELD_VALUE' not in ins:
+        raise Unanswered('an async generator has no YIELD_VALUE: %r' % ins)
+    before = ins[ins.index('YIELD_VALUE') - 1]
+    return (before not in ('ASYNC_GEN_WRAP', 'CALL_INTRINSIC_1'),
+            'dis: %s before YIELD_VALUE' % before)
+
+
+@probe
+def AWAITABLE_PUSHES_SEND_ARGS():
+    """GET_AWAITABLE pushes three items, the iterator, a NULL and None
+    (dis)"""
+    op = dis.opmap['GET_AWAITABLE']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 3, 'dis: GET_AWAITABLE pushes %d' % pushes
+
+
+@probe
+def ANEXT_PUSHES_SEND_ARGS():
+    """GET_ANEXT pushes four items, the async iterator, the awaitable, a
+    NULL and None (dis)"""
+    op = dis.opmap['GET_ANEXT']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 4, 'dis: GET_ANEXT pushes %d' % pushes
+
+
+@probe
+def RUNNING_STACK_HIDDEN():
+    """a running generator's referents (gc) don't include its locals"""
+    import gc
+    if not hasattr((lambda: None).__code__, 'co_exceptiontable'):
+        return False, 'code objects have no co_exceptiontable'
+    token = object()
+
+    def gen():
+        x = token
+        yield token in gc.get_referents(it)
+    it = gen()
+    seen = next(it)
+    return not seen, 'gc.get_referents of the running generator: local %s' % (
+        'seen' if seen else 'not seen')
+
+
+@probe
+def TAGGED_LASTI():
+    """a coroutine paused in an awaiting __aexit__ that an exception
+    called holds the lasti under the exception as no object: the
+    coroutine's referents (gc) have no int"""
+    import gc
+    if not hasattr((lambda: None).__code__, 'co_exceptiontable'):
+        return False, 'code objects have no co_exceptiontable'
+
+    class Aw:
+        def __await__(self):
+            yield
+            return False
+
+    class CM:
+        async def __aenter__(self):
+            pass
+
+        def __aexit__(self, *a):
+            return Aw()
+
+    async def f():
+        async with CM():
+            raise KeyError
+    c = f()
+    c.send(None)
+    ints = [r for r in gc.get_referents(c) if type(r) is int]
+    c.close()
+    return not ints, 'gc.get_referents: ints %r' % ints
 
 
 @probe

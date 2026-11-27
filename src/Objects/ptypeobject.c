@@ -2,7 +2,8 @@
  * typeobject.c's slot functions for special methods defined in Python
  * (slot_nb_add and the rest of SLOT1BINFULL, the SLOT0 unary ones,
  * slot_tp_richcompare, slot_mp_subscript, slot_mp_ass_subscript,
- * slot_tp_call): a user's __add__, __getitem__ or __call__ called from
+ * slot_tp_call, slot_tp_iter): a user's __add__, __getitem__, __call__ or
+ * __iter__ called from
  * compiled code is a
  * direct call of the compiled function, as CALL_FUNCTION's, instead of the
  * residual slot function entering it from C through the eval hook.
@@ -394,6 +395,34 @@ generic:
                               self, args, kw);
 }
 
+/* slot_tp_iter: __iter__ looked up on the type, called with self; None or
+   no __iter__ (not iterable, or iterated by __getitem__) is the slot
+   function's */
+static getiterfunc slot_tp_iter;
+static PyObject *iter_name;
+
+static vinfo_t *
+pslot_tp_iter(PsycoObject *po, vinfo_t *self)
+{
+    PyTypeObject *ts = Psyco_KnownType(self);
+    PyObject *m = NULL;
+    if (ts == NULL || po->pr.class_unchecked)
+        goto generic;
+    switch (special_method(po, ts, &ts->tp_iter, iter_name, &m)) {
+        case 1:
+            break;
+        case -1:
+            return NULL;
+        default:
+            goto generic;
+    }
+    if (m != NULL)
+        return call_special(po, m, self, NULL);
+generic:
+    return psyco_generic_call(po, slot_tp_iter, CfCommonNewRefPyObject, "v",
+                              self);
+}
+
 static vinfo_t *
 pslot_mp_ass_subscript(PsycoObject *po, vinfo_t *self, vinfo_t *key,
                        vinfo_t *value)
@@ -430,11 +459,11 @@ generic:
                               "vvv", self, key, value);
 }
 
-/* type_call(tp, args, NULL) for a heap class whose tp_new is object_new
-   and whose tp_init is slot_tp_init with a plain function as __init__,
-   or object_init with no arguments; anything else is PyObject_Call. The
-   instance is new, so its type is tp and type_call's subtype test
-   passes. */
+/* type_call(tp, args, NULL) for a heap class with no vectorcall whose
+   tp_new is object_new and whose tp_init is slot_tp_init with a plain
+   function as __init__, or object_init with no arguments; anything else is
+   class_call. The instance is new, so its type is tp and type_call's
+   subtype test passes. */
 static initproc slot_tp_init;
 
 /* object_new once its excess_args test has passed at compile time: the
@@ -463,6 +492,31 @@ init_result_error(PyObject *res)
     return NULL;
 }
 
+static bool
+has_vectorcall(PyTypeObject *tp)
+{
+#if LE_HAS_VECTORCALL
+    return PyVectorcall_Function((PyObject *)tp) != NULL;
+#else
+    return false;
+#endif
+}
+
+/* PyObject_Call's call of the class tp: through its vectorcall where it
+   has one, with the arguments in an array where they are known; else
+   type_call, which takes the tuple and the dict (made of pending keywords)
+   that PyObject_Vectorcall would make. A vectorcall gained later is still
+   called: PyObject_Call reads it at run time. */
+static vinfo_t *
+class_call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vtype, vinfo_t *varg,
+           vinfo_t *vkw)
+{
+    if (has_vectorcall(tp))
+        return psyco_residual_call(po, PyObject_Call, vtype, varg, vkw);
+    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject, "vvv",
+                              vtype, varg, vkw);
+}
+
 DEFINEFN
 vinfo_t *
 psyco_heap_type_call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vtype,
@@ -475,7 +529,8 @@ psyco_heap_type_call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vtype,
     condition_code_t cc;
     int i, n = PsycoTuple_Load(varg);
 
-    if (n < 0 || slot_tp_init == NULL || !(tp->tp_flags & Py_TPFLAGS_HEAPTYPE))
+    if (n < 0 || !psyco_knowntobe(vkw, 0) || slot_tp_init == NULL ||
+        !(tp->tp_flags & Py_TPFLAGS_HEAPTYPE) || has_vectorcall(tp))
         goto fallback;
     switch (Psyco_TypeSlot(po, tp, &tp->tp_new, (void **)&new)) {
         case 1:
@@ -548,8 +603,7 @@ error:
     vinfo_decref(vobj, po);
     return NULL;
 fallback:
-    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject, "vvv",
-                              vtype, varg, vkw);
+    return class_call(po, tp, vtype, varg, vkw);
 }
 
 #define BINARY(i)                                                             \
@@ -607,7 +661,8 @@ probe_slots(void)
     if (PyDict_SetItemString(d, "__init__", Py_True) < 0 ||
         PyDict_SetItemString(d, "__getitem__", Py_True) < 0 ||
         PyDict_SetItemString(d, "__setitem__", Py_True) < 0 ||
-        PyDict_SetItemString(d, "__call__", Py_True) < 0)
+        PyDict_SetItemString(d, "__call__", Py_True) < 0 ||
+        PyDict_SetItemString(d, "__iter__", Py_True) < 0)
         goto done;
     t = PyObject_CallFunction((PyObject *)&PyType_Type, "s(O)O", "le_slots",
                               (PyObject *)&PyBaseObject_Type, d);
@@ -655,5 +710,9 @@ psy_typeobject_init(void)
     slot_tp_call = t->tp_call;
     if (slot_tp_call != NULL)
         Psyco_DefineMeta(slot_tp_call, pslot_tp_call);
+    iter_name = slot_name("__iter__");
+    slot_tp_iter = t->tp_iter;
+    if (slot_tp_iter != NULL)
+        Psyco_DefineMeta(slot_tp_iter, pslot_tp_iter);
     Py_DECREF(t);
 }

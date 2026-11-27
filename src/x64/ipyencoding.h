@@ -244,12 +244,13 @@ psyco_xdecref_rt(PsycoObject *po, vinfo_t *v)
     rg = RUNTIME_REG(v);
     NEED_CC_REG(rg);
     TEST_R_R(rg, rg);
-    BEGIN_SHORT_COND_JUMP(1, CC_E);
+    /* with XMM registers to save, the decref is too long for 8 bits */
+    BEGIN_COND_JUMP_OF(1, CC_E, psyco_xmm_live(po));
     if (tp != NULL)
         DEC_OB_REFCNT_T(rg, tp);
     else
         DEC_OB_REFCNT(rg);
-    END_SHORT_JUMP(1);
+    END_JUMP_OF(1);
     END_CODE
 }
 
@@ -496,6 +497,15 @@ EXTERNFN vinfo_t *
 psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
                   global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg);
+
+#if !LE_HAS_LONG_VALUE
+/* MEDIUM_VALUE of int 'v' at run time, given its ob_size 'size' of -1, 0 or
+   1: ob_size times the first digit, read only when ob_size isn't 0, since
+   zero has no digit (ob_size is then the value). One path for every
+   value. */
+EXTERNFN vinfo_t *
+psyco_long_size_times_digit(PsycoObject *po, vinfo_t *v, vinfo_t *size);
+#endif
 
 #if LE_HAS_FRAME_STACKREFS
 /* A frame's word, a _PyStackRef read at run time, as the object

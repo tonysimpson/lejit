@@ -229,6 +229,12 @@ msg('NO_ITEM_DELETION', "deleting an item of an object with neither "
     [F('%.200s', 'int')])
 msg('NOT_ITERABLE', "iter() of an object that isn't iterable", 'TypeError',
     'iter(args[0]())', [T()])
+_ITER_NON_ITERATOR = ('r = args[-1](); c = cls(args[0].__name__ if len(args) > 1 '
+                      'else "A", __iter__=lambda s: r)\niter(c())')
+msg('ITER_RETURNED_NON_ITERATOR', "iter() of an object whose __iter__ "
+    "returns something that isn't an iterator", 'TypeError', None, shapes=[
+        ('', [T()], _ITER_NON_ITERATOR),
+        ('QUALIFIED', [Q(), Q()], _ITER_NON_ITERATOR)])
 msg('NEXT_NOT_ITERATOR', "next() of an object that isn't an iterator, as "
     "a for loop's iterator with no __next__ slot", 'TypeError',
     'next(args[0]())', [T()])
@@ -388,6 +394,16 @@ msg('ASYNC_FOR_AITER_NO_ANEXT', 'async for whose __aiter__ returns an object '
     'without __anext__', 'TypeError',
     'r = args[0]; o = cls("A", __aiter__=lambda s: r())()\n'
     'async def f():\n    async for x in o:\n        pass\ncoro_run(f())', [T()])
+msg('ASYNC_FOR_NO_ANEXT', 'async for whose async iterator has lost its '
+    '__anext__', 'TypeError',
+    'C = args[0]\nasync def anext(s):\n    del C.__anext__\n    return 1\n'
+    'C.__aiter__ = lambda s: s\nC.__anext__ = anext\no = C()\n'
+    'async def f():\n    async for x in o:\n        pass\ncoro_run(f())',
+    [T()])
+msg('ASYNC_FOR_BAD_ANEXT', "async for whose __anext__ returns an object "
+    "that can't be awaited", 'TypeError',
+    'r = args[0]; o = cls("A", __aiter__=lambda s: s, __anext__=lambda s: r())()\n'
+    'async def f():\n    async for x in o:\n        pass\ncoro_run(f())', [T()])
 msg('AWAIT_NOT_AWAITABLE', "await on an object that can't be awaited",
     'TypeError', 'o = args[0]()\nasync def f():\n    await o\ncoro_run(f())',
     [T()])
@@ -541,6 +557,14 @@ msg('GENERATOR_STOP_ITERATION', 'a generator raising StopIteration',
 msg('CORO_STOP_ITERATION', 'a coroutine raising StopIteration',
     'RuntimeError',
     'async def f():\n    raise StopIteration\nf().send(None)', text=True)
+msg('ASYNC_GEN_STOP_ITERATION', 'an async generator raising StopIteration',
+    'RuntimeError',
+    'async def f():\n    raise StopIteration\n    yield\n'
+    'f().__anext__().send(None)', text=True)
+msg('ASYNC_GEN_STOP_ASYNC_ITERATION', 'an async generator raising '
+    'StopAsyncIteration', 'RuntimeError',
+    'async def f():\n    raise StopAsyncIteration\n    yield\n'
+    'f().__anext__().send(None)', text=True)
 msg('NEGATIVE_SHIFT', 'a shift by a negative count', 'ValueError', '1 << -1',
     text=True)
 
@@ -719,7 +743,7 @@ def run_target(python, entries=None):
     """Run every probe in `python`; the raw results by name."""
     entries = ENTRIES if entries is None else entries
     try:
-        r = subprocess.run([python, '-I', '-c', DRIVER],
+        r = subprocess.run([python, '-I', '-S', '-c', DRIVER],
                            input=json.dumps(entries), stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, universal_newlines=True,
                            timeout=TIMEOUT)
@@ -979,7 +1003,7 @@ def build(python, version):
 
 def target_version(python):
     try:
-        r = subprocess.run([python, '-I', '-c',
+        r = subprocess.run([python, '-I', '-S', '-c',
                             'import sys; print(sys.version.split()[0])'],
                            stdout=subprocess.PIPE, universal_newlines=True,
                            timeout=60)

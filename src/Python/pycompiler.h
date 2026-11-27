@@ -58,6 +58,9 @@ DEF_SK_AND_VI(NotImplemented) /* 'Py_NotImplemented' */
  * call to PyErr_Fetch().
  */
 EXTERNVAR source_virtual_t ERtPython; /* Exception raised by Python */
+/* the type an async generator's yield wraps its value in, or NULL
+   (eval_hook.c) */
+EXTERNVAR PyTypeObject *psyco_async_gen_wrapper;
 EXTERNVAR source_virtual_t EReturn;   /* 'return' statement */
 EXTERNVAR source_virtual_t EBreak;    /* 'break' statement */
 EXTERNVAR source_virtual_t EContinue; /* 'continue' statement */
@@ -116,12 +119,6 @@ PycException_SetVInfo(PsycoObject *po, PyObject *e, vinfo_t *v);
 /* takes its own references (pycompiler.c) */
 EXTERNFN void
 PycException_Reraise(PsycoObject *po, vinfo_t *exc, vinfo_t *val, vinfo_t *tb);
-/* before po's frame goes into an inlined one, where reads of its locals
-   can't find them: the frame that stands for it, if something reads it,
-   gets them now (pycompiler.c:catcher_word). False on an error. */
-EXTERNFN bool
-psyco_catcher_flush(PsycoObject *po);
-
 /* checking for the Python class of an exception */
 EXTERNFN vinfo_t *
 PycException_Matches(PsycoObject *po, PyObject *e);

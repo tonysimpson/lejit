@@ -26,6 +26,10 @@ TEXTS = ['It was the best of times, it was the worst of times.',
          'café crème brûlée', 'x\xa0y\x85z', 'Ωμέγα  λ', '日本 語　テキスト',
          'emoji 😀 and 😀😀 ', 'mixed é€😀 widths']
 SEPS = [',', ' ', 'é', 'ab', '€', '😀', 'xyz']
+QUERIES = [(q,) for q in [
+    '', '&', '&&', '=', '=a', 'a', 'a=', 'a=b=c', 'a%3Db=c', 'a=b&c=d',
+    'a=b%26c=d', '&a=b', 'a=a+b&b=b+c', 'a=1&a=2', ';a=b', 'a=b;c=d',
+    'a=%E2%82%AC', 'a=%e2%82', 'a=%zz']]
 
 
 def split_items(texts):
@@ -484,6 +488,24 @@ def view_split_escapes(s):
     return items, first, rest, out, v
 
 
+def _query_fields(qs, keep, sep='&'):
+    r = []
+    for field in qs.split(sep):
+        if field:
+            name, _, value = field.partition('=')
+            if value or keep:
+                name = name.replace('+', ' ')
+                value = value.replace('+', ' ')
+                r.append((name, value))
+    return r
+
+
+def split_default_sep(qs):
+    # a constant separator that merge points would make run-time while
+    # the loop's iterator is still compiled for it
+    return _query_fields(qs, True), _query_fields(qs, False)
+
+
 CASES = [
     ('split_items', [(TEXTS,)], {}),
     ('split_sep', [(TEXTS, SEPS)], {}),
@@ -500,6 +522,7 @@ CASES = [
     ('split_errors', [('a,b,c',)], {}),
     ('split_maxsplit', [('a b c',), ('a,b,c,d',)], {}),
     ('split_generator', [('a bb ccc',), ('x,y',)], {}),
+    ('split_default_sep', QUERIES, {}),
     ('strips', [(TEXTS,)], {}),
     ('strip_identity', [(TEXTS,)], {}),
     ('strip_of_split', [(TEXTS[0],), ('a. ;b, c',), ('é. €,',)], {}),

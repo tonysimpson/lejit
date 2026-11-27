@@ -7,11 +7,15 @@
  */
 #include "pabstract.h"
 #include "pclassobject.h"
+#include "pdictobject.h"
 #include "pfuncobject.h"
 #include "piterobject.h"
 #include "plongobject.h"
 #include "pmethodobject.h"
 #include "ptupleobject.h"
+#include "../segments.h"
+#include "../Modules/pcffi.h"
+#include "../Modules/pctypes.h"
 
 /* abstract.c's type_error: msg has one %.200s for the type's name */
 static vinfo_t *
@@ -58,11 +62,10 @@ cimpl_vectorcall(PyObject *callable, PyObject *kwnames, PyObject **slots,
 }
 #endif
 
-DEFINEFN
-vinfo_t *
-psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
-                 vinfo_t **args, int nargs, PyObject *kwnames,
-                 vinfo_t **kwvalues)
+/* psyco_vectorcall, or with 'as_direct' psyco_vectorcall_as_direct */
+static vinfo_t *
+vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self, vinfo_t **args,
+           int nargs, PyObject *kwnames, vinfo_t **kwvalues, bool as_direct)
 {
 #if LE_HAS_VECTORCALL
     int i, k = kwnames == NULL ? 0 : (int)PyTuple_GET_SIZE(kwnames);
@@ -81,8 +84,15 @@ psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
         vnames =
             vinfo_new(CompileTime_NewSk(sk_new((long)kwnames, SkFlagPyObj)));
     }
-    r = psyco_generic_call(po, cimpl_vectorcall, CfCommonNewRefPyObject,
-                           "vvil", callable, vnames, slots, (long)n);
+#if LE_STACK_SEGMENTS
+    if (as_direct)
+        r = psyco_generic_call(po, le_call_as_direct, CfCommonNewRefPyObject,
+                               "lvvil", (long)cimpl_vectorcall, callable,
+                               vnames, slots, (long)n);
+    else
+#endif
+        r = psyco_generic_call(po, cimpl_vectorcall, CfCommonNewRefPyObject,
+                               "vvil", callable, vnames, slots, (long)n);
     vinfo_decref(vnames, po);
     array_release(slots);
     return r;
@@ -93,17 +103,47 @@ psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
 
 DEFINEFN
 vinfo_t *
+psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
+                 vinfo_t **args, int nargs, PyObject *kwnames,
+                 vinfo_t **kwvalues)
+{
+    return vectorcall(po, callable, self, args, nargs, kwnames, kwvalues,
+                      false);
+}
+
+#if LE_STACK_SEGMENTS
+DEFINEFN
+vinfo_t *
+psyco_vectorcall_as_direct(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
+                           int nargs, PyObject *kwnames, vinfo_t **kwvalues)
+{
+    return vectorcall(po, callable, NULL, args, nargs, kwnames, kwvalues,
+                      true);
+}
+#endif
+
+DEFINEFN
+vinfo_t *
 psyco_vectorcall_tuple(PsycoObject *po, vinfo_t *callable, vinfo_t *args,
                        vinfo_t *kw)
 {
+    PyObject *kwnames = NULL;
+    vinfo_t **kwvalues = NULL;
     int n;
-    if (!psyco_knowntobe(kw, 0) || !is_virtualtime(args->source))
+    if (!psyco_knowntobe(kw, 0)) {
+        /* pending keywords with no names are the empty dict of
+           f(*a, **{}), which CPython passes on as a dict */
+        kwnames = PsycoDict_PendingNames(kw, &kwvalues);
+        if (kwnames == NULL || PyTuple_GET_SIZE(kwnames) == 0)
+            return NULL;
+    }
+    if (!is_virtualtime(args->source))
         return NULL;
     n = PsycoTuple_Load(args);
     if (n < 0)
         return NULL;
     return psyco_vectorcall(po, callable, NULL, &PsycoTuple_GET_ITEM(args, 0),
-                            n, NULL, NULL);
+                            n, kwnames, kwvalues);
 }
 
 DEFINEFN
@@ -149,6 +189,16 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
             return psyco_residual_call(po, PyObject_Call, callable_object,
                                        args, kw);
 #endif
+        if (PsycoCtypes_IsFunction(tp, call)) {
+            vinfo_t *r = PsycoCtypes_Call(po, tp, callable_object, args, kw);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
+        if (PsycoCffi_IsCData(tp)) {
+            vinfo_t *r = PsycoCffi_Call(po, callable_object, args, kw);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
         return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv",
                            callable_object, args, kw);
     }
@@ -2082,6 +2132,42 @@ PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
 }
 #endif
 
+/* PyObject_GetIter's end: its result 'res' for 'o' if an iterator, else
+   its TypeError */
+static PyObject *
+cimpl_iter_result(PyObject *o, PyObject *res)
+{
+    if (!PyIter_Check(res)) {
+#ifdef LE_MSG_ITER_RETURNED_NON_ITERATOR_QUALIFIED
+        PyErr_Format(PyExc_TypeError,
+                     LE_MSG_ITER_RETURNED_NON_ITERATOR_QUALIFIED, Py_TYPE(o),
+                     Py_TYPE(res));
+#else
+        (void)o;
+        PyErr_Format(PyExc_TypeError, LE_MSG_ITER_RETURNED_NON_ITERATOR,
+                     Py_TYPE(res)->tp_name);
+#endif
+        return NULL;
+    }
+    Py_INCREF(res);
+    return res;
+}
+
+/* the same on 'r', the result for 'vi', which it consumes: no test where
+   r is known to be a generator, pending or not */
+static vinfo_t *
+iter_result(PsycoObject *po, vinfo_t *vi, vinfo_t *r)
+{
+    vinfo_t *checked;
+    if (Psyco_KnownType(r) == &PyGen_Type)
+        return r;
+    checked =
+        psyco_generic_call(po, cimpl_iter_result,
+                           CfCommonNewRefPyObject | CfNoPython, "vv", vi, r);
+    vinfo_decref(r, po);
+    return checked;
+}
+
 DEFINEFN
 vinfo_t *
 PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi)
@@ -2114,10 +2200,14 @@ PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi)
             return PsycoSeqIter_New(po, vi);
         return type_error_tp(po, LE_MSG_NOT_ITERABLE, t);
     }
-    /* a heap type's __iter__ may return a non-iterator, which
-       PyObject_GetIter checks */
     if (!Psyco_SlotsMutable(t))
         return Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
+    /* a heap type's __iter__ from its slot function's meta (ptypeobject.c),
+       and PyObject_GetIter's check that it returned an iterator */
+    if (Psyco_Lookup(f) != NULL) {
+        vinfo_t *r = Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
+        return r == NULL ? NULL : iter_result(po, vi, r);
+    }
 generic:
     return psyco_generic_call(po, PyObject_GetIter, CfCommonNewRefPyObject,
                               "v", vi);

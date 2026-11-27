@@ -22,7 +22,7 @@ def started(*fns):
     # whether the bodies of fns ran only as calls from their awaits, never
     # through the eval hook, where LeJIT starts them so
     lejit = sys.modules.get('lejit')
-    if lejit is None or not lejit._started or not FRAME_OBJECTS:
+    if lejit is None or not lejit._started:
         return True
     # a release build can't say what compiled
     if not hasattr(lejit._core, '_code_info'):
@@ -47,10 +47,17 @@ def _frame_objects():
 FRAME_OBJECTS = _frame_objects()
 
 
-def drive(c, sends=()):
-    # the values c yields, then how it ended
+def drive(c, sends=(), collect=False):
+    # the values c yields, then how it ended. Without 'collect', with the
+    # collector off: a collection pending as a coroutine is sent into runs
+    # that step in ceval (eval_hook.c:le_gen_to_run), which starts the
+    # bodies it awaits through the eval hook, so started() would depend on
+    # where collections fall
     out = []
     sends = list(sends)
+    enabled = gc.isenabled()
+    if not collect:
+        gc.disable()
     try:
         v = c.send(None)
         while True:
@@ -60,6 +67,9 @@ def drive(c, sends=()):
         out.append(('return', e.value))
     except Exception as e:
         out.append(('exc', type(e).__name__, str(e)))
+    finally:
+        if enabled:
+            gc.enable()
     return out
 
 
@@ -119,6 +129,16 @@ LOG = []
 HELD = []
 
 
+def poke(inner):
+    # what each way into a running coroutine raises
+    for call in (lambda: inner.send(None), lambda: inner.throw(KeyError),
+                 inner.close, inner.cr_frame.clear):
+        try:
+            call()
+        except Exception as e:
+            LOG.append((type(e).__name__, str(e)))
+
+
 async def lvl3(k, how):
     me = sys._getframe()
     if how == 'objects':
@@ -132,12 +152,7 @@ async def lvl3(k, how):
         inner = cs[-1]
         LOG.append(inner.cr_frame is me)
         LOG.append(sorted(inspect.getcoroutinelocals(inner)))
-        for call in (lambda: inner.send(None), lambda: inner.throw(KeyError),
-                     inner.close, inner.cr_frame.clear):
-            try:
-                call()
-            except Exception as e:
-                LOG.append((type(e).__name__, str(e)))
+        poke(inner)
         LOG.append(weakref.ref(inner)() is inner)
         HELD.append(inner)
     elif how == 'referrers':
@@ -149,10 +164,6 @@ async def lvl3(k, how):
         cs = running('lvl3') + running('renamed_q')
         LOG.append([(c.__name__, c.__qualname__) for c in cs])
         lvl3.__name__ = lvl3.__qualname__ = 'lvl3'
-    elif how == 'suspend':
-        HELD.extend(running('lvl2') + running('lvl3'))
-        LOG.append(('resumed', await pause(work(k))))
-        LOG.append(inspect.getcoroutinestate(HELD[-1]))
     elif how == 'raise':
         HELD.extend(running('lvl3'))
         raise KeyError('x')
@@ -167,13 +178,32 @@ async def lvl1(k, how):
     return await lvl2(k, how) + 1
 
 
+# as lvl1 to lvl3, but suspending: a coroutine resumed where its frame is
+# inside it runs compiled from an entry of its own, which started()
+# would see
+async def sus3(k, how):
+    HELD.extend(running('sus2') + running('sus3'))
+    LOG.append(('resumed', await pause(work(k))))
+    LOG.append(inspect.getcoroutinestate(HELD[-1]))
+    return work(k)
+
+
+async def sus2(k, how):
+    return await sus3(k, how) + 1
+
+
+async def sus1(k, how):
+    return await sus2(k, how) + 1
+
+
 def realised(n):
     # each way to find the running inner coroutines, then the same objects
     # once their bodies have returned, raised or suspended
     out = []
     hows = ('referrers', 'rename', 'suspend', 'raise', 'none')
     for how in ('objects',) * FRAME_OBJECTS + hows:
-        out.append((how, drive(lvl1(n, how), [7]), LOG[:]))
+        top = sus1 if how == 'suspend' else lvl1
+        out.append((how, drive(top(n, how), [7]), LOG[:]))
         del LOG[:]
         for c in HELD:
             out.append((c.__qualname__, inspect.getcoroutinestate(c),
@@ -287,9 +317,9 @@ def handled(n):
         raise IndexError
     except IndexError:
         r = drive(handles(n))
-    out = [r, EXC[:]]
+    out = [r, EXC[:], sys.exc_info()[0]]
     del EXC[:]
-    return out
+    return out, started(handling)
 
 
 async def trh(k):
@@ -320,6 +350,55 @@ def traced_handler(n):
     out = [r, EXC[:], after, EVENTS[:]]
     del EXC[:]
     del EVENTS[:]
+    return out, started(trh)
+
+
+async def fg3(k):
+    me = sys._getframe()
+    # frames have no f_generator before 3.14
+    c = getattr(me, 'f_generator', None)
+    return (type(c).__name__, c is not None and c.cr_frame is me,
+            c is not None and inspect.getcoroutinestate(c), work(k))
+
+
+async def fg2(k):
+    return await fg3(k)
+
+
+def frame_generator(n):
+    # a running body's frame gives its coroutine; run a few times, for
+    # them to compile
+    out = [drive(fg2(n)) for _ in range(20)]
+    return out[0], all(o == out[0] for o in out), started(fg3)
+
+
+async def th3(k):
+    return work(await pause(k))
+
+
+async def th2(k):
+    return await th3(k) + 1
+
+
+def thrown(n):
+    # a coroutine its body made as it suspended, then thrown into, closed
+    # or sent into from the coroutine awaiting it
+    out = []
+    for how in ('throw', 'close', 'send'):
+        c = th2(n)
+        out.append(c.send(None))
+        inner = running('th3')
+        try:
+            if how == 'throw':
+                c.throw(KeyError('t'))
+            elif how == 'close':
+                out.append(c.close())
+            else:
+                c.send(5)
+        except BaseException as e:
+            out.append((type(e).__name__, str(e)))
+        out.append([(inspect.getcoroutinestate(i), i.cr_frame, i.cr_await,
+                     i.cr_running) for i in inner])
     return out
 
 
@@ -340,6 +419,218 @@ def origins(n):
     return out
 
 
+async def gc3(k):
+    # a collection as the coroutine of this running body is made, which
+    # visits its frame's words
+    a, b, c, d, e, f, g, h = [work(k)] * 8
+    # objects the collector counts, for the coroutine's to start one
+    held = [[] for _ in range(50)]
+    old = gc.get_threshold()
+    gc.set_threshold(1)
+    objs = gc.get_objects()
+    gc.set_threshold(*old)
+    found = [o for o in objs if inspect.iscoroutine(o) and
+             o.__qualname__ == 'gc3' and
+             inspect.getcoroutinestate(o) != 'CORO_CLOSED']
+    del objs
+    return len(found), len(held), a + b + c + d + e + f + g + h
+
+
+async def gc2(k):
+    return await gc3(k)
+
+
+def collected(n):
+    out = [drive(gc2(n), collect=True) for _ in range(20)]
+    return out[0], all(o == out[0] for o in out), started(gc3)
+
+
+def now():
+    # the exception handled here, as sys.exc_info() and sys.exception()
+    # (3.11+) give it
+    e = sys.exc_info()[1]
+    f = getattr(sys, 'exception', None)
+    return (type(e).__name__, f is None or f() is e)
+
+
+class Swallow:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        EXC.append(('exit', a[0] and a[0].__name__, now()))
+        return True
+
+
+async def kinds(k):
+    # except, finally and with, each handling an exception, with what each
+    # sees and what is chained
+    out = [now()]
+    try:
+        raise KeyError(k)
+    except KeyError:
+        out.append(now())
+        try:
+            raise ValueError(k)
+        except ValueError as e:
+            out.append((now(), type(e.__context__).__name__))
+        out.append(now())
+    out.append(now())
+    try:
+        work(k)
+    finally:
+        out.append(now())
+    try:
+        try:
+            raise IndexError(k)
+        finally:
+            out.append(now())
+    except IndexError as e:
+        out.append((now(), e.__context__))
+    with Swallow():
+        raise TypeError(k)
+    out.append(now())
+    EXC.append(out)
+    try:
+        raise KeyError(k)
+    except KeyError:
+        try:
+            raise ValueError(k)
+        finally:
+            out.append(now())
+
+
+async def kinds_outer(k):
+    try:
+        return await kinds(k)
+    except ValueError as e:
+        return ('raised', now(), type(e.__context__).__name__)
+
+
+def handler_kinds(n):
+    out = []
+    for _ in range(3):
+        out.append(drive(kinds_outer(n)))
+        try:
+            raise IndexError
+        except IndexError:
+            out.append((drive(kinds_outer(n)), now()))
+        out.append(EXC[:])
+        del EXC[:]
+    return out, now(), started(kinds)
+
+
+async def seen(k):
+    # what an await in a handler sees: its awaiter's exception
+    return (now(), work(k))
+
+
+async def nested(k, how):
+    # a handler that handles an exception, around one that awaits: that one
+    # goes on in ceval with the outer one's exception the coroutine's
+    try:
+        raise KeyError(k)
+    except KeyError:
+        if how == 'objects':
+            found = running('nested')
+            me = found[0]
+            LOG.append((len(found), me.cr_frame is sys._getframe(),
+                        inspect.getcoroutinestate(me), errors(me), now()))
+        try:
+            raise ValueError(k)
+        except ValueError:
+            r = await seen(k)
+            v = await pause(k)
+            LOG.append(now())
+        LOG.append(now())
+    LOG.append(now())
+    return r, v
+
+
+async def nested_mid(k, how):
+    return await nested(k, how)
+
+
+async def nested_top(k, how):
+    # in its own handler, which runs in ceval as it awaits
+    if how == 'handling':
+        try:
+            raise IndexError(k)
+        except IndexError:
+            r = await nested_mid(k, how)
+            LOG.append(now())
+            return r
+    return await nested_mid(k, how)
+
+
+def errors(c):
+    # the exceptions gc finds a coroutine holds
+    return [type(r).__name__ for r in gc.get_referents(c)
+            if isinstance(r, BaseException)]
+
+
+def handler_resumed(n):
+    # suspended in a handler ceval runs, inside one compiled code ran: what
+    # the coroutines hold and what their driver sees, at the suspension
+    # and after
+    out = []
+    for how in ('plain', 'objects', 'handling'):
+        c = nested_top(n, how)
+        try:
+            raise TypeError
+        except TypeError:
+            v = c.send(None)
+            inner = running('nested')
+            out.append((how, v, now(), [errors(i) for i in inner],
+                        [inspect.getcoroutinestate(i) for i in inner],
+                        errors(c)))
+        try:
+            c.send(5)
+        except StopIteration as e:
+            out.append(e.value)
+        out.append((LOG[:], now(), [errors(i) for i in inner],
+                    [i.cr_frame for i in inner]))
+        del LOG[:]
+    # nested resumes from an entry of its own once it has suspended, so
+    # started() can't say how it began
+    return out
+
+
+async def held_inner(k):
+    return await pause(work(k)) + 1
+
+
+async def held_outer(k):
+    return await held_inner(k) + 1
+
+
+def suspended_referents(n):
+    # a body started by its await that suspends becomes a coroutine as
+    # CPython's: no frame object until cr_frame asks, and its own function.
+    # Resumed, it runs from an entry of its own, so started() can't say.
+    out = []
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for i in range(3):
+            c = held_outer(n + i)
+            out.append(c.send(None))
+            inner = c.cr_await
+            refs = gc.get_referents(inner)
+            out.append((inner.__qualname__,
+                        sorted(type(o).__name__ for o in refs),
+                        any(o is held_inner for o in refs)))
+            out.append(inner.cr_frame.f_code.co_name)
+            try:
+                c.send(5)
+            except StopIteration as e:
+                out.append(e.value)
+    finally:
+        if enabled:
+            gc.enable()
+    return out
+
+
 CASES = [
     ('raised', [(3,)], HOOKED),
     ('realised', [(0,), (2,)], {}),
@@ -352,4 +643,10 @@ CASES = [
                'does not grow with the rounds'}),
     ('traced_handler', [(1,)], {}),
     ('origins', [(1,)], {}),
+    ('frame_generator', [(1,)], {}),
+    ('thrown', [(1,)], {}),
+    ('collected', [(1,)], {}),
+    ('handler_kinds', [(1,)], {}),
+    ('handler_resumed', [(1,)], {}),
+    ('suspended_referents', [(1,)], {}),
 ]

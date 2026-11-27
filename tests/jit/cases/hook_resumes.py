@@ -51,11 +51,18 @@ def recursion_depth():
 
 
 # With no Python limit in reach, C's own check stops the nesting before the
-# stack runs out, at the same depth (since sys.monitoring came; before,
-# plain CPython crashes here). The error branch is first compiled there.
+# stack runs out (since sys.monitoring came; before, plain CPython crashes
+# here), at the same depth where C counts levels. Where it measures the
+# stack instead, the depth comes out only about the same (stack_charged), so
+# only the error is compared. The error branch is first compiled there.
 def stack_limit():
     if not hasattr(sys, 'monitoring'):
         return None
+    try:
+        import _testinternalcapi
+    except ImportError:
+        _testinternalcapi = None
+    stack_measured = hasattr(_testinternalcapi, 'get_stack_margin')
     old = sys.getrecursionlimit()
     try:
         sys.setrecursionlimit(10 ** 7)
@@ -64,11 +71,52 @@ def stack_limit():
             try:
                 sum(nest(k))
             except RecursionError:
-                return k, sum(nest(30)), compiled(nest)
+                depth = 'stopped' if stack_measured else k
+                return depth, sum(nest(30)), compiled(nest)
             k *= 2
         return 'no error'
     finally:
         sys.setrecursionlimit(old)
+
+
+# Where C's check measures the stack, RecursionError through sum() comes at
+# about CPython's depth: compiled levels are charged what ceval's would take
+# (mechanisms/recursion.h), so a 1 MiB thread stops before 3,500 levels
+# (plain about 1,200; uncharged, compiled levels of 64 bytes reach 15,000).
+def sum_nest(k):
+    yield sum(sum_nest(k - 1)) if k else 1
+
+
+def stack_charged():
+    try:
+        import _testinternalcapi
+    except ImportError:
+        return None
+    if not hasattr(_testinternalcapi, 'get_stack_margin'):
+        return None
+    import threading
+    out = []
+
+    def run():
+        old = sys.getrecursionlimit()
+        sys.setrecursionlimit(10 ** 6)
+        k = 100
+        try:
+            while True:
+                next(sum_nest(k))
+                k += 100
+        except RecursionError:
+            out.append(k < 3500)
+        finally:
+            sys.setrecursionlimit(old)
+    size = threading.stack_size(1 << 20)
+    try:
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+    finally:
+        threading.stack_size(size)
+    return out, compiled(sum_nest)
 
 
 # Signals arrive while C code resumes a compiled generator for ever: the
@@ -80,6 +128,16 @@ def counting(box):
         yield n
 
 
+# Runs counting once to its end first, so that it is compiled before the
+# timer is armed. A resume with a signal flagged is left to ceval, so if the
+# timer fired before counting's first resume (a busy machine), the handler
+# would end the loop in that resume and counting would never compile.
+def start_counting(box):
+    collections.deque(counting({'stop': True}), maxlen=0)
+    signal.setitimer(signal.ITIMER_REAL, 0.002)
+    collections.deque(counting(box), maxlen=0)
+
+
 def handler_runs():
     box = {}
 
@@ -87,8 +145,7 @@ def handler_runs():
         box['stop'] = True
     old = signal.signal(signal.SIGALRM, handle)
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.002)
-        collections.deque(counting(box), maxlen=0)
+        start_counting(box)
         return 'stopped', compiled(counting)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -99,8 +156,7 @@ def keyboard_interrupt():
     old = signal.signal(signal.SIGALRM, signal.default_int_handler)
     try:
         try:
-            signal.setitimer(signal.ITIMER_REAL, 0.002)
-            collections.deque(counting({}), maxlen=0)
+            start_counting({})
         except KeyboardInterrupt:
             return 'interrupted', compiled(counting)
         return 'not interrupted'
@@ -149,6 +205,7 @@ def monitoring_between_resumes(n):
 CASES = [
     ('recursion_depth', [()], {}),
     ('stack_limit', [()], {}),
+    ('stack_charged', [()], {}),
     ('handler_runs', [()], {}),
     ('keyboard_interrupt', [()], {}),
     ('monitoring_between_resumes', [(10,)], {}),

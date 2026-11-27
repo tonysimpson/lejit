@@ -2,15 +2,14 @@
  * Virtual builtin-method objects ([iCFUNC_M_ML] = PyMethodDef*,
  * [iCFUNC_M_SELF]) and the PyCFunction tp_call meta. The meta promotes m_ml,
  * switches on ml_flags exactly as CPython does, and dispatches to a meta for
- * ml_meth if one is registered. Without a meta, a METH_FASTCALL call with
- * no keywords and up to FAST_MAX arguments calls the C function directly
- * through a cimpl_fastN helper that puts the arguments in a C array, so no
- * tuple is built. Like the METH_O and METH_VARARGS cases,
- * these direct calls skip PyCFunction_Call's Py_EnterRecursiveCall, but do
- * _Py_CheckFunctionResult's checks (check_result). A keyword call's
- * keywords reach a METH_KEYWORDS function as vectorcall passes them
- * (call_keywords). Other keywords, or more arguments, take the residual
- * PyCFunction_Call / tuple paths.
+ * ml_meth if one is registered. Without a meta, a METH_FASTCALL call whose
+ * arguments are known one by one calls the C function directly with them in
+ * an array in the caller's frame, so no tuple is built. Like the METH_O and
+ * METH_VARARGS cases, these direct calls skip PyCFunction_Call's
+ * Py_EnterRecursiveCall, but do _Py_CheckFunctionResult's checks
+ * (check_result). A keyword call's keywords reach a METH_KEYWORDS function
+ * as vectorcall passes them (call_keywords). Other keywords, or a run-time
+ * tuple of arguments, take the residual PyCFunction_Call / tuple paths.
  */
 #include "pmethodobject.h"
 #include "pdictobject.h"
@@ -18,6 +17,8 @@
 /* le_tstate_load */
 #include "../mechanisms/tstate.h"
 #include "../Python/frames.h"
+#include "../Modules/pcffi.h"
+#include "../Modules/pctypes.h"
 
 static bool
 compute_cfunction(PsycoObject *po, vinfo_t *methobj)
@@ -212,6 +213,17 @@ PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
             goto use_proxy;
         }
 
+        {
+            vinfo_t *r = PsycoCtypes_Byref(po, ml, args);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
+        if (flags == METH_O || flags == METH_NOARGS || flags == METH_VARARGS) {
+            vinfo_t *r = PsycoCffi_ApiCall(po, ml, vself, args);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
+
         meta = Psyco_Lookup(ml->ml_meth);
         switch (flags) {
             case METH_O:
@@ -264,129 +276,60 @@ cimpl_call_fast_kw(PyCFunction meth, PyObject *self, PyObject *args)
         self, &PyTuple_GET_ITEM(args, 0), PyTuple_GET_SIZE(args), NULL);
 }
 
-/* the same with n arguments passed one by one (psyco_generic_call takes
-   at most 7: meth, self and FAST_MAX arguments) */
-#define FAST_MAX 5
-#define FAST_FN(n, params, ...)                                               \
-    static PyObject *cimpl_fast##n(PyCFunction meth, PyObject *self params)   \
-    {                                                                         \
-        PyObject *a[] = {__VA_ARGS__};                                        \
-        return ((_PyCFunctionFast)(void (*)(void))meth)(self, a, n);          \
-    }                                                                         \
-    static PyObject *cimpl_fastkw##n(PyCFunction meth, PyObject *self params) \
-    {                                                                         \
-        PyObject *a[] = {__VA_ARGS__};                                        \
-        return ((_PyCFunctionFastWithKeywords)(void (*)(void))meth)(self, a,  \
-                                                                    n, NULL); \
-    }
-#define P(x) , PyObject *x
-FAST_FN(0, , NULL)
-FAST_FN(1, P(a0), a0)
-FAST_FN(2, P(a0) P(a1), a0, a1)
-FAST_FN(3, P(a0) P(a1) P(a2), a0, a1, a2)
-FAST_FN(4, P(a0) P(a1) P(a2) P(a3), a0, a1, a2, a3)
-FAST_FN(5, P(a0) P(a1) P(a2) P(a3) P(a4), a0, a1, a2, a3, a4)
-#undef P
-#undef FAST_FN
-
-static void *const cimpl_fast[2][FAST_MAX + 1] = {
-    {cimpl_fast0, cimpl_fast1, cimpl_fast2, cimpl_fast3, cimpl_fast4,
-     cimpl_fast5},
-    {cimpl_fastkw0, cimpl_fastkw1, cimpl_fastkw2, cimpl_fastkw3, cimpl_fastkw4,
-     cimpl_fastkw5}};
-
 /* the result is checked when 'vfunc' is the function object, not for
    LeJIT's own C functions (vfunc NULL) */
 static vinfo_t *
 call_fast(PsycoObject *po, PyCFunction meth, int flags, vinfo_t *vself,
           vinfo_t *vargs, vinfo_t *vfunc)
 {
-    static const char *const fmt[FAST_MAX + 1] = {
-        "lv", "lvv", "lvvv", "lvvvv", "lvvvvv", "lvvvvvv"};
     int kw = (flags & METH_KEYWORDS) != 0;
     int n = PsycoTuple_Load(vargs);
-    vinfo_t *a[FAST_MAX] = {NULL};
     int cf = vfunc != NULL ? CF_UNCHECKED : CfCommonNewRefPyObject;
     vinfo_t *r;
-    int i;
-    if (psyco_cannot_block(meth)) /* meth's, not cimpl_fastN's */
-        cf |= CfNoBlock;
-    if (n < 0 || n > FAST_MAX) {
+    if (n < 0) {
         void *fn = kw ? (void *)cimpl_call_fast_kw : (void *)cimpl_call_fast;
+        if (psyco_cannot_block(meth)) /* meth's, not fn's */
+            cf |= CfNoBlock;
         r = psyco_generic_call(po, fn, cf, "lvv", (long)meth, vself, vargs);
     }
     else {
-        for (i = 0; i < n; i++) a[i] = PsycoTuple_GET_ITEM(vargs, i);
+        vinfo_array_t *array = array_new(n);
+        int i;
+        for (i = 0; i < n; i++)
+            array->items[i] = PsycoTuple_GET_ITEM(vargs, i);
         LE_STAT(psyco_stat_cfunc_fast++);
-        /* fmt[n] stops before the unused (NULL) trailing arguments */
-        r = psyco_generic_call(po, cimpl_fast[kw][n], cf, fmt[n], (long)meth,
-                               vself, a[0], a[1], a[2], a[3], a[4]);
+        if (kw) /* kwnames NULL */
+            r = psyco_generic_call(po, meth, cf, "vill", vself, array, (long)n,
+                                   (long)NULL);
+        else
+            r = psyco_generic_call(po, meth, cf, "vil", vself, array, (long)n);
+        array_release(array);
     }
     return vfunc != NULL ? check_result(po, r, vfunc) : r;
-}
-
-/* a METH_FASTCALL | METH_KEYWORDS function given n values, the last
-   len(kwnames) of them the keywords', as vectorcall passes them
-   (psyco_generic_call takes at most 7 arguments: meth, self, kwnames and
-   FASTKW_MAX values) */
-#define FASTKW_MAX 4
-#define FASTKW_FN(n, params, ...)                                           \
-    static PyObject *cimpl_fastkwnames##n(PyCFunction meth, PyObject *self, \
-                                          PyObject *kwnames params)         \
-    {                                                                       \
-        PyObject *a[] = {__VA_ARGS__};                                      \
-        return ((_PyCFunctionFastWithKeywords)(void (*)(void))meth)(        \
-            self, a, n - PyTuple_GET_SIZE(kwnames), kwnames);               \
-    }
-#define P(x) , PyObject *x
-FASTKW_FN(1, P(a0), a0)
-FASTKW_FN(2, P(a0) P(a1), a0, a1)
-FASTKW_FN(3, P(a0) P(a1) P(a2), a0, a1, a2)
-FASTKW_FN(4, P(a0) P(a1) P(a2) P(a3), a0, a1, a2, a3)
-#undef P
-#undef FASTKW_FN
-
-static void *const cimpl_fastkwnames[FASTKW_MAX + 1] = {
-    NULL, cimpl_fastkwnames1, cimpl_fastkwnames2, cimpl_fastkwnames3,
-    cimpl_fastkwnames4};
-
-/* the same with more values, in a tuple */
-static PyObject *
-cimpl_fastkwnames_tuple(PyCFunction meth, PyObject *self, PyObject *kwnames,
-                        PyObject *values)
-{
-    return ((_PyCFunctionFastWithKeywords)(void (*)(void))meth)(
-        self, &PyTuple_GET_ITEM(values, 0),
-        PyTuple_GET_SIZE(values) - PyTuple_GET_SIZE(kwnames), kwnames);
 }
 
 /* A call with keywords, which are pending (a keyword call's names and
    values, no dict made), as CPython's vectorcall makes it with no bound
    method: a METH_FASTCALL | METH_KEYWORDS function gets the values in an
-   array (a tuple's, past FASTKW_MAX of them) and the call's names tuple,
-   a METH_VARARGS | METH_KEYWORDS one
-   the arguments' tuple and the keywords' dict. NULL with no exception set
-   for the residual call, which gives CPython's errors for the others. */
+   array, the last len(kwnames) of them the keywords', and the call's names
+   tuple, a METH_VARARGS | METH_KEYWORDS one the arguments' tuple and the
+   keywords' dict. NULL with no exception set for the residual call, which
+   gives CPython's errors for the others. */
 static vinfo_t *
 call_keywords(PsycoObject *po, PyMethodDef *ml, int flags, vinfo_t *vself,
               vinfo_t *vargs, vinfo_t *kwargs, vinfo_t *vfunc)
 {
-    static const char *const fmt[FASTKW_MAX + 1] = {NULL, "lvvv", "lvvvv",
-                                                    "lvvvvv", "lvvvvvv"};
     vinfo_t **kwvalues;
     PyObject *kwnames = PsycoDict_PendingNames(kwargs, &kwvalues);
-    vinfo_t *a[FASTKW_MAX] = {NULL};
+    vinfo_array_t *array;
     vinfo_t *vnames, *r;
-    int cf = CF_UNCHECKED;
     int i, n, k;
     if (kwnames == NULL || (k = (int)PyTuple_GET_SIZE(kwnames)) == 0)
         return NULL;
-    if (psyco_cannot_block(ml->ml_meth))
-        cf |= CfNoBlock;
     if (flags == (METH_VARARGS | METH_KEYWORDS))
         return check_result(po,
-                            psyco_generic_call(po, ml->ml_meth, cf, "vvv",
-                                               vself, vargs, kwargs),
+                            psyco_generic_call(po, ml->ml_meth, CF_UNCHECKED,
+                                               "vvv", vself, vargs, kwargs),
                             vfunc);
     if (flags != (METH_FASTCALL | METH_KEYWORDS))
         return NULL;
@@ -395,26 +338,12 @@ call_keywords(PsycoObject *po, PyMethodDef *ml, int flags, vinfo_t *vself,
         return NULL;
     Py_INCREF(kwnames);
     vnames = vinfo_new(CompileTime_NewSk(sk_new((long)kwnames, SkFlagPyObj)));
-    if (n + k > FASTKW_MAX) {
-        vinfo_t *vvalues = PsycoTuple_New(n + k, NULL);
-        for (i = 0; i < n + k; i++) {
-            vinfo_t *v =
-                i < n ? PsycoTuple_GET_ITEM(vargs, i) : kwvalues[i - n];
-            vinfo_incref(v);
-            PsycoTuple_GET_ITEM(vvalues, i) = v;
-        }
-        r = psyco_generic_call(po, cimpl_fastkwnames_tuple, cf, "lvvv",
-                               (long)ml->ml_meth, vself, vnames, vvalues);
-        vinfo_decref(vvalues, po);
-    }
-    else {
-        for (i = 0; i < n; i++) a[i] = PsycoTuple_GET_ITEM(vargs, i);
-        for (i = 0; i < k; i++) a[n + i] = kwvalues[i];
-        /* fmt[n + k] stops before the unused (NULL) trailing values */
-        r = psyco_generic_call(po, cimpl_fastkwnames[n + k], cf, fmt[n + k],
-                               (long)ml->ml_meth, vself, vnames, a[0], a[1],
-                               a[2], a[3]);
-    }
+    array = array_new(n + k);
+    for (i = 0; i < n; i++) array->items[i] = PsycoTuple_GET_ITEM(vargs, i);
+    for (i = 0; i < k; i++) array->items[n + i] = kwvalues[i];
+    r = psyco_generic_call(po, ml->ml_meth, CF_UNCHECKED, "vilv", vself, array,
+                           (long)n, vnames);
+    array_release(array);
     vinfo_decref(vnames, po);
     return check_result(po, r, vfunc);
 }

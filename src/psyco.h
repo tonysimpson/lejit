@@ -934,6 +934,35 @@ le_type_dict(PyTypeObject *tp)
 
 typedef unsigned char code_t;
 
+/* Relocations: every place that holds where compiled code is, noted as
+   it is written while a compile runs. JUMP: the rel32 at 'at' of a jump
+   or call, counted from at + end; DATA: a 32-bit distance counted from
+   at + end that must stay in reach (RIP-relative data, a record's offset
+   to its jump); WORD: the address of code, in code or in a record, or with
+   'end' 1 the end of a piece of code. A checked build moves the code each
+   outermost compile wrote as it ends, patching from the notes
+   (codemanager.c:psyco_code_move_made), so that a place not noted traps
+   in tests; the owner then keeps the relocations in its code. */
+enum { LE_RELOC_JUMP, LE_RELOC_DATA, LE_RELOC_WORD };
+#if ALL_CHECKS
+/* notes 'at' once written */
+EXTERNFN void
+le_reloc_note(void *at, int kind, int end);
+/* notes the rel32 'value' about to be written for a jump ending at 'end',
+   and gives it back */
+EXTERNFN long
+le_reloc_jump(code_t *end, long value);
+/* where code that the compile just ended wrote at 'p' is now */
+EXTERNFN code_t *
+psyco_code_moved(code_t *p);
+#else
+#define le_reloc_note(at, kind, end) ((void)0)
+#define le_reloc_jump(end, value) (value)
+#define psyco_code_moved(p) (p)
+#endif
+#define LE_RELOC_SLOT(p) le_reloc_note((void *)(p), LE_RELOC_WORD, 0)
+#define LE_RELOC_SLOT_END(p) le_reloc_note((void *)(p), LE_RELOC_WORD, 1)
+
 typedef struct vinfo_s vinfo_t;             /* defined in compiler.h */
 typedef struct vinfo_array_s vinfo_array_t; /* defined in compiler.h */
 typedef struct PsycoObject_s PsycoObject;   /* defined in compiler.h */
@@ -969,6 +998,10 @@ typedef struct le_owner_s {
                                   NULL for a code object's own */
     struct le_group_s *groups; /* a code object's: its groups, newest
                                   first */
+#if ALL_CHECKS
+    struct le_reloc_s *relocs; /* the relocations in its code */
+    int nrelocs, relocscap;
+#endif
 } le_owner_t;
 
 /* What LeJIT keeps per code object, on its weak references (lejit.c): found by
@@ -994,6 +1027,10 @@ le_gen_iternext(PyObject *gen);
    inside the coroutine with each await a SEND loop */
 #define LE_RESUMES_COROUTINES_COMPILED \
     (LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME)
+/* CPython runs a Python-to-Python call in the caller's C frame, where its
+   frames are interpreter frames: compiled calls switch to a stack segment
+   when the stack is low (segments.c) */
+#define LE_STACK_SEGMENTS LE_HAS_INTERPRETER_FRAME
 /* a frame with more words (locals plus stack) resumes interpreted */
 #define LE_FRAME_WORDS_MAX 1024
 
@@ -1017,9 +1054,6 @@ typedef struct {
 typedef struct {
     int lasti; /* f_lasti there, -1 for the start */
     int count;
-    int in_handler; /* a coroutine's place inside an exception handler,
-                       which resumes interpreted (pycompiler.c: a handler
-                       that can await runs in ceval) */
     le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 
@@ -1062,19 +1096,20 @@ typedef struct le_gen_direct_s {
    memory (eval_hook.c) */
 EXTERNFN le_gen_direct_t *
 le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x);
-/* what compiled code calls after a direct step of the generator 'gen'
-   whose run gave 'result' and didn't simply pause at a yield
-   (eval_hook.c), as gen_iternext returns */
+/* what compiled code calls on thread 'ts' after a direct step of the
+   generator 'gen' whose run gave 'result' and didn't simply pause at a
+   yield (eval_hook.c), as gen_iternext returns */
 EXTERNFN PyObject *
-le_gen_direct_end(PyObject *gen, PyObject *result);
+le_gen_direct_end(PyThreadState *ts, PyObject *gen, PyObject *result);
 /* the same after a step made by send(), as gen_send returns */
 EXTERNFN PyObject *
-le_gen_direct_send_end(PyObject *gen, PyObject *result);
+le_gen_direct_send_end(PyThreadState *ts, PyObject *gen, PyObject *result);
 /* the same after a step made by yield from's SEND, as PyIter_Send:
    1 with the value yielded in out[0], 0 with the value returned, -1 with
    the exception */
 EXTERNFN int
-le_gen_direct_send_status(PyObject *gen, PyObject *result, PyObject *out[]);
+le_gen_direct_send_status(PyThreadState *ts, PyObject *gen, PyObject *result,
+                          PyObject *out[]);
 #endif
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {

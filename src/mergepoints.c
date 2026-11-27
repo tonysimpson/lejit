@@ -31,6 +31,7 @@
 #include "bytecode.h"
 #include "vcompiler.h"
 #include "codemanager.h"
+#include "Python/pycompiler.h"
 
 typedef struct {
     int flags;
@@ -125,9 +126,10 @@ report_destructor(PyObject *capsule)
    (a namedtuple of thousands of fields) and stays in ceval */
 #define MAX_FRAME_VALUES 1000
 
-/* inlining (upstream's rule): one merge point (the start), no block, no
-   LOAD_GLOBAL, and at most this many instructions that are not "light"
-   (produce little or no code) */
+/* inlining (upstream's rule): one merge point (the start), no block, and at
+   most this many instructions that are not "light" (produce little or no
+   code). A global read may be inlined: its guard ends the block there, which
+   inside an inlined frame is a join point like any other (vcompiler.c) */
 #define INLINE_MAXIMUM_WEIGHT 16
 #define IS_LIGHT_INSTR(op) (le_op_flags(op) & LE_OPF_LIGHT)
 
@@ -381,7 +383,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     Py_ssize_t mergepoint_index = 0;
     co_report_t *report;
     int flags = 0;
-    int weight = 0, loads_global = 0;
+    int weight = 0, loop_block = 0;
     Py_ssize_t entry_count_index = -1;
     Py_ssize_t entry_count_len = end_unit + 1;
     /* a byte per code unit each, on the heap: a function's code can be
@@ -407,8 +409,6 @@ _find_merge_points(PyCodeObject *co, int *bad)
         is_start[entry_count_index] = 1;
         if (!IS_LIGHT_INSTR(opcode))
             weight++;
-        if (opcode == LOAD_GLOBAL)
-            loads_global = 1;
         /* after a call pycompiler.c tests at the end of the call itself,
            if it emitted a call that may block, except before an
            instruction ceval skips: then always, after that one */
@@ -436,6 +436,11 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 BREAKER_CHECK(TARGET_UNIT());
                 ENTER_NEXT();
                 break;
+            /* a block too, though a loop that returns from its first round
+               makes no join */
+            case SETUP_LOOP:
+                loop_block = 1;
+                /* fall through */
             /* BREAK_LOOP goes to the SETUP_LOOP target, counted there;
                CALL_FINALLY's successors are the finally block and the next
                instruction, where END_FINALLY leaves the block */
@@ -508,7 +513,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     /* the single merge point means no loop and no join: after the call
        enters the inlined body (pycompiler.c, EInline) the next merge point
        looked for is past the start, so inlined state is never snapshotted */
-    if (mergepoint_count == 1 && flags == 0 && !loads_global &&
+    if (mergepoint_count == 1 && flags == 0 && !loop_block &&
         weight <= INLINE_MAXIMUM_WEIGHT)
         flags |= MP_FLAGS_INLINABLE;
     report->flags = flags;
@@ -533,6 +538,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
             report->mergepoints[mergepoint_index].blocks = 0;
             report->mergepoints[mergepoint_index].entries.varies = NULL;
             report->mergepoints[mergepoint_index].real_from = 0;
+            report->mergepoints[mergepoint_index].virtual_numbers = 0;
+            report->mergepoints[mergepoint_index].virtual_objects = 0;
             mergepoint_index++;
         }
     }
@@ -541,6 +548,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].blocks = 0;
     report->mergepoints[mergepoint_count].entries.varies = NULL;
     report->mergepoints[mergepoint_count].real_from = 0;
+    report->mergepoints[mergepoint_count].virtual_numbers = 0;
+    report->mergepoints[mergepoint_count].virtual_objects = 0;
     PyMem_Free(entry_count);
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
@@ -577,13 +586,30 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
 
 /* the CALL_INTRINSIC_1 arguments pycompiler.c compiles, besides those
    bytecode.h:le_instr folds to the opcodes they replaced: a generator's
-   PEP 479 handler, and the REPL's print */
+   PEP 479 handler, frozenset() of a new set, and the REPL's print */
 static int
 compiled_intrinsic(int arg)
 {
+#ifdef INTRINSIC_BUILD_FROZENSET
+    if (arg == INTRINSIC_BUILD_FROZENSET)
+        return 1;
+#endif
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
     return arg == INTRINSIC_PRINT || arg == INTRINSIC_STOPITERATION_ERROR;
 #else
+    return 0;
+#endif
+}
+
+/* the CALL_INTRINSIC_2 arguments pycompiler.c compiles: a class pattern
+   with no arguments (`case C():`), where CPython has one for it */
+static int
+compiled_intrinsic_2(int arg)
+{
+#ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
+    return arg == INTRINSIC_MATCH_CLASS_ISINSTANCE;
+#else
+    (void)arg;
     return 0;
 #endif
 }
@@ -635,6 +661,8 @@ _build_merge_points(PyCodeObject *co, int module)
         if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)
             goto not_ok;
         if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
+            goto not_ok;
+        if (opcode == CALL_INTRINSIC_2 && !compiled_intrinsic_2(oparg))
             goto not_ok;
         /* cimpl_import_name imports eagerly */
         if (opcode == IMPORT_NAME && LE_IMPORT_LAZY(oparg))
@@ -852,7 +880,7 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
                 next[n++] = in.target;
                 break;
             default:
-                if (LE_IS_JABS(in.op) || LE_IS_JREL(in.op))
+                if (in.target >= 0)
                     next[n++] = in.target;
                 next[n++] = in.next;
         }
@@ -932,8 +960,8 @@ handler_yields_kept(PyCodeObject *co, le_code_t c)
 DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
-#if LE_RESUMES_COROUTINES_COMPILED
-    return (co->co_flags & CO_COROUTINE) &&
+#if LE_RESUMES_COROUTINES
+    return (co->co_flags & (CO_COROUTINE | CO_ASYNC_GENERATOR)) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
     (void)co;
@@ -942,22 +970,35 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 #endif
 }
 
-/* whether the body of 'co', a plain generator or a coroutine, can run
+/* whether an async generator's body can run compiled: as a coroutine's,
+   where its yields can wrap their values */
+static int
+async_gens_compiled(void)
+{
+    return LE_RESUMES_COROUTINES_COMPILED && psyco_async_gen_wrapper != NULL;
+}
+
+/* whether the body of 'co', a plain generator, a coroutine or an async
+   generator, can run
    compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
    GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
-   compiled only as SEND's loop), no async for, and no yield
-   inside an exception handler, whose stack and blocks LeJIT keeps apart
-   from the frame's (an EXCEPT_HANDLER block, a finally block's
-   pseudo-exception); a coroutine's handlers that can await run in ceval
-   instead (handler_yields_kept) */
+   compiled only as SEND's loop), and, where handlers have
+   blocks, no yield inside an exception handler, whose stack and blocks
+   LeJIT keeps apart from the frame's (an EXCEPT_HANDLER block, a finally
+   block's pseudo-exception); a coroutine's handlers that can await run in
+   ceval instead (handler_yields_kept). With an exception table, a
+   handler's state is items on the frame's stack and the exception it
+   handles is the generator's own, which a pause leaves where ceval's
+   does. A types.coroutine generator's body is a plain generator's. */
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
     int pos;
-    int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
-                               CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
+    int kind =
+        co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
     if (kind != CO_GENERATOR &&
-        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED))
+        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED) &&
+        (kind != CO_ASYNC_GENERATOR || !async_gens_compiled()))
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */
@@ -976,14 +1017,11 @@ body_compilable(PyCodeObject *co, le_code_t *c)
                 if (!LE_HAS_OPCODE_SEND || !LE_RESUMES_ON_FRAME)
                     return 0;
                 break;
-            /* async for */
-            case GET_AITER:
-            case GET_ANEXT:
-            case END_ASYNC_FOR:
-                return 0;
         }
     }
-    if (kind == CO_COROUTINE)
+    if (LE_HAS_EXCEPTION_TABLE)
+        return 1;
+    if (kind != CO_GENERATOR)
         return handler_yields_kept(co, *c);
     return !yields_in_handler(co, *c);
 }
@@ -998,13 +1036,14 @@ psyco_is_resumable_generator(PyCodeObject *co)
     return body_compilable(co, &c);
 }
 
-/* whether the instruction at 'pos' in a coroutine's body that can run as
-   a call (psyco_is_startable_coroutine) may run inside an exception
-   handler (handler_reach) */
+/* whether the instruction at 'pos' may run inside an exception handler
+   (handler_reach): in a coroutine's body that can run as a call
+   (psyco_is_startable_coroutine), or where a resumed frame holds a
+   handler's lasti as a tagged int (pycompiler.c:stack_words_taken) */
 DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
-#if LE_RESUMES_COROUTINES_COMPILED
+#if LE_RESUMES_COROUTINES || LE_HAS_TAGGED_LASTI
     return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;
@@ -1013,18 +1052,111 @@ psyco_in_handler(PyCodeObject *co, int pos)
 #endif
 }
 
+#if LE_HAS_EXCEPTION_TABLE
+/* whether the instruction at 'at' runs in the handler at 'h', once its
+   PUSH_EXC_INFO has saved the handled exception before it at stack
+   position 'saved': reached from there by plain flow, or by an exception
+   to a handler that keeps that position, before the handler's own
+   POP_EXCEPT ('nested' counts those of the handlers entered meanwhile) */
+static int
+handles_at(PyCodeObject *co, le_code_t c, int h, int saved, int at)
+{
+    int units = c.size / LE_UNIT, top = 0, u, reach = 0;
+    int *work = PyMem_Malloc((units + 1) * (sizeof(int) + 1));
+    signed char *nested;
+    if (work == NULL)
+        return 0; /* out of memory: taken as not */
+    nested = (signed char *)(work + units + 1);
+    memset(nested, -1, units + 1);
+    u = le_instr(c, h).next / LE_UNIT;
+    nested[u] = 0;
+    work[top++] = u;
+    while (top > 0) {
+        le_instr_t in;
+        le_handler_t e;
+        int next[3], depth[3], n = 0, d, k, f;
+        u = work[--top];
+        d = nested[u];
+        in = le_instr(c, u * LE_UNIT);
+        if (u * LE_UNIT <= at && at < in.next) {
+            reach = 1;
+            break;
+        }
+        f = le_op_flags(in.op);
+        if (in.op == POP_EXCEPT) {
+            if (d == 0)
+                continue;
+            next[n] = in.next;
+            depth[n++] = d - 1;
+        }
+        else if (in.op == PUSH_EXC_INFO) {
+            next[n] = in.next;
+            depth[n++] = d + 1;
+        }
+        else if (!(f & LE_OPF_STOPS)) {
+            if (in.target >= 0) {
+                next[n] = in.target;
+                depth[n++] = d;
+            }
+            if (!(f & LE_OPF_JUMPS)) {
+                next[n] = in.next;
+                depth[n++] = d;
+            }
+        }
+        if (le_handler_find(co, u * LE_UNIT, &e) && e.depth > saved) {
+            next[n] = e.handler;
+            depth[n++] = d;
+        }
+        for (k = 0; k < n; k++) {
+            int v = next[k] / LE_UNIT;
+            if (next[k] >= c.size || nested[v] >= 0 || depth[k] > CO_MAXBLOCKS)
+                continue;
+            nested[v] = (signed char)depth[k];
+            work[top++] = v;
+        }
+    }
+    PyMem_Free(work);
+    return reach;
+}
+#endif
+
+/* the stack position where the outermost handler running the instruction
+   at 'at' in 'co' keeps the exception handled before it (PUSH_EXC_INFO's
+   saved one), or -1 if no handler runs it; where handlers are blocks,
+   their EXCEPT_HANDLER blocks say it instead */
+DEFINEFN int
+psyco_handled_saved(PyCodeObject *co, int at)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    le_code_t c = le_code(co);
+    Py_ssize_t i = 0;
+    le_handler_t h;
+    int found = -1, last = -1;
+    while (le_handler_next(co, &i, &h)) {
+        int saved = h.depth + h.lasti;
+        if (h.handler == last || (found >= 0 && saved >= found) ||
+            le_instr(c, h.handler).op != PUSH_EXC_INFO)
+            continue;
+        last = h.handler;
+        if (handles_at(co, c, h.handler, saved, at))
+            found = saved;
+    }
+    return found;
+#else
+    (void)co;
+    (void)at;
+    return -1;
+#endif
+}
+
 /* the code of a coroutine whose body can run as a call when it is awaited
    as soon as it is made (psyfunc.c:psyco_coro_start) */
 DEFINEFN int
 psyco_is_startable_coroutine(PyCodeObject *co)
 {
-#if LE_RESUMES_COROUTINES
     le_code_t c;
-    return (co->co_flags & CO_COROUTINE) && body_compilable(co, &c);
-#else
-    (void)co;
-    return 0;
-#endif
+    return LE_HAS_GEN_NEW_AROUND_FRAME && (co->co_flags & CO_COROUTINE) &&
+           body_compilable(co, &c);
 }
 
 DEFINEFN PyObject *

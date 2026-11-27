@@ -194,6 +194,80 @@ def turned_off(n):
     return after < 3 * before + 0.002
 
 
+def rechecks():
+    """compiled code's exact tracing tests so far: 0 where it makes none,
+    or where a release build can't say"""
+    stats = getattr(sys.modules.get('lejit._core'), '_stats', None)
+    return 0 if stats is None else stats().get('tracing_rechecks', 0)
+
+
+def compiled(f):
+    info = getattr(sys.modules.get('lejit._core'), '_code_info', None)
+    return info is None or info(f.__code__) == 'compiled'
+
+
+def cprofile_tool():
+    import cProfile
+    p = cProfile.Profile()
+    return p.enable, p.disable
+
+
+def monitoring_tool(local):
+    # a sys.monitoring tool watching every code, or loop's and add's alone
+    M = sys.monitoring
+    tool = 3
+    codes = (loop.__code__, add.__code__)
+
+    def on():
+        M.use_tool_id(tool, 'case')
+        M.register_callback(tool, M.events.PY_START, lambda code, at: None)
+        if local:
+            for co in codes:
+                M.set_local_events(tool, co, M.events.PY_START)
+        else:
+            M.set_events(tool, M.events.PY_START)
+
+    def off():
+        if local:
+            for co in codes:
+                M.set_local_events(tool, co, 0)
+        else:
+            M.set_events(tool, 0)
+        M.register_callback(tool, M.events.PY_START, None)
+        M.free_tool_id(tool)
+    return on, off
+
+
+TOOLS = {
+    'settrace': lambda: (lambda: sys.settrace(lambda *a: None),
+                         lambda: sys.settrace(None)),
+    'setprofile': lambda: (lambda: sys.setprofile(lambda *a: None),
+                           lambda: sys.setprofile(None)),
+    'cprofile': cprofile_tool,
+    'monitoring': lambda: monitoring_tool(False),
+    'monitoring_local': lambda: monitoring_tool(True),
+}
+
+
+def after_a_tool(name, n):
+    # once a tool has watched code and stopped, compiled calls into that
+    # code make no exact tracing test: CPython keeps the code's monitoring
+    # data, which the quick test must not take for a tool still watching
+    if name.startswith('monitoring') and not hasattr(sys, 'monitoring'):
+        return None
+    on, off = TOOLS[name]()
+    loop(n)
+    on()
+    try:
+        loop(n)
+    finally:
+        off()
+    loop(n)                           # the first test after brings it back
+    start = rechecks()
+    r = loop(n) + loop(n)
+    return r, rechecks() - start, compiled(loop)
+
+
 CASES = [
     ('traced', [(1,)], {}),
     ('profiled', [(1,)], {}),
@@ -204,4 +278,8 @@ CASES = [
     ('c_calls', [(1,)], {}),
     ('genexpr', [(4,)], {}),
     ('turned_off', [(20000,)], {}),
+    ('after_a_tool', [(name, 200) for name in sorted(TOOLS)],
+     {'clear_type_cache': "cProfile's enable and disable look its callbacks "
+                          'up by names made afresh each time'}
+     if hasattr(sys, 'monitoring') else {}),
 ]

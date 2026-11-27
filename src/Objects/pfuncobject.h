@@ -33,12 +33,16 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw);
 /* PyFunction_Type's tp_call as compiled code calls it */
 EXTERNFN ternaryfunc
 le_function_tp_call(void);
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+/* the vectorcall function a new function has (psy_funcobject_init) */
+EXTERNVAR vectorcallfunc le_usual_vectorcall;
+#endif
 /* a call of the function 'f' (promoted, 'func' at compile time), with
    'kw' NULL or as psyfunc.c:psyco_call_pyfunc takes it */
 /* the real call of a Python function, as compiled code makes it */
 EXTERNFN vinfo_t *
 PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
-                       vinfo_t *kw);
+                       vinfo_t *kw, bool as_direct);
 EXTERNFN vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
                       vinfo_t *arg, vinfo_t *kw, bool allow_inline);
@@ -76,5 +80,20 @@ PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple, vinfo_t *vglobals,
                  PyCodeObject *co);
 EXTERNFN bool
 PsycoGenexpr_Check(vinfo_t *v);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* A virtual generator: one compiled code has started stepping
+   (psyfunc.c:gen_send), its paused state in a record (Python/genrecord.c,
+   a run-time reference) in place of the arguments. Anything else makes it
+   escape, into the real generator, the same object each time. A pending
+   generator becomes one in place, keeping its function, type and code. */
+#define iVGEN_RECORD iGENEXPR_ARGS
+EXTERNFN void
+PsycoVgen_FromPending(PsycoObject *po, vinfo_t *v, vinfo_t *rec);
+EXTERNFN bool
+PsycoVgen_Check(vinfo_t *v);
+#define LE_VGEN_CHECK(v) PsycoVgen_Check(v)
+#else
+#define LE_VGEN_CHECK(v) false
+#endif
 
 #endif /* _PSY_FUNCOBJECT_H */

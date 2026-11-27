@@ -22,6 +22,9 @@
 #include "vcompiler.h"
 #include "Python/pycompiler.h"
 #include "Objects/pobject.h"
+#include "Objects/pboolobject.h"
+#include "Objects/pfloatobject.h"
+#include "Objects/plongobject.h"
 #include "codemanager.h"
 #include "dispatcher.h"
 #include "mergepoints.h"
@@ -804,7 +807,7 @@ do_resume_coding(coding_pause_t *cp, long value)
     r = do_resume_coding_body(cp);
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_PAUSE);
-    return r;
+    return psyco_code_moved(r);
 }
 
 static code_t *
@@ -872,6 +875,7 @@ psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
 
     /* write the jump to the stub */
     cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
+    LE_RELOC_SLOT_END(&cp->jump_to_fix);
     end = po->code;
     psyco_park(&cp->state, po, NULL);
     return end;
@@ -974,12 +978,38 @@ mp_capped(mergepoint_t *mp)
     return MP_BLOCK_CAP > 0 && mp != NULL && mp->blocks >= MP_BLOCK_CAP;
 }
 
+/* counts what kinds of virtual values the locals of a new block at 'mp'
+   hold, for dispatcher.c:made_real_when_dead */
+static void
+mp_count_virtuals(PsycoObject *po, mergepoint_t *mp)
+{
+    int i, n = le_code_nlocalsplus(po->pr.co);
+    if (po->pr.is_inlining)
+        return;
+    for (i = 0; i < n && INDEX_LOC_LOCALS_PLUS + i < po->vlocals.count; i++) {
+        vinfo_t *vi = LOC_LOCALS_PLUS[i];
+        source_virtual_t *sv;
+        if (vi == NULL || !is_virtualtime(vi->source))
+            continue;
+        sv = VirtualTime_Get(vi->source);
+        if (sv == &psyco_computed_long || sv == &psyco_computed_bool ||
+            sv == &psyco_computed_float)
+            mp->virtual_numbers++;
+        else
+            mp->virtual_objects++;
+    }
+}
+
 static void
 mp_new_block(PsycoObject *po, mergepoint_t *mp)
 {
     if (mp == NULL)
         return;
     mp->blocks++;
+    /* only up to the cap, so every block that makes values real here sees
+       the same counts */
+    if (mp->blocks <= MP_BLOCK_CAP)
+        mp_count_virtuals(po, mp);
     /* blocks made from now on make dead virtual locals real here
        (dispatcher.c:psyco_make_dead_virtuals_real) */
     if (mp->blocks == MP_BLOCK_CAP && mp->real_from == 0)
@@ -1005,8 +1035,11 @@ DEFINEFN
 code_t *
 psyco_compile(PsycoObject *po, mergepoint_t *mp, bool continue_compilation)
 {
-    vcompatible_t *cmp =
-        mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
+    vcompatible_t *cmp;
+    BEGIN_CODE
+    XMM_SPILL();
+    END_CODE
+    cmp = mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
 
     /*psyco_assert_cleared_tmp_marks(&po->vlocals);  -- not needed -- */
 
@@ -1112,9 +1145,18 @@ DEFINEFN long psyco_stat_joins[4];
 static code_t *
 compile_join(PsycoObject *po, global_entries_t *ge, bool branch, bool first)
 {
-    vcompatible_t *cmp =
-        ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
+    vcompatible_t *cmp;
     CodeBufferObject *codebuf;
+    BEGIN_CODE
+    XMM_SPILL();
+    END_CODE
+    cmp = ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
+    /* code that is no group's compiles its own block rather than keep a
+       group's alive by jumping into it */
+    if (cmp != NULL && psyco_owner_would_hold(cmp->matching)) {
+        psyco_stabilize(cmp);
+        cmp = NULL;
+    }
 
     if (cmp != NULL && cmp->diff == NullArray) {
         CodeBufferObject *oldcodebuf;
@@ -1157,7 +1199,12 @@ psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
     vcompatible_t *cmp;
     psyco_resolved_cc(po2, condition);
     psyco_resolved_cc(po, INVERT_CC(condition));
-    cmp = mp == NULL ? NULL : psyco_compatible(po2, &mp->entries);
+    /* the exact match's moves go in a short block, with no room to spill
+       XMM registers first: a state holding them is compiled later, as a
+       new block, by psyco_compile_code */
+    cmp = mp == NULL || psyco_xmm_live(po2)
+              ? NULL
+              : psyco_compatible(po2, &mp->entries);
 
     extra_assert((int)condition < CC_TOTAL);
 
@@ -1198,8 +1245,18 @@ psyco_compile_code(PsycoObject *po, mergepoint_t *mp)
     code_t *code1;
     CodeBufferObject *codebuf;
     bool compile_now;
-    vcompatible_t *cmp =
-        mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
+    vcompatible_t *cmp;
+
+    if (psyco_xmm_live(po)) {
+        /* a paused state that held XMM registers: a block of its own
+           spills them, then compiles on from the merge point */
+        codebuf = psyco_new_code_buffer(po, NULL, &po->codelimit);
+        po->code = insn_code_label(codebuf->codestart);
+        code1 = psyco_compile(po, mp, false);
+        CLOSE_CODE("block", codebuf->codestart, code1);
+        return codebuf;
+    }
+    cmp = mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
 
     /*psyco_assert_cleared_tmp_marks(&po->vlocals);  -- not needed -- */
 
