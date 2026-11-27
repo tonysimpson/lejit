@@ -3142,7 +3142,8 @@ feeds_build_string(PyCodeObject *co, int next_instr)
         le_instr_t in = le_instr(c, next_instr);
         int op = in.op, arg = in.arg;
         next_instr = in.next;
-        if (op == LOAD_CONST || op == LOAD_FAST || op == LOAD_DEREF)
+        if (op == LOAD_CONST || op == LOAD_COMMON_CONSTANT ||
+            op == LOAD_FAST || op == LOAD_DEREF)
             depth++;
         else if (op == LOAD_FAST_LOAD_FAST)
             depth += 2;
@@ -5785,7 +5786,8 @@ unfolded_slice(vinfo_t *container, vinfo_t *sub)
    with no merge point from the instruction after the first to the store,
    so the store is reached only through the get. Only loads stand between
    the two besides OP, so d and k are the get's objects. A LOAD_FAST d,
-   LOAD_FAST k pair may be one LOAD_FAST_LOAD_FAST, and y a LOAD_SMALL_INT.
+   LOAD_FAST k pair may be one LOAD_FAST_LOAD_FAST, and y a LOAD_SMALL_INT or
+   LOAD_COMMON_CONSTANT.
    '*dlocal' is set to d's local for the get form. */
 static int
 fused_store(PsycoObject *po, int i, int *dlocal)
@@ -5797,7 +5799,7 @@ fused_store(PsycoObject *po, int i, int *dlocal)
     mergepoint_t *mp;
 #define FUSION_LOAD(in)                               \
     ((in).op == LOAD_CONST || (in).op == LOAD_FAST || \
-     (in).op == LOAD_SMALL_INT)
+     (in).op == LOAD_SMALL_INT || (in).op == LOAD_COMMON_CONSTANT)
     get = fusion_next(c, &p);
     load = fusion_next(c, &p);
     op = fusion_next(c, &p);
@@ -10275,6 +10277,7 @@ keeps_pieces(int opcode)
         case LOAD_FAST_LOAD_FAST:
         case LOAD_CONST:
         case LOAD_SMALL_INT:
+        case LOAD_COMMON_CONSTANT:
         case DUP_TOP:
         case DUP_TOP_TWO:
         case ROT_TWO:

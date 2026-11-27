@@ -44,11 +44,12 @@ coro_starts.threads                                3.7,3.8,3.9,3.10,3.11,3.12,3.
 coro_starts.thrown                                 3.12                               not looked at yet
 ctypes_calls.changes                               3.7                                not looked at yet
 ctypes_calls.pointer_results                       3.7                                not looked at yet
+ctypes_calls.retyped_in_loop                       3.7                                not looked at yet
 ctypes_threads.callback_from_c                     3.7,3.8,3.9,3.10,3.11,3.12,3.13    not looked at yet; leaves more alive: dict
 dead_virtual_locals.in_traceback                   3.11,3.12,3.13                     not looked at yet
 dead_virtual_locals.numeric                        3.11,3.12,3.13,3.14,3.15           not looked at yet
 dead_virtual_locals.seen_by_frame                  3.11,3.12,3.13,3.14,3.15           not looked at yet
-deep_unwind.deep_json                              3.14                               not looked at yet
+deep_unwind.deep_json                              3.14,3.15                          not looked at yet on 3.14; on 3.15 the walk that links the callers of the frame returned to makes one more frame object a round
 defining_class_methods.errors                      3.9                                not looked at yet
 dict_keyword_calls.errors                          3.15                               not looked at yet
 dict_watchers.builtin_deleted                      3.10,3.11,3.12,3.13,3.14,3.15      not looked at yet
@@ -88,6 +89,7 @@ frames_seen_from_c.replaced_functions              3.7,3.14,3.15                
 frames_seen_from_c.trim_arity_case                 3.14,3.15                          not looked at yet
 frames_seen_from_c.warn_stacklevel                 3.14,3.15                          not looked at yet
 freeing.borrowed_globals_reused                    3.13,3.14                          not looked at yet
+freeing.callee_outlives_constants                  3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 compiles new module code every round
 freeing.code_dies_with_own_globals                 3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 freeing.code_dies_with_shared_globals              3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 freeing.freed_lists_traced                         3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet

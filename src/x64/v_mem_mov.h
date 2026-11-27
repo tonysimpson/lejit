@@ -68,6 +68,11 @@ v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *index,
     else {
         if (V_IS_RUNTIME(v)) {
             v_reg = V_GET_REG(v);
+            if (v_reg != REG_NONE && REG_IS_XMM(v_reg)) {
+                /* a double: stored from a general register */
+                code = psyco_xmm_to_reg(po, code, v);
+                v_reg = V_GET_REG(v);
+            }
             if (v_reg == REG_NONE) {
                 NEED_FREE_REG_COND(v_reg, (v_reg != V_GET_REG(base) &&
                                            v_reg != V_GET_REG(index)));

@@ -14,6 +14,7 @@
 #include "pmethodobject.h"
 #include "ptupleobject.h"
 #include "../segments.h"
+#include "../Modules/parray.h"
 #include "../Modules/pcffi.h"
 #include "../Modules/pctypes.h"
 
@@ -625,6 +626,7 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
         }
     }
     if (mp_subscript != NULL) {
+        PsycoArray_Seen(tp_o);
         return Psyco_META2(po, mp_subscript, CfCommonNewRefPyObject, "vv", o,
                            key);
     }
@@ -707,6 +709,7 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
         }
     }
     if (mp_ass_subscript != NULL) {
+        PsycoArray_Seen(tp_o);
         return Psyco_META3(po, mp_ass_subscript, CfCommonIntZeroOk, "vvv", o,
                            key, value) != NULL;
     }

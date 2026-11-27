@@ -161,6 +161,41 @@ def changes(n):
     return out
 
 
+# what a call was compiled for is what a replay of its code compiles for,
+# though the function's argtypes and restype changed since: the replay
+# for a branch first taken after the change goes the way the first
+# compile went
+retyped_later = fn('labs', (c_long,), c_long)
+retyped_argument = fn('labs', (c_long,), c_long)
+
+
+def retyped_in_loop(n):
+    out = []
+    f = retyped_later
+    for i in range(n):
+        out.append(f(-i))
+        if i == 3:
+            f.argtypes = (c_double,)
+            f.restype = c_double
+        elif i == 5:
+            out.append('five')
+        elif i == 7:
+            out.append('seven')
+    return out
+
+
+def retyped_as_argument(n, g):
+    out = []
+    for i in range(n):
+        a = g(-i - 0.5) if i > 3 else g(-i)
+        b = i * 2 if i != 6 else -1
+        out.append((a, b))
+        if i == 2:
+            g.argtypes = (c_double,)
+            g.restype = c_double
+    return out
+
+
 def call_through_list(n):
     # a site that calls several functions
     fs = [labs, abs_untyped, labs_int, abs_short, labs_ushort, abs_ubyte,
@@ -351,6 +386,8 @@ CASES = [
     ('errors', [(4,)], {}),
     ('other_converters', [(6,)], {}),
     ('changes', [(12,)], {}),
+    ('retyped_in_loop', [(12,)], {}),
+    ('retyped_as_argument', '[(12, retyped_argument)]', {}),
     ('call_through_list', [(40,)], {}),
     ('hooked', [(5,)], {}),
     ('strings', [(6,)], {}),

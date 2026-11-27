@@ -1215,6 +1215,39 @@ pin_constants(vinfo_array_t *a)
     }
 }
 
+/* the current owner holds 'v', an object, if it is a constant that no
+   owner holds (a caller's LOAD_CONST, which the caller's code object
+   holds), and so the objects a virtual 'v' is made of (the items its
+   source's pyobject_mask marks) */
+static void
+pin_unowned_object(vinfo_t *v)
+{
+    if (v == NULL)
+        return;
+    if (is_compiletime(v->source)) {
+        source_known_t *sk = CompileTime_Get(v->source);
+        if ((sk->refcount1_flags & SkFlagPyObj) == 0 && sk->value != 0)
+            psyco_owner_pin((PyObject *)sk->value);
+    }
+    else if (is_virtualtime(v->source)) {
+        long mask = VirtualTime_Get(v->source)->pyobject_mask;
+        int i;
+        for (i = 0; i < v->array->count; i++)
+            if (i < LONG_BIT - 1 ? (mask >> i) & 1 : mask < 0)
+                pin_unowned_object(v->array->items[i]);
+    }
+}
+
+/* the callee's owner holds the constant objects its locals start with:
+   otherwise, once the caller's code object dies with them, a new object
+   at the same address would match code compiled for the old one */
+static void
+pin_local_constants(PsycoObject *po, PyCodeObject *co)
+{
+    int i;
+    for (i = le_code_nlocals(co); i--;) pin_unowned_object(LOC_LOCALS_PLUS[i]);
+}
+
 /* Compile a direct call's callee, as its own owner (codemanager.h). The
    caller's code jumps into it, so the caller holds the callee's code
    object, which holds the compiled code. Code for an argument that may die
@@ -1231,6 +1264,7 @@ compile_callee(PsycoObject *mypo, PyCodeObject *co)
         LE_OWNER_ENTER(callee);
         psyco_owner_enter_groups(&mypo->vlocals);
         pin_constants(&mypo->vlocals);
+        pin_local_constants(mypo, co);
         codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
         LE_OWNER_LEAVE();
     }

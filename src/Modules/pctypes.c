@@ -1066,13 +1066,94 @@ PsycoCtypes_Byref(PsycoObject *po, PyMethodDef *ml, vinfo_t *vargs)
 #define MAX_INT_ARGS 6
 #define MAX_ARGS 8
 
+/* The fields of a ctypes function a compile decides from (references; NULL
+   as they were), and what reading its restype and argtypes gave then: the
+   fields, or its type's, which the function keeps (borrowed) */
+#define N_FIELDS 6
+typedef struct {
+    PyObject *fields[N_FIELDS]; /* converters, argtypes, restype, checker,
+                                   errcheck, paramflags */
+    PyObject *restype;
+    PyObject *argtypes;
+    bool changed;
+    unsigned long changed_at; /* the first block serial after LeJIT saw the
+                                 fields change */
+} seen_fields_t;
+
+static void
+function_fields(le_cfuncptr_t *fp, PyObject *out[N_FIELDS])
+{
+    out[0] = fp->converters;
+    out[1] = fp->argtypes;
+    out[2] = fp->restype;
+    out[3] = fp->checker;
+    out[4] = fp->errcheck;
+    out[5] = fp->paramflags;
+}
+
+static void
+seen_fields_free(PyObject *capsule)
+{
+    seen_fields_t *s = PyCapsule_GetPointer(capsule, NULL);
+    int i;
+    for (i = 0; i < N_FIELDS; i++) Py_XDECREF(s->fields[i]);
+    PyMem_Free(s);
+}
+
+/* What a compile of a call of 'f' decides from, in a way that a replay
+   repeats (see psyco_block_serial): the fields LeJIT first saw, in blocks
+   older than the moment it first saw them changed; NULL in later blocks,
+   which take ctypes' own call. A replay can't read them afresh: the
+   change that sent the code down a new path may have come after its
+   block was compiled. What LeJIT saw is a record (psyco_record), held by
+   the code that relied on it. */
+static seen_fields_t *
+seen_fields(PsycoObject *po, PyObject *f)
+{
+    static le_addrmap_t seen;
+    PyObject **slot = psyco_record(&seen, f);
+    PyObject *now[N_FIELDS];
+    seen_fields_t *s;
+    int i;
+    function_fields((le_cfuncptr_t *)f, now);
+    if (*slot == NULL) {
+        s = PyMem_Calloc(1, sizeof(seen_fields_t));
+        if (s == NULL)
+            OUT_OF_MEMORY();
+        for (i = 0; i < N_FIELDS; i++) {
+            Py_XINCREF(now[i]);
+            s->fields[i] = now[i];
+        }
+        s->restype = PyObject_GetAttrString(f, "restype");
+        Py_XDECREF(s->restype);
+        s->argtypes = PyObject_GetAttrString(f, "argtypes");
+        Py_XDECREF(s->argtypes);
+        PyErr_Clear();
+        *slot = PyCapsule_New(s, NULL, seen_fields_free);
+        if (*slot == NULL) {
+            for (i = 0; i < N_FIELDS; i++) Py_XDECREF(s->fields[i]);
+            PyMem_Free(s);
+            OUT_OF_MEMORY();
+        }
+    }
+    s = PyCapsule_GetPointer(*slot, NULL);
+    for (i = 0; i < N_FIELDS && !s->changed; i++)
+        if (now[i] != s->fields[i]) {
+            s->changed = true;
+            s->changed_at = psyco_next_serial;
+        }
+    if (s->changed && psyco_block_serial(po) >= s->changed_at)
+        return NULL;
+    return s;
+}
+
 DEFINEFN
 vinfo_t *
 PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
                  vinfo_t *vargs, vinfo_t *kw)
 {
     PyObject *f, *flags, *restype, *converters;
-    le_cfuncptr_t *fp;
+    seen_fields_t *fs;
     vinfo_t *w[MAX_ARGS], *vptr, *vfn, *vts, *r;
     char tags[MAX_ARGS + 1];
     int n, i, nints = 0, ok;
@@ -1101,9 +1182,10 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
         if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(vargs, i)) == NULL)
             return NULL;
 
-    /* what ctypes' call would read now */
-    fp = (le_cfuncptr_t *)f;
-    if (fp->errcheck != NULL || fp->checker != NULL || fp->paramflags != NULL)
+    /* what ctypes' call reads */
+    fs = seen_fields(po, f);
+    if (fs == NULL || fs->fields[4] != NULL || fs->fields[3] != NULL ||
+        fs->fields[5] != NULL)
         return NULL;
     flags = PyObject_GetAttrString((PyObject *)tp, "_flags_");
     if (flags == NULL) {
@@ -1116,12 +1198,9 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
         PyErr_Clear();
         return NULL;
     }
-    restype = PyObject_GetAttrString(f, "restype");
-    if (restype == NULL) {
-        PyErr_Clear();
+    restype = fs->restype;
+    if (restype == NULL)
         return NULL;
-    }
-    Py_DECREF(restype); /* the function or its type keeps it */
     if (restype != Py_None) {
         if (!PyType_Check(restype))
             return NULL;
@@ -1139,15 +1218,12 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
         if (PyObject_HasAttrString(restype, "_check_retval_"))
             return NULL;
     }
-    converters = fp->converters;
+    converters = fs->fields[0];
     if (converters == NULL) {
         /* untyped, unless its type (a prototype) has argtypes */
-        PyObject *a = PyObject_GetAttrString(f, "argtypes");
-        if (a == NULL) {
-            PyErr_Clear();
+        PyObject *a = fs->argtypes;
+        if (a == NULL)
             return NULL;
-        }
-        Py_DECREF(a);
         if (a != Py_None) {
             /* the type's, set when it was made */
             PyObject **pf = proto_fields(tp);
@@ -1209,15 +1285,12 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
     }
     tags[n] = 0;
 
-    /* the fields compiled for are still the function's */
-    if (fp->converters != NULL)
-        psyco_owner_pin(fp->converters);
-    if (fp->restype != NULL)
-        psyco_owner_pin(fp->restype);
+    /* the fields compiled for are still the function's (the record holds
+       them) */
     if (!field_unchanged(po, vf, offsetof(le_cfuncptr_t, converters),
-                         fp->converters, &error) ||
-        !field_unchanged(po, vf, offsetof(le_cfuncptr_t, restype), fp->restype,
-                         &error) ||
+                         fs->fields[0], &error) ||
+        !field_unchanged(po, vf, offsetof(le_cfuncptr_t, restype),
+                         fs->fields[2], &error) ||
         !field_unchanged(po, vf, offsetof(le_cfuncptr_t, checker), NULL,
                          &error) ||
         !field_unchanged(po, vf, offsetof(le_cfuncptr_t, errcheck), NULL,

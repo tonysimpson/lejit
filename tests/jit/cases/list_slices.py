@@ -326,10 +326,27 @@ def constant_slices_made(n):
     return out
 
 
+def reverse_prefix_made(n):
+    # perm[k::-1] stored into perm makes no list of its own; per round,
+    # after the first, which compiles
+    perm = list(range(n))
+    out = []
+    for i in range(3):
+        count_made(list)
+        for j in range(10):
+            for k in range(n):
+                perm[:k + 1] = perm[k::-1]
+        count = made()
+        if i and count is not None:
+            out.append(count)
+    return out == [0] * len(out)
+
+
 CASES = [
     ('constant_slices', [(1,), (3,)], {}),
     ('constant_slices_made', [(3,)], {}),
     ('reverse_prefix', [(0,), (1,), (5,), (12,)], {}),
+    ('reverse_prefix_made', [(8,)], {'expected': [True]}),
     ('rotate', [(0,), (1,), (8,)], {}),
     ('move_to_front', [(0,), (3,), (9,)], {}),
     ('bounds', [(0,), (8,)], {}),
