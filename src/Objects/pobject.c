@@ -632,10 +632,8 @@ static bool
 has_managed_values(PyTypeObject *tp)
 {
 #if LE_HAS_INLINE_VALUES
-    /* emitted code reaches the values with a byte displacement */
     return (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
-           ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL &&
-           tp->tp_basicsize + LE_VALUES_ARRAY < 128;
+           ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
 #elif LE_HAS_MANAGED_VALUES_POINTER || LE_HAS_TAGGED_DICT_OR_VALUES
     return (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
            ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
@@ -1393,6 +1391,51 @@ load_calls_python(PyTypeObject *tp, PyObject *name)
 }
 #endif
 
+#if LE_HAS_MANAGED_DICT
+/* An instance of a class with a managed dict and no values made for its
+   attributes: whether it has a dict (or values, made while its class had
+   keys to share) now, a condition code */
+#define MANAGED_word FMUT(DEF_ARRAY(PyObject *, 0))
+/* ... unless its instances may keep values that lazy_dict_made doesn't
+   see: inline in the object */
+static bool
+lazy_dict_values(PyTypeObject *tp)
+{
+#if LE_HAS_INLINE_VALUES
+    return (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) != 0;
+#else
+    return false;
+#endif
+}
+static condition_code_t
+lazy_dict_made(PsycoObject *po, vinfo_t *obj)
+{
+    vinfo_t *w =
+        psyco_get_field_offset(po, obj, MANAGED_word, LE_MANAGED_DICT_OFFSET);
+    condition_code_t cc;
+#if LE_HAS_MANAGED_VALUES_POINTER
+    vinfo_t *values, *both;
+    if (w == NULL)
+        return CC_ERROR;
+    values = psyco_get_field_offset(po, obj, MANAGED_word,
+                                    -4 * (long)sizeof(PyObject *));
+    if (values == NULL) {
+        vinfo_decref(w, po);
+        return CC_ERROR;
+    }
+    both = integer_or(po, w, values);
+    vinfo_decref(values, po);
+    vinfo_decref(w, po);
+    w = both;
+#endif
+    if (w == NULL)
+        return CC_ERROR;
+    cc = integer_non_null(po, w);
+    vinfo_decref(w, po);
+    return cc;
+}
+#endif
+
 /* 'generic' is the function the compiled code calls when the type has
    changed: PyObject_GetAttr from PsycoObject_GetAttr, because the change
    may have given the type a __getattr__ or __getattribute__. */
@@ -1467,10 +1510,19 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
 #if LE_HAS_MANAGED_DICT
     /* the attributes may be in values with no dict: read inline for an
        exact str (instance_dict_get); CPython makes the dict for any other
-       name */
+       name. Without values, a class attribute is the load while no dict
+       is made, as ceval's LOAD_ATTR_METHOD_LAZY_DICT. */
     if ((tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
-        !(has_managed_values(tp) && PyUnicode_CheckExact(name)))
-        goto generic;
+        !(has_managed_values(tp) && PyUnicode_CheckExact(name))) {
+        if (descr == NULL || lazy_dict_values(tp))
+            goto generic;
+        cc = lazy_dict_made(po, obj);
+        if (cc == CC_ERROR)
+            return NULL;
+        if (runtime_condition_f(po, cc))
+            goto generic;
+        goto class_attribute;
+    }
 #endif
     if (tp->tp_dictoffset != 0) {
         bool found;
@@ -1493,6 +1545,9 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
         vinfo_decref(v, po);
     }
 
+#if LE_HAS_MANAGED_DICT
+class_attribute:
+#endif
     if (f != NULL)
         return Psyco_META3(po, f, CfCommonNewRefPyObject, "lvl", descr, obj,
                            tp);

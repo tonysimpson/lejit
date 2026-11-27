@@ -104,7 +104,7 @@ def class_assigned(n):
 def own_names(n):
     out = []
     for i in range(n):
-        out.append((m.__name__, m.__dict__ is vars(m), type(m.__class__)))
+        out.append((m.__name__, m.__dict__['x'], m.__class__.__name__))
     return out
 
 
