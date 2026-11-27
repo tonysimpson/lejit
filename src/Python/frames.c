@@ -2727,13 +2727,23 @@ psyco_get_globals(void)
 
 /* the frame 'depth' calls below the top, or NULL (no exception set),
    with the emulated frames from it out linked by f_back to the next frame
-   out (a kept frame already is, from when it was made). A real frame
-   keeps its own
+   out (a kept frame already is, from when it was made), up to the first
+   that finds its own caller when asked (frame_get_back): CPython makes
+   only the frame asked for. A real frame keeps its own
    f_back, as the evaluators put tstate->frame back to it; frame.f_back
    gives the compiled frames it skips (frame_get_back). With 'undo', a
    list, for C code that reads f_back itself: real frames are relinked
    too, each as (frame, old f_back) in it, and a frame LeCode_Run runs
    gets its place, as (frame, old f_lasti), for restore_links. */
+/* a compiled callee's frame kept while its call runs, which finds its
+   caller when asked (frame_get_back) */
+static bool
+kept_callee(PyFrameObject *f)
+{
+    activation_t *a = live_activation(f);
+    return a != NULL && !a->inlined && !a->gen;
+}
+
 struct link_s {
     int depth;
     PyFrameObject *top, *prev;
@@ -2781,6 +2791,8 @@ visit_link_frame(const visited_frame_t *v, void *data)
         Py_XDECREF(l->prev->f_back); /* the tuple holds it */
         l->prev->f_back = f;         /* takes the reference */
     }
+    if (l->undo == NULL && (visited_gen_frame(v) != NULL || kept_callee(f)))
+        return Py_None;
     l->prev = f;
     return NULL;
 }
@@ -2859,15 +2871,6 @@ struct back_s {
     PyCodeObject *co;
     FrameRuntime *root;
 };
-
-/* a compiled callee's frame kept while its call runs, which finds its
-   caller when asked (frame_get_back) */
-static bool
-kept_callee(PyFrameObject *f)
-{
-    activation_t *a = live_activation(f);
-    return a != NULL && !a->inlined && !a->gen;
-}
 
 static PyObject *
 visit_back_frame(const visited_frame_t *v, void *data)
@@ -5345,9 +5348,11 @@ capi_eval_getglobals(void)
 static PyObject *
 capi_eval_getbuiltins(void)
 {
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
     PyFunctionObject *func = capi_innermost_function();
     if (func != NULL)
         return func->func_builtins;
+#endif
     return capi_call_current(eval_getbuiltins_cpython, 0);
 }
 
@@ -5377,11 +5382,13 @@ capi_eval_getframeglobals(void)
 static PyObject *
 capi_eval_getframebuiltins(void)
 {
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
     PyFunctionObject *func = capi_innermost_function();
     if (func != NULL) {
         Py_INCREF(func->func_builtins);
         return func->func_builtins;
     }
+#endif
     return capi_call_current(eval_getframebuiltins_cpython, 0);
 }
 
@@ -5799,9 +5806,10 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         }
 #endif
         st->root = run;
-        /* a frame made now was put in the word the call's end gives its
-           locals to (stand_for_call): ceval ends it with its own */
-        if (c == NULL && word != NULL && *word == (PyObject *)st->f) {
+        /* the frame is put in the word the call's end gives its locals to
+           (stand_for_call) as it is made, or again after the catcher was
+           taken from the word: ceval ends it with its own */
+        if (word != NULL && *word == (PyObject *)st->f) {
             *word = NULL;
             Py_DECREF(st->f);
         }

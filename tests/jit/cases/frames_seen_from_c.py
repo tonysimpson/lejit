@@ -145,6 +145,36 @@ def getframe_through():
     return seen_kw(k=1), Seen().seen, next(seen_gen())
 
 
+# a frame sys._getframe gives, its callers read through f_back while the
+# call runs, after the callers' locals change, and after it returns
+def _shown_ints(d):
+    return sorted((k, v) for k, v in d.items() if isinstance(v, int))
+
+
+def _deep_leaf(n):
+    f = sys._getframe(n)
+    return f, chain_names(f, 3)
+
+
+def _deep_mid(n):
+    m = n * 3
+    f, during = _deep_leaf(n)
+    m += 1
+    return f, during, [_shown_ints(g.f_locals) for g in (f, f.f_back)
+                       if g.f_code.co_name == '_deep_mid'], m
+
+
+def _deep_top(n):
+    t = n
+    f, during, mid, m = _deep_mid(n)
+    t += 1
+    return during, mid, chain_names(f, 3), m, t
+
+
+def getframe_deep():
+    return [_deep_top(n) for n in range(2)]
+
+
 # pyparsing's _trim_arity: call a parse action with fewer arguments until
 # one fits, telling a wrong arity from a TypeError inside it by the line
 # of the traceback's last frame
@@ -548,6 +578,7 @@ CASES = [
     ('attr_line', "[()]", {}),
     ('lasti_through_c', "[()]", {}),
     ('getframe_through', "[()]", {}),
+    ('getframe_deep', "[()]", {}),
     ('trim_arity_case', "[()]", {}),
     ('replaced_functions', "[()]", {}),
 ]
