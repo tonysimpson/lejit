@@ -5781,9 +5781,10 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         }
 #endif
         st->root = run;
-        /* a frame made now was put in the word the call's end gives its
-           locals to (stand_for_call): ceval ends it with its own */
-        if (c == NULL && word != NULL && *word == (PyObject *)st->f) {
+        /* the frame is put in the word the call's end gives its locals to
+           (stand_for_call) as it is made, or again after the catcher was
+           taken from the word: ceval ends it with its own */
+        if (word != NULL && *word == (PyObject *)st->f) {
             *word = NULL;
             Py_DECREF(st->f);
         }
