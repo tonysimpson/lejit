@@ -2656,6 +2656,7 @@ caller_in_walk(FrameRuntime *fr, stack_frame_info_t **last,
     visited_frame_t v;
     rec = *last;
     v.frame = NULL;
+    v.object = NULL;
     v.lasti = rec->back_lasti;
     if (finfo_last(rec) != rec) {
         /* an inlined frame of the frame whose slot is 'last' */
@@ -2665,10 +2666,11 @@ caller_in_walk(FrameRuntime *fr, stack_frame_info_t **last,
     else if (last == *fr->psy_frames_start) {
         v.code = (PyObject *)fr->psy_code;
         v.globals = fr->psy_globals;
-        v.frame = le_frame_object(fr->frame);
+        v.frame = fr->frame;
+        v.object = le_frame_object(fr->frame);
         v.tag = 0;
         *found = true;
-        return v.frame == NULL ? NULL : emulate_frame(&v);
+        return v.object == NULL ? NULL : emulate_frame(&v);
     }
     else {
         if (n < 3 || w->calls[n - 1].own != own || w->calls[n - 2].own != last)
