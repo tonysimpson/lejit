@@ -2,12 +2,16 @@
 status and names of the failing tests must match. Every test_* module of the
 interpreter's test package runs except BANNED, and every test except SKIPPED.
 
-    python3.X tests/cpython/run.py [-j N] [module ...]
+The modules, and the tests in each, run in an order a seed chooses, new each
+run unless --seed gives it; the seed also sets each module's hash seed. A
+module's plain and LeJIT runs share its order and its hash seed.
+
+    python3.X tests/cpython/run.py [-j N] [--seed N] [module ...]
 """
 import contextlib, fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile, threading
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import ROOT
+from common import ROOT, rank, take_seed
 
 TIMEOUT = 600                   # seconds per run
 MEMORY_LIMIT = 4 << 30          # bytes of address space per run
@@ -43,7 +47,9 @@ SKIPPED = {
     "sys.getrefcount counts a constant once for each compiled block that "
     'uses it, and the code compiled while a test counts holds more':
         'test.test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
-        'test.test_xml_etree_c.BugsTest.test_bug_xmltoolkit63',
+        'test.test_xml_etree_c.BugsTest.test_bug_xmltoolkit63 '
+        'ctypes.test.test_refcounts.AnotherLeak.test_callback '
+        'test.test_ctypes.test_refcounts.AnotherLeak.test_callback',
     "CPython doesn't specialise Python calls, __getitem__ and properties "
     'while a frame-evaluation hook is installed (specialize.c, '
     'SPEC_FAIL_CALL_PEP_523)':
@@ -217,6 +223,14 @@ SKIPPED = {
         'test.test_ctypes.test_refcounts.RefcountTestCase.test_1 '
         'test.test_ctypes.test_refcounts.RefcountTestCase.test_refcount '
         'test.test_ctypes.test_stringptr.StringPtrTestCase.test__POINTER_c_char',
+    "a dead test's __del__ runs its event loop until a queue is joined, "
+    'which a task finalised before it never does; plain 3.9 hangs the same '
+    'when full collections come at other moments (gc.set_threshold(200, 3, 3))':
+        'unittest.test.test_async_case.TestAsyncCase.test_exception_in_*',
+    'compiled code released after a full collection drops the references '
+    'it held, while the test counts them':
+        'ctypes.test.test_refcounts.AnotherLeak.test_callback '
+        'test.test_ctypes.test_refcounts.AnotherLeak.test_callback',
     'compiling allocates memory and objects the gc tracks, while the test '
     'counts them':
         'test.test_descr.ClassPropertiesAndMethods.test_slots '
@@ -305,6 +319,17 @@ SKIPPED = {
     'asserts that one epoll poll returns within 10 ms of wall time, which a '
     'busy machine can miss whatever runs the test':
         'test.test_epoll.TestEPoll.test_unregister_closed',
+    "passes only after TestGeometricMean.test_basics has seeded random: "
+    'on unseeded data 3.14 gives a pstdev that is not exactly '
+    'sqrt(pvariance) about one run in five, plain as well as with LeJIT':
+        'test.test_statistics.TestPStdev.test_compare_to_variance',
+    "assert that a failed TLS handshake's transport is freed with the "
+    'collector off, which some orders of the tests before them prevent, '
+    'plain as well as with LeJIT':
+        'test.test_asyncio.test_sslproto.*StartTLSTests.'
+        'test_create_connection_ssl_failed_certificate_no_cycles '
+        'test.test_asyncio.test_sslproto.*StartTLSTests.'
+        'test_start_tls_failed_certificate_no_cycles',
 }
 
 # Modules that never run at the same time as each other: test_perf_profiler
@@ -341,23 +366,43 @@ def gc_callback_aborts():
 # Prints a JSON list of the skipped tests, each its id and the reason, then
 # one of the failing tests, each its id and, for the first ten, the end of
 # its traceback, then the counts. Tests whose ids match one of
-# the patterns given are skipped.
+# the patterns given are skipped. The seed orders each suite's tests by
+# their ids alone, keeping a class's tests together so that its setUpClass
+# and tearDownClass still run once.
 CHILD = r'''
-import sys, unittest, io, json, fnmatch, faulthandler
+import sys, unittest, io, json, fnmatch, faulthandler, hashlib
 faulthandler.enable(all_threads=True)
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 
-def skip(suite):
+def rank(name):
+    return hashlib.sha256(('%s %s' % (sys.argv[4], name)).encode()).hexdigest()
+
+def first(test):
+    if not isinstance(test, unittest.TestSuite):
+        return test
+    for t in test:
+        t = first(t)
+        if t is not None:
+            return t
+
+def place(test):
+    t = first(test)
+    if t is None:
+        return ('', '')
+    return (rank(type(t).__module__ + '.' + type(t).__qualname__), rank(t.id()))
+
+def prepare(suite):
     for test in suite:
         if isinstance(test, unittest.TestSuite):
-            skip(test)
-        elif any(fnmatch.fnmatchcase(test.id(), p) for p in sys.argv[4:]):
+            prepare(test)
+        elif any(fnmatch.fnmatchcase(test.id(), p) for p in sys.argv[5:]):
             setattr(test, test._testMethodName,
                     unittest.skip('skipped by run.py')(lambda: None))
-skip(suite)
+    suite._tests.sort(key=place)
+prepare(suite)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 bad = r.failures + r.errors
 print(json.dumps([[t.id(), str(why)[:200]] for t, why in r.skipped]))
@@ -388,16 +433,19 @@ def stderr_tail(err, lines=10):
                           err.decode(errors='replace').splitlines()[-lines:]]
 
 
-def run(mode, name):
+def run(mode, name, seed):
     """The run's counts and exit status, its failing tests (id: the end of
     the traceback), the end of its stderr if it crashed, and its skipped
     tests (id: the reason)."""
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
         skip = [t for ts in SKIPPED.values() for t in ts.split()]
-        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT] + skip,
+        env = dict(os.environ)
+        env.setdefault('PYTHONHASHSEED', str(int(rank(seed, name), 16) % (1 << 32)))
+        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT,
+                              str(seed)] + skip,
                              stdout=subprocess.PIPE, stderr=errf,
-                             stdin=subprocess.DEVNULL, cwd=cwd,
+                             stdin=subprocess.DEVNULL, cwd=cwd, env=env,
                              preexec_fn=limit_memory, start_new_session=True)
         try:
             out, _ = p.communicate(timeout=TIMEOUT)
@@ -432,9 +480,9 @@ def run(mode, name):
             failed, crashed, skipped)
 
 
-def check(name):
+def check(name, seed):
     with one_at_a_time if name in ONE_AT_A_TIME else contextlib.nullcontext():
-        plain, with_lejit = run('plain', name), run('lejit', name)
+        plain, with_lejit = run('plain', name, seed), run('lejit', name, seed)
     if plain[0] == with_lejit[0] and set(plain[1]) == set(with_lejit[1]):
         return True, 'ok     %-24s %s' % (name, plain[0])
     report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain[0], with_lejit[0])]
@@ -449,6 +497,8 @@ def check(name):
             why.append('skipped only here: %s (%s)' % (test, skipped[test]))
         if why:
             report += ['       %s:' % side] + ['         ' + l for l in why]
+    report.append('       again: %s tests/cpython/run.py --seed %d %s'
+                  % (sys.executable, seed, name))
     return False, '\n'.join(report)
 
 
@@ -474,14 +524,17 @@ def main():
         k = args.index('-j')
         jobs = int(args[k + 1])
         del args[k:k + 2]
-    names = args or modules()
+    seed = take_seed(args)
+    names = sorted(args or modules(), key=lambda n: rank(seed, n))
+    print('seed %d' % seed)
+    sys.stdout.flush()
     bad = 0
     with ThreadPoolExecutor(jobs) as ex:
-        for ok, line in ex.map(check, names):
+        for ok, line in ex.map(check, names, [seed] * len(names)):
             bad += not ok
             print(line)
             sys.stdout.flush()
-    print('%d modules, %d unexpected' % (len(names), bad))
+    print('%d modules, %d unexpected (seed %d)' % (len(names), bad, seed))
     return 1 if bad else 0
 
 

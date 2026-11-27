@@ -193,6 +193,12 @@ le_frame_object(le_frame_t *f)
 #endif
     return o;
 }
+/* the frame object Python sees (borrowed), or NULL if none is made yet */
+static inline PyFrameObject *
+le_frame_object_made(le_frame_t *f)
+{
+    return f->frame_obj;
+}
 /* the frame a frame object is (its own, or the one it is a view of) */
 static inline le_frame_t *
 le_frame_of(PyFrameObject *f)
@@ -887,6 +893,11 @@ le_frame_start(le_frame_t *f)
 /* the frame object Python sees (borrowed) */
 static inline PyFrameObject *
 le_frame_object(le_frame_t *f)
+{
+    return f;
+}
+static inline PyFrameObject *
+le_frame_object_made(le_frame_t *f)
 {
     return f;
 }
