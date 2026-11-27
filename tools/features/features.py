@@ -1113,6 +1113,12 @@ def range_iter_index(s):
     return _body_has(s, 'Objects/rangeobject.c', 'rangeiter_next', 'r->index')
 
 
+def range_iter_free_list(s):
+    """a range iterator is taken from the thread's free list where
+    rangeiter_dealloc keeps them (fast_range_iter), not always allocated"""
+    return _body_has(s, 'Objects/rangeobject.c', 'fast_range_iter', '_Py_FREELIST_POP')
+
+
 def inline_values(s):
     """a class with Py_TPFLAGS_INLINE_VALUES keeps its instances' values in
     the object, at its tp_basicsize (_PyObject_InlineValues): a PyDictValues
@@ -1818,6 +1824,7 @@ OBJECTS = [
     ('DEALLOC_DEFERS_TO_TRASHCAN', dealloc_defers_to_trashcan),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
+    ('RANGE_ITER_FREE_LIST', range_iter_free_list),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),
 
 
