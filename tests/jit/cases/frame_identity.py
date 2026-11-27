@@ -104,6 +104,30 @@ def raise_here(n):
         return e.__traceback__.tb_frame is me
 
 
+def caught_then_asked(n):             # the traceback's frame comes first
+    for i in range(n):
+        pass
+    try:
+        raise ValueError(n)
+    except ValueError as e:
+        tb = e.__traceback__
+    return tb.tb_frame is sys._getframe(), tb.tb_frame is inner_back(n)
+
+
+def caught_returned(n):
+    for i in range(n):
+        pass
+    try:
+        raise ValueError(n)
+    except ValueError as e:
+        return e.__traceback__
+
+
+def run_caught_returned(n):
+    tb = caught_returned(n)
+    return tb.tb_frame.f_back is sys._getframe(), tb.tb_frame.f_locals['n']
+
+
 def trace_kept(n):
     for i in range(n):
         pass
@@ -249,6 +273,7 @@ def run_depths(n): return via(depths, n)
 def run_store_extra(n): return via(store_extra, n)
 def run_line_moves(n): return via(line_moves, n)
 def run_raise_here(n): return via(raise_here, n)
+def run_caught_then_asked(n): return via(caught_then_asked, n)
 def run_mid_call(n): return via(mid_call, n)
 def run_generator_frame(n): return via(generator_frame, n)
 
@@ -339,6 +364,8 @@ CASES = [
     ('run_store_extra', [(2,)], {}),
     ('run_line_moves', [(2,)], {}),
     ('run_raise_here', [(2,)], {}),
+    ('run_caught_then_asked', [(2,)], {}),
+    ('run_caught_returned', [(2,)], {}),
     ('trace_kept_caller', [(3,)], {}),
     ('run_mid_call', [(2,)], {}),
     ('run_generator_frame', [(3,)], {}),

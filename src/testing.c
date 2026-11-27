@@ -151,6 +151,15 @@ le_stats(PyObject *self, PyObject *unused)
     }
 #endif
     if (d != NULL) {
+        /* frame objects made (pyruntime.c:le_pyframe_new,
+           mechanisms/frames.h:le_frame_object) */
+        extern long le_stat_frame_objects;
+        PyObject *t = PyLong_FromLong(le_stat_frame_objects);
+        if (t == NULL || PyDict_SetItemString(d, "frame_objects", t) < 0)
+            Py_CLEAR(d);
+        Py_XDECREF(t);
+    }
+    if (d != NULL) {
         /* failed guards of cached globals (pycompiler.c:do_changed_global) */
         PyObject *t = PyLong_FromLong(psyco_stat_global_fails);
         if (t == NULL || PyDict_SetItemString(d, "global_fails", t) < 0)

@@ -353,6 +353,33 @@ def caller_module_name():
     return ask_module_names()
 
 
+# TypeVar, ParamSpec, TypeVarTuple, TypeAliasType and sentinel take
+# __module__ from the frame of the function that makes them, which C reads
+# itself where they are C; here that function is compiled and another
+# module's, and called from the case's frame
+_made_elsewhere = {'__name__': 'tp_elsewhere'}
+exec('def make(kind, name):\n'
+     '    return kind(name).__module__\n'
+     'def make_alias(kind, name):\n'
+     '    return kind(name, int).__module__\n', _made_elsewhere)
+
+
+def module_of_made_objects():
+    import typing
+    import builtins
+    make = _made_elsewhere['make']
+    out = [make(typing.TypeVar, 'T')]
+    if hasattr(typing, 'ParamSpec'):
+        out.append(make(typing.ParamSpec, 'P'))
+    if hasattr(typing, 'TypeVarTuple'):
+        out.append(make(typing.TypeVarTuple, 'Ts'))
+    if hasattr(typing, 'TypeAliasType'):
+        out.append(_made_elsewhere['make_alias'](typing.TypeAliasType, 'A'))
+    if hasattr(builtins, 'sentinel'):
+        out.append(make(builtins.sentinel, 'S'))
+    return out
+
+
 def gen_frames():
     yield back_names(3)
 
@@ -439,6 +466,7 @@ CASES = [
     ('returned_back_names', "[()]", {}),
     ('returned_back_names_interpreted', "[()]", {}),
     ('caller_module_name', "[()]", {}),
+    ('module_of_made_objects', "[(), ()]", {}),
     ('raised_middle', "[()]", {}),
     ('caught_middle', "[()]",
      {'warmup': (20, 'a call site that gets new lambdas each round compiles '

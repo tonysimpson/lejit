@@ -350,10 +350,17 @@ function_without_code(PyFrameObject *f)
 /* PyFrame_New, unseen by function watchers: it makes a function for the
    frame object, which CPython's own frames don't, and a watcher called
    here would run Python code while compiled code's exception is set */
+#if ALL_CHECKS
+long le_stat_frame_objects = 0;
+#endif
+
 PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
 {
     PyFrameObject *f;
+#if ALL_CHECKS
+    le_stat_frame_objects++;
+#endif
 #ifdef PY_FOREACH_FUNC_EVENT
     uint8_t watchers = ts->interp->active_func_watchers;
     ts->interp->active_func_watchers = 0;
@@ -403,9 +410,8 @@ le_eval_breaker_handler(void)
    the exception set, for the caller to give the frame a traceback entry, as
    ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyThreadState *ts, PyCodeObject *co)
 {
-    PyThreadState *ts = PyThreadState_GET();
     (void)co;
     if (!(_Py_atomic_load_uintptr_relaxed(&ts->eval_breaker) &
           _PY_EVAL_EVENTS_MASK))
@@ -504,8 +510,9 @@ le_eval_breaker_handler(void)
    the exception set, for the caller to give the frame a traceback entry, as
    ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyThreadState *ts, PyCodeObject *co)
 {
+    (void)ts;
     (void)co;
     if (!_Py_atomic_load_relaxed(&le_ceval2()->eval_breaker))
         return 0;
@@ -602,9 +609,10 @@ le_eval_breaker_handler(void)
    set, for the caller to give the frame a traceback entry, as ceval's error
    path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyThreadState *ts, PyCodeObject *co)
 {
     int op;
+    (void)ts;
     if (!_Py_atomic_load_relaxed(&le_ceval2()->eval_breaker))
         return 0;
     op = le_op(le_code(co), 0);
@@ -692,9 +700,10 @@ le_eval_breaker_handler(void)
    set, for the caller to give the frame a traceback entry, as ceval's error
    path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyThreadState *ts, PyCodeObject *co)
 {
     int op;
+    (void)ts;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
     op = le_op(le_code(co), 0);
@@ -767,9 +776,10 @@ le_eval_breaker_handler(void)
    set, for the caller to give the frame a traceback entry, as ceval's error
    path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyThreadState *ts, PyCodeObject *co)
 {
     int op;
+    (void)ts;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
     op = le_op(le_code(co), 0);

@@ -596,6 +596,41 @@ def handler_resumed(n):
     return out
 
 
+async def held_inner(k):
+    return await pause(work(k)) + 1
+
+
+async def held_outer(k):
+    return await held_inner(k) + 1
+
+
+def suspended_referents(n):
+    # a body started by its await that suspends becomes a coroutine as
+    # CPython's: no frame object until cr_frame asks, and its own function.
+    # Resumed, it runs from an entry of its own, so started() can't say.
+    out = []
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for i in range(3):
+            c = held_outer(n + i)
+            out.append(c.send(None))
+            inner = c.cr_await
+            refs = gc.get_referents(inner)
+            out.append((inner.__qualname__,
+                        sorted(type(o).__name__ for o in refs),
+                        any(o is held_inner for o in refs)))
+            out.append(inner.cr_frame.f_code.co_name)
+            try:
+                c.send(5)
+            except StopIteration as e:
+                out.append(e.value)
+    finally:
+        if enabled:
+            gc.enable()
+    return out
+
+
 CASES = [
     ('raised', [(3,)], HOOKED),
     ('realised', [(0,), (2,)], {}),
@@ -613,4 +648,5 @@ CASES = [
     ('collected', [(1,)], {}),
     ('handler_kinds', [(1,)], {}),
     ('handler_resumed', [(1,)], {}),
+    ('suspended_referents', [(1,)], {}),
 ]
