@@ -1999,6 +1999,46 @@ sweep(void)
     pins_drop(&dropped);
 }
 
+/* gc.get_referrers() traverses the clock too: once the program has
+   imported gc, which it needs for that, a sweep also needs gc.get_stats()
+   to count a full collection more than at the last. True if it can't
+   tell. */
+static bool
+full_collection_seen(void)
+{
+    static PyObject *get_stats = NULL;
+    static long last = -1;
+    PyObject *stats, *gen, *n;
+    long count;
+    if (get_stats == NULL) {
+        PyObject *modules = le_modules_dict();
+        PyObject *gc =
+            modules != NULL ? PyDict_GetItemString(modules, "gc") : NULL;
+        if (gc == NULL || !PyModule_Check(gc))
+            return true;
+        get_stats = PyObject_GetAttrString(gc, "get_stats");
+        if (get_stats == NULL) {
+            PyErr_Clear();
+            return true;
+        }
+    }
+    stats = PyObject_CallObject(get_stats, NULL);
+    gen = stats != NULL && PyList_Check(stats) && PyList_GET_SIZE(stats) > 2
+              ? PyList_GET_ITEM(stats, 2)
+              : NULL;
+    n = gen != NULL && PyDict_Check(gen)
+            ? PyDict_GetItemString(gen, "collections")
+            : NULL;
+    count = n != NULL && PyLong_Check(n) ? PyLong_AsLong(n) : -1;
+    Py_XDECREF(stats);
+    PyErr_Clear();
+    if (count < 0 || count != last) {
+        last = count;
+        return true;
+    }
+    return false;
+}
+
 static int
 sweep_pending(void *arg)
 {
@@ -2009,7 +2049,8 @@ sweep_pending(void *arg)
         psyco_compile_guard != NULL || le_is_finalizing())
         return 0;
     PyErr_Fetch(&t, &v, &tb);
-    sweep();
+    if (full_collection_seen())
+        sweep();
     PyErr_Restore(t, v, tb);
     return 0;
 }
