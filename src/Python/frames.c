@@ -369,6 +369,10 @@ run_unhash(FrameRuntime *fr)
     *p = fr->same_hash;
 }
 
+/* how many of this thread's runs are frameless: while none is, a run is
+   found by its frame alone */
+static _Thread_local int nframeless LE_FAST_TLS;
+
 /* the innermost run of this thread at 'f': its own run, or a frameless
    run entered while f was the current frame, which is inside it. NULL if
    none. */
@@ -376,6 +380,8 @@ static FrameRuntime *
 run_at(le_frame_t *f)
 {
     FrameRuntime *fr;
+    if (nframeless == 0)
+        return f == NULL ? NULL : psyco_frame_start_get(f);
     for (fr = *runs_hashed(f); fr != NULL; fr = fr->same_hash)
         if (fr->list == &frame_runs &&
             ((fr->frame != NULL && fr->frame == f) ||
@@ -394,6 +400,8 @@ complete_frame(le_frame_t *f);
 static FrameRuntime *
 frameless_at(FrameRuntime *run, le_frame_t *f)
 {
+    if (nframeless == 0)
+        return NULL;
     if (run != NULL && run_frameless(run) && run->back == f)
         return run;
     run = run_at(f);
@@ -466,6 +474,7 @@ psyco_frame_start_register_frameless(FrameRuntime *fr, PyFunctionObject *func,
     run_register(
         fr, NULL, complete_frame(le_frame_current(PyThreadState_GET())), func,
         psy_frames_start, (PyCodeObject *)func->func_code, func->func_globals);
+    nframeless++;
 }
 
 #if LE_STACK_SEGMENTS
@@ -537,6 +546,8 @@ psyco_frame_start_unregister(FrameRuntime *fr)
         *p = fr->next;
     }
     run_unhash(fr);
+    if (run_frameless(fr))
+        nframeless--;
     if (fr->root_own != NULL)
         root_ended(fr);
     if (fr->walked != NULL)
@@ -2565,15 +2576,10 @@ pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
     for (;;) {
         /* the frameless runs entered while f was current, innermost
            first, are inside it */
-        if (!linked) {
-            if (run == NULL || !run_frameless(run) || run->back != f) {
-                fstart = run_at(f);
-                if (fstart != NULL && run_frameless(fstart))
-                    run = fstart;
-            }
-            while (run != NULL && run_frameless(run) && run->back == f) {
-                fstart = run;
-                run = run->next;
+        if (!linked)
+            for (fstart = frameless_at(run, f); fstart != NULL;
+                 fstart = frameless_next(fstart)) {
+                run = fstart->next;
                 if (fstart->resumed)
                     continue;
                 result =
@@ -2581,7 +2587,6 @@ pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
                 if (result != NULL)
                     goto done;
             }
-        }
         if (f == NULL)
             break;
         /* is this Python frame the starting point of a chained
