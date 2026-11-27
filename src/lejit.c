@@ -158,16 +158,12 @@ static PyObject *record_died_fn = NULL;
 DEFINEFN void
 le_code_extra_free(le_code_extra_t *x)
 {
-    int i, j;
+    int i;
     if (x == le_gen_interpreted_x)
         le_gen_interpreted = NULL;
-    for (i = 0; i < x->nresumes; i++)
-        for (j = 0; j < x->resumes[i].count; j++)
-            Py_XDECREF(x->resumes[i].entries[j].code);
+    for (i = 0; i < x->nresumes; i++) Py_XDECREF(x->resumes[i].code);
     PyMem_Free(x->resumes);
-#if LE_RESUMES_GENERATORS_DIRECTLY
     PyMem_Free(x->direct);
-#endif
     psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
     psyco_owner_untrack(x); /* after: releasing can keep into the owner */
     if (x->prev != NULL)
@@ -183,18 +179,14 @@ DEFINEFN void
 le_code_extra_reset(le_code_extra_t *x, PyObject **mergepoints,
                     PyObject **entry_point)
 {
-    int i, j;
+    int i;
     if (x == le_gen_interpreted_x)
         le_gen_interpreted = NULL;
-    for (i = 0; i < x->nresumes; i++)
-        for (j = 0; j < x->resumes[i].count; j++)
-            Py_XDECREF(x->resumes[i].entries[j].code);
+    for (i = 0; i < x->nresumes; i++) Py_XDECREF(x->resumes[i].code);
     PyMem_Free(x->resumes);
     x->resumes = x->last_resume = NULL;
     x->nresumes = 0;
-#if LE_RESUMES_GENERATORS_DIRECTLY
     le_gen_direct_clear(le_code_extra_code(x), x);
-#endif
     *mergepoints = x->merge_points;
     *entry_point = x->entry_point;
     x->merge_points = x->entry_point = NULL;

@@ -3,7 +3,7 @@
 # Each line: the case, its Pythons, the reason. A Python comes off a case
 # once the case makes no more there (the runner names such cases).
 agen_bodies.hooks                                  3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
-agen_bodies.tracing                                3.11,3.15                          not looked at yet
+agen_bodies.tracing                                3.9,3.10,3.11,3.15                 a compiled async generator's yield makes its value's wrapper, which CPython takes from its free list
 arg_binding.builtin_errors                         3.9,3.10,3.11,3.12,3.13,3.14,3.15  not looked at yet
 arg_binding.star_forwarding                        3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 c_entries.recursion_through_c                      3.7,3.8,3.9,3.10,3.12,3.13,3.14,3.15 not looked at yet
@@ -32,11 +32,10 @@ closures.super_call                                3.14                         
 closures.unbound_free                              3.10,3.11,3.12,3.13,3.14,3.15      not looked at yet
 coro_async_for.errors                              3.14,3.15                          not looked at yet
 coro_async_for.interrupted                         3.14,3.15                          not looked at yet
-coro_async_for.tracing                             3.9,3.10,3.12,3.13,3.14            not looked at yet
+coro_async_for.tracing                             3.12,3.13,3.14                     not looked at yet
 coro_async_for.with_asyncio                        3.14,3.15                          not looked at yet
 coro_async_with.handler_lasti                      3.14,3.15                          not looked at yet
-coro_async_with.started                            3.9,3.10,3.12                      not looked at yet
-coro_iterable.bad_operands                         3.9,3.10                           not looked at yet
+coro_async_with.started                            3.12                               not looked at yet
 coro_iterable.with_asyncio                         3.12                               not looked at yet
 coro_starts.handler_resumed                        3.12                               not looked at yet
 coro_starts.origins                                3.14                               not looked at yet
@@ -103,13 +102,11 @@ function_watchers.watched                          3.15                         
 gen_bodies.for_exception_state                     3.12                               not looked at yet
 gen_bodies.from_outside                            3.13                               not looked at yet
 gen_bodies.many_types                              3.12,3.14,3.15                     not looked at yet
-gen_bodies.send_at_start                           3.9,3.10                           not looked at yet
 gen_bodies.tracing                                 3.12                               not looked at yet
-gen_direct.coro_send                               3.9,3.10                           not looked at yet
+gen_direct.in_thread                               3.15                               not looked at yet (main makes as many)
 gen_direct.locals_written                          3.12,3.13,3.14,3.15                not looked at yet
-gen_direct.not_started                             3.9,3.10                           not looked at yet
 gen_direct.over_sequences                          3.12,3.15                          not looked at yet
-gen_direct.send_tracing                            3.9,3.10,3.12,3.13                 not looked at yet
+gen_direct.send_tracing                            3.12,3.13                          not looked at yet
 gen_functions.arguments_freed                      3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 gen_functions.early_stop                           3.14,3.15                          not looked at yet
 gen_iters.nexts                                    3.12                               not looked at yet
@@ -117,10 +114,8 @@ gen_virtual.closes                                 3.14                         
 gen_virtual.dropped_in_yield_from                  3.14,3.15                          not looked at yet
 gen_virtual.escapes_held                           3.12,3.13,3.14,3.15                not looked at yet
 gen_virtual.frame_clear                            3.13,3.14                          not looked at yet
-gen_virtual.sends                                  3.9,3.10                           not looked at yet
 gen_virtual_chains.kept_frames                     3.14                               not looked at yet
 gen_virtual_chains.raises                          3.12                               not looked at yet
-gen_virtual_chains.sends                           3.9,3.10                           not looked at yet
 gen_virtual_chains.traces                          3.12                               not looked at yet
 gen_yield_from.throws                              3.9,3.10                           not looked at yet
 genexpr_loops.many_kinds                           3.11,3.12,3.13,3.14,3.15           not looked at yet

@@ -1011,26 +1011,14 @@ typedef struct le_owner_s {
 /* What LeJIT keeps per code object, on its weak references (lejit.c): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
-/* Generator bodies run compiled, resumed through the eval hook
-   (eval_hook.c:LeGen_Run), and coroutine bodies too where their awaits
-   pause the frame object as ceval's YIELD_FROM leaves it (pycompiler.c) */
-#define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
-/* and compiled code resumes a generator itself, without gen_send_ex2 and
-   the eval hook (eval_hook.c:le_gen_iternext), where its frame is inside
-   it */
-#define LE_RESUMES_GENERATORS_DIRECTLY LE_HAS_INTERPRETER_FRAME
-#if LE_RESUMES_GENERATORS_DIRECTLY
+/* Generator, coroutine and async generator bodies run compiled, resumed
+   on their frame: compiled code resumes a generator itself, without
+   gen_send_ex and the eval hook (eval_hook.c:le_gen_iternext), and each
+   resume's compiled code is given the frame, whose words it reads where it
+   uses them (vcompiler.c:PsycoObject_FromGenFrame), so one entry serves
+   every resume at a point */
 EXTERNFN PyObject *
 le_gen_iternext(PyObject *gen);
-#endif
-/* and a resume's compiled code is given the frame itself, whose words it
-   reads where it uses them (vcompiler.c:PsycoObject_FromGenFrame), so one
-   entry serves every resume at a point */
-#define LE_RESUMES_ON_FRAME LE_HAS_INTERPRETER_FRAME
-/* coroutine bodies run compiled: on the frame object, or on the frame
-   inside the coroutine with each await a SEND loop */
-#define LE_RESUMES_COROUTINES_COMPILED \
-    (LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME)
 /* CPython runs a Python-to-Python call in the caller's C frame, where its
    frames are interpreter frames: compiled calls switch to a stack segment
    when the stack is low (segments.c) */
@@ -1038,27 +1026,14 @@ le_gen_iternext(PyObject *gen);
 /* a frame with more words (locals plus stack) resumes interpreted */
 #define LE_FRAME_WORDS_MAX 1024
 
-/* A resumable generator's compiled entries at one resume point, compiled
-   when first needed, at most LE_RESUME_ENTRIES: where LE_RESUMES_ON_FRAME,
-   one; otherwise one per set of NULL words in its frame (a bit each, in
-   the frame's order) */
-#if LE_RESUMES_ON_FRAME
-#define LE_RESUME_ENTRIES 1
-#else
-#define LE_RESUME_ENTRIES 4
-#endif
+/* A resumable generator's compiled entry at one resume point, compiled
+   when first needed */
 typedef struct {
-#if !LE_RESUMES_ON_FRAME
-    uint64_t nulls;
-#endif
-    PyObject *code;    /* codebuf, Py_None if compiling failed; owned */
+    int lasti;         /* f_lasti there, -1 for the start */
+    PyObject *code;    /* codebuf, Py_None if compiling failed, NULL if not
+                          compiled yet; owned */
     PyObject *globals; /* as entry_globals and entry_builtins */
     PyObject *builtins;
-} le_resume_entry_t;
-typedef struct {
-    int lasti; /* f_lasti there, -1 for the start */
-    int count;
-    le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 
 /* A call of a Python function from C (_PyFunction_Vectorcall) may run
@@ -1092,17 +1067,14 @@ typedef struct le_code_extra_s {
     int nresumes; /* a resumable generator's points, or -1: not resumable */
     le_resume_point_t *resumes;     /* one per yield and the start, or NULL */
     le_resume_point_t *last_resume; /* the one the last resume used */
-#if LE_RESUMES_GENERATORS_DIRECTLY
     struct le_gen_direct_s *direct; /* le_gen_direct_t, or NULL */
-#endif
 } le_code_extra_t;
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* A resumable generator's compiled entries as compiled code that steps it
    calls them (psyfunc.c:psyco_gen_step): indexed by its frame's place
    (le_gen_direct_index), each the start of the entry's code, or NULL
    where none is compiled yet; one entry serves all the code's frames
    with these globals and builtins, set by the first entry put in. The
-   entries' buffers are the resume points' (le_resume_entry_t). */
+   entries' buffers are the resume points' (le_resume_point_t). */
 typedef struct le_gen_direct_s {
     PyObject *globals, *builtins; /* borrowed, as entry_globals */
     code_t *entries[1];
@@ -1129,7 +1101,6 @@ le_gen_direct_send_end(PyThreadState *ts, PyObject *gen, PyObject *result);
 EXTERNFN int
 le_gen_direct_send_status(PyThreadState *ts, PyObject *gen, PyObject *result,
                           PyObject *out[]);
-#endif
 /* every record, newest first (lejit.c) */
 EXTERNVAR le_code_extra_t *le_code_extras;
 /* the record lives in a weak reference to its code object (lejit.c) */

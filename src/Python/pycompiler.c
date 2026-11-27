@@ -1246,8 +1246,11 @@ cimpl_exc_restore(PyObject **held)
 #define FRAME_bytes FMUT(DEF_ARRAY(int8_t, 0))
 #else
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
-/* what a pause writes (mechanisms/frames.h:le_gen_frame_pause), and the
-   run's frame and what it keeps of what Python wrote in its locals */
+#define FRAME_gen \
+    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_gen, NO_PREV_FIELD))
+#define FRAME_refcnt \
+    FMUT(DEF_FIELD(PyObject, Py_ssize_t, ob_refcnt, NO_PREV_FIELD))
+/* what a pause writes (mechanisms/frames.h:le_gen_frame_pause) */
 #define FRAME_lasti FMUT(DEF_FIELD(PyFrameObject, int, f_lasti, NO_PREV_FIELD))
 #define FRAME_iblock \
     FMUT(DEF_FIELD(PyFrameObject, int, f_iblock, NO_PREV_FIELD))
@@ -1262,10 +1265,6 @@ cimpl_exc_restore(PyObject **held)
 #define FRAME_stacktop \
     FMUT(DEF_FIELD(PyFrameObject, PyObject **, f_stacktop, NO_PREV_FIELD))
 #endif
-#define RUN_frame \
-    FMUT(DEF_FIELD(FrameRuntime, PyFrameObject *, frame, NO_PREV_FIELD))
-#define RUN_entry_locals \
-    FMUT(DEF_FIELD(FrameRuntime, PyObject **, entry_locals, NO_PREV_FIELD))
 _Static_assert(sizeof(PyTryBlock) == 3 * sizeof(int),
                "LeJIT: a frame's block is not three ints");
 #endif
@@ -1273,7 +1272,6 @@ _Static_assert(sizeof(PyTryBlock) == 3 * sizeof(int),
 static bool
 is_offset_int(vinfo_t *v);
 
-#if LE_RESUMES_ON_FRAME
 /* A resumed generator's word i (a local, cell, free variable or stack
    item, in the frame's order) that its frame still holds
    (vcompiler.c:PsycoObject_FromGenFrame): a virtual value, one source
@@ -1587,7 +1585,7 @@ local_is_runs(PsycoObject *po, int i)
 /* What Python wrote, while the run ran, in the locals the run holds is
    taken out of the frame (frames.c:psyco_gen_take_written), before the
    run stores its own there: only Python holding the frame's object can
-   have written them */
+   have written them, after asking for its locals */
 static bool
 gen_take_written(PsycoObject *po)
 {
@@ -1599,9 +1597,16 @@ gen_take_written(PsycoObject *po)
     if (n == 0)
         return true;
     frame = psyco_frame_words_frame(po);
+#if LE_HAS_INTERPRETER_FRAME
     fo = psyco_get_field(po, frame, FRAME_frame_obj);
     cc = fo == NULL ? CC_ERROR : object_non_null(po, fo);
     vinfo_xdecref(fo, po);
+#else
+    /* the frame object always exists here: whether any run keeps what
+       Python wrote */
+    (void)fo;
+    cc = psyco_int32_nonzero_at(po, &psyco_frames_written);
+#endif
     if (cc == CC_ERROR)
         return false;
     if (!runtime_condition_f(po, cc))
@@ -1616,9 +1621,22 @@ gen_take_written(PsycoObject *po)
                               (long)t) != NULL;
 }
 
+/* stores the constant 'value' in the field 'df' (item 'index' of it) of
+   'vi' */
+static bool
+put_nth_i(PsycoObject *po, vinfo_t *vi, defield_t df, int index, long value)
+{
+    vinfo_t *v = vinfo_new(CompileTime_New(value));
+    bool ok = psyco_put_nth_field(po, vi, df, index, v);
+    vinfo_decref(v, po);
+    return ok;
+}
+
 /* the frame left as ceval's YIELD_VALUE at 'lasti' leaves it, with
-   'nstack' items under the value (mechanisms/frames.h:le_gen_frame_pause),
-   its words stored after */
+   'nstack' items under the value and, where frames have them, the
+   compile's blocks (mechanisms/frames.h:le_gen_frame_pause), its words
+   stored after */
+#if LE_HAS_INTERPRETER_FRAME
 static bool
 gen_frame_pause(PsycoObject *po, int lasti, int nstack)
 {
@@ -1652,12 +1670,50 @@ gen_frame_pause(PsycoObject *po, int lasti, int nstack)
     vinfo_decref(v, po);
     if (!ok)
         return false;
-    v = vinfo_new(CompileTime_New(state));
-    ok =
-        psyco_put_nth_field(po, frame, FRAME_bytes, -(int)LE_GEN_STATE_GAP, v);
-    vinfo_decref(v, po);
-    return ok;
+    return put_nth_i(po, frame, FRAME_bytes, -(int)LE_GEN_STATE_GAP, state);
 }
+#else
+static bool
+gen_frame_pause(PsycoObject *po, int lasti, int nstack)
+{
+    vinfo_t *frame = psyco_frame_words_frame(po);
+    int i, k;
+    if (!put_nth_i(po, frame, FRAME_lasti, 0, lasti))
+        return false;
+#if LE_HAS_FRAME_STATE
+    if (!put_nth_i(po, frame, FRAME_stackdepth, 0, nstack))
+        return false;
+#else
+    {
+        /* the stack follows the locals (FRAME_localsplus) */
+        vinfo_t *top = integer_add_i(
+            po, frame,
+            offsetof(PyFrameObject, f_localsplus) +
+                (le_code_nlocalsplus(po->pr.co) + nstack) * sizeof(PyObject *),
+            false);
+        bool ok =
+            top != NULL && psyco_put_field(po, frame, FRAME_stacktop, top);
+        vinfo_xdecref(top, po);
+        if (!ok)
+            return false;
+    }
+#endif
+    if (!put_nth_i(po, frame, FRAME_iblock, 0, po->pr.iblock))
+        return false;
+    for (i = 0; i < po->pr.iblock; i++) {
+        const le_block_t *b = &po->pr.blockstack[i];
+        int ints[3] = {b->b_type, le_lasti_of(b->b_handler), b->b_level};
+        for (k = 0; k < 3; k++)
+            if (!put_nth_i(po, frame, FRAME_block_ints, 3 * i + k, ints[k]))
+                return false;
+    }
+#if LE_HAS_FRAME_STATE
+    return put_nth_i(po, frame, FRAME_state, 0, FRAME_SUSPENDED);
+#else
+    return true;
+#endif
+}
+#endif
 
 /* word k of the frame becomes 'v', a reference it takes, or NULL for the
    NULL constant or none */
@@ -1716,10 +1772,6 @@ gen_locals_end(PsycoObject *po)
     }
     return true;
 }
-#else
-#define psyco_frame_word_index(v) (-1)
-#define frame_word_peek(po, v) (vinfo_incref(v), (v))
-#endif
 
 /* as cimpl_tb_locals, for the exception set aside by cimpl_exc_hold */
 static void
@@ -2148,14 +2200,12 @@ psyco_pycompiler_init(void)
     psyco_skNotImplemented.refcount1_flags = SkFlagFixed;
     psyco_skNotImplemented.value = (long)Py_NotImplemented;
 
-#if LE_RESUMES_ON_FRAME
     {
         int i;
         for (i = 0; i < LE_FRAME_WORDS_MAX; i++)
             INIT_SVIRTUAL(frame_words[i], compute_frame_word,
                           direct_compute_frame_word, 0, 0, 0);
     }
-#endif
     ERtPython = psyco_vsource_not_important;
     EReturn = psyco_vsource_not_important;
     EContinue = psyco_vsource_not_important;
@@ -3298,7 +3348,7 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
     }
 }
 
-#if LE_RESUMES_COROUTINES
+#if !LE_HAS_INTERPRETER_FRAME
 /* ceval's 'return' events of a frame that yields 'value', when tracing
    started while it ran compiled, before its await (an awaited body,
    started by the await, set it): a body that yields compiled is otherwise
@@ -5472,10 +5522,8 @@ exit_function(PsycoObject *po)
     /* the frame that stood for the call keeps its locals as they end */
     if (!catcher_flush(po))
         return NULL;
-#if LE_RESUMES_ON_FRAME
     if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po))
         return NULL;
-#endif
     /* clear the locals, first to last as frame_dealloc does (finalisers run
        in that order), then the stack; where FRAME_CLEARED_LAST_FIRST, the
        stack top down, then the locals last to first. On a return CPython
@@ -6183,7 +6231,6 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
     if (result == NULL && !PycException_Is(po, &ERtPython))
         return 0;
     while (STACK_LEVEL() > 0) POP_DECREF();
-#if LE_RESUMES_ON_FRAME
     /* the generator's frame is ceval's now: the end stores nothing in it
        (gen_locals_end) */
     if (!po->pr.is_inlining && psyco_generator_mode(po) == GENEXPR_RESUMABLE) {
@@ -6193,7 +6240,6 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
             LOC_LOCALS_PLUS[i] = NULL;
         }
     }
-#endif
     if (!po->pr.is_inlining)
         po->pr.iblock = 0;
     *unwound = 1;
@@ -8054,7 +8100,6 @@ out:
     return ended;
 }
 
-#if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
 /* GET_YIELD_FROM_ITER in a plain generator: what yield from iterates, a
    new reference, 'o' itself if it is a generator, or a coroutine where
    'iterable_coro' (a types.coroutine generator's body) */
@@ -8071,15 +8116,10 @@ cimpl_yield_from_iter(PyObject *o, long iterable_coro)
     }
     return PyObject_GetIter(o);
 }
-#endif
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 #define LE_RECORD_TYPE_IS(tp) ((tp) == &le_gen_record_type)
-#else
-#define LE_RECORD_TYPE_IS(tp) false
-#endif
 
-#if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
+#if LE_HAS_OPCODE_CLEANUP_THROW
 /* CLEANUP_THROW: the value of 'exc', a StopIteration, a new reference */
 static PyObject *
 cimpl_stop_iteration_value(PyObject *exc)
@@ -8092,6 +8132,12 @@ cimpl_stop_iteration_value(PyObject *exc)
 
 static int
 start_directly(PsycoObject *po, int depth, bool drop);
+#if LE_HAS_OPCODE_YIELD_FROM
+static void
+yield_resumable(PsycoObject *po, int at, bool after_await);
+static void
+yield_direct(PsycoObject *po, int at);
+#endif
 
 /* iterators and for loops */
 static int
@@ -8186,7 +8232,6 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             POP_DECREF();
             goto fine;
 
-#if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
         /* yield from, in a resumable plain generator
            (mergepoints.c:body_compilable): what it iterates. Of a type
            other than a coroutine's, PyObject_GetIter's, so that a class's
@@ -8217,6 +8262,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
         }
 
+#if LE_HAS_OPCODE_SEND
         /* its loop: the value on top is sent into the iterator under it,
            which yields, for the YIELD_VALUE after, which pauses the frame
            with the iterator under what it yielded, as ceval leaves it; or
@@ -8293,6 +8339,81 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             POP_DECREF();     /* the iterator */
             PUSH(v);
             goto fine;
+#endif
+
+#if LE_HAS_OPCODE_YIELD_FROM
+        /* yield from and await, in a resumable body: the value on top is
+           sent into the iterator under it. What it yields pauses the frame
+           as ceval's YIELD_FROM leaves it, at the instruction before, so
+           that the resume is at the YIELD_FROM with the iterator on the
+           stack; what it returns replaces the iterator. */
+        case YIELD_FROM: {
+            vinfo_array_t *array;
+            vinfo_t *iter = NTOP(2);
+            condition_code_t cc;
+            PyTypeObject *tp;
+            bool yielded;
+            if (PsycoGenexpr_Check(iter)) {
+                int start = psyco_coro_start(po, iter);
+                if (start > 0) {
+                    start = start_directly(po, 2, true);
+                    if (start < 0)
+                        break;
+                    if (start == 0)
+                        goto fine;
+                    goto pause_at_yield_from;
+                }
+                if (start < 0)
+                    break;
+            }
+            tp = Psyco_NeedType(po, iter);
+            if (tp == NULL)
+                break;
+            /* the frame's place is the YIELD_FROM while the send runs,
+               as ceval's is: what CPython tells of the running frame
+               (_PyGen_yf) reads the frame's stack if it is before one */
+            if (psyco_generator_mode(po) == GENEXPR_RESUMABLE &&
+                !put_nth_i(po, psyco_frame_words_frame(po), FRAME_lasti, 0,
+                           le_lasti_of(next_instr - LE_UNIT)))
+                break;
+            array = array_new(1);
+            if (tp == &PyGen_Type || tp == &PyCoro_Type ||
+                LE_RECORD_TYPE_IS(tp))
+                x = psyco_gen_send_status(po, iter, TOP(), array);
+            else
+                x = psyco_generic_call(po, le_iter_send,
+                                       CfReturnTypeInt | CfPyErrIfNeg, "vvA",
+                                       iter, TOP(), array);
+            if (x == NULL) {
+                array_release(array);
+                break;
+            }
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR) {
+                vinfo_decref(array->items[0], po);
+                array_release(array);
+                break;
+            }
+            yielded = runtime_condition_t(po, cc);
+            POP_DECREF(); /* the value sent */
+            if (yielded) {
+                PUSH(array->items[0]);
+                array_release(array);
+                goto pause_at_yield_from;
+            }
+            POP_DECREF(); /* the iterator */
+            PUSH(array->items[0]);
+            array_release(array);
+            goto fine;
+
+        pause_at_yield_from:
+            if (psyco_generator_mode(po) == GENEXPR_DIRECT)
+                yield_direct(po, next_instr - 2 * LE_UNIT);
+            else
+                yield_resumable(po, next_instr - 2 * LE_UNIT, true);
+            break;
+        }
 #endif
 
         case END_FOR:
@@ -8602,14 +8723,13 @@ out:
     return ended;
 }
 
-#if LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME
 /* whether coroutine 'coro' is awaiting something, as _PyGen_yf (not
    exported) tells: paused just before a YIELD_FROM, or where the frame
    is on the coroutine, at a yield whose resume is after an await */
 static int
 coro_awaits(PyGenObject *coro)
 {
-#if LE_RESUMES_ON_FRAME
+#if LE_HAS_INTERPRETER_FRAME
 #ifdef FRAME_STATE_SUSPENDED
     return coro->gi_frame_state == FRAME_SUSPENDED_YIELD_FROM;
 #else
@@ -8647,7 +8767,7 @@ coro_awaits(PyGenObject *coro)
 static inline int
 is_iterable_coroutine(PyObject *o)
 {
-#if LE_RESUMES_ON_FRAME
+#if LE_HAS_INTERPRETER_FRAME
     return PyGen_CheckExact(o) &&
            (LE_FRAME_CODE(
                 (le_frame_t *)((char *)o + offsetof(PyGenObject, gi_iframe)))
@@ -8790,42 +8910,6 @@ cimpl_get_anext(PyObject *aiter)
     return awaitable;
 }
 
-#if LE_RESUMES_COROUTINES
-/* YIELD_FROM's send of 'v' into 'receiver', as ceval does it with no
-   trace function: 1 with the value it yielded in out[0], 0 with the value
-   it returned, -1 with its exception */
-static int
-cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
-{
-#if LE_HAS_ITER_SEND
-    PySendResult r = PyIter_Send(receiver, v, &out[0]);
-    if (r == PYGEN_ERROR)
-        return -1;
-    return r == PYGEN_NEXT;
-#else
-    _Py_IDENTIFIER(send);
-    PyObject *res;
-    if (PyGen_CheckExact(receiver) || PyCoro_CheckExact(receiver))
-        res = _PyGen_Send((PyGenObject *)receiver, v);
-    else if (v == Py_None)
-        res = Py_TYPE(receiver)->tp_iternext(receiver);
-    else
-        res = _PyObject_CallMethodIdObjArgs(receiver, &PyId_send, v, NULL);
-    if (res != NULL) {
-        out[0] = res;
-        return 1;
-    }
-    if (_PyGen_FetchStopIterationValue(&out[0]) < 0)
-        return -1;
-    return 0;
-#endif
-}
-#endif
-
-#endif
-
-#if LE_RESUMES_ON_FRAME
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* At a pause, a virtual generator on the stack that nothing else holds
    (one yield from steps) stays a record, held in the frame's word, where
    the frame is a record's with no frame object: so a paused chain of them
@@ -8844,16 +8928,34 @@ records_held(PsycoObject *po, vinfo_t **stack_a, int nstack)
     if (i == nstack)
         return true;
     frame = psyco_frame_words_frame(po);
+#if LE_HAS_INTERPRETER_FRAME
     v = psyco_get_field(po, frame, FRAME_owner);
     cc = v == NULL ? CC_ERROR
                    : integer_cmp_i(po, v, LE_FRAME_OWNED_BY_RECORD, Py_EQ);
+#else
+    {
+        /* the frame's generator is a record */
+        vinfo_t *gen = psyco_get_field(po, frame, FRAME_gen);
+        v = gen == NULL ? NULL : psyco_get_field(po, gen, OB_type);
+        vinfo_xdecref(gen, po);
+        cc = v == NULL
+                 ? CC_ERROR
+                 : integer_cmp_i(po, v, (long)&le_gen_record_type, Py_EQ);
+    }
+#endif
     vinfo_xdecref(v, po);
     if (cc == CC_ERROR)
         return false;
     if (!runtime_condition_t(po, cc))
         return true;
+#if LE_HAS_INTERPRETER_FRAME
     v = psyco_get_field(po, frame, FRAME_frame_obj);
     cc = v == NULL ? CC_ERROR : object_non_null(po, v);
+#else
+    /* and nothing but the record holds the frame object */
+    v = psyco_get_field(po, frame, FRAME_refcnt);
+    cc = v == NULL ? CC_ERROR : integer_cmp_i(po, v, 1, Py_NE);
+#endif
     vinfo_xdecref(v, po);
     if (cc == CC_ERROR)
         return false;
@@ -8870,7 +8972,6 @@ records_held(PsycoObject *po, vinfo_t **stack_a, int nstack)
     }
     return true;
 }
-#endif
 
 /* A resumable generator's YIELD_VALUE at 'at': its frame (in the
    GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it, and the
@@ -8888,11 +8989,17 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
     int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
     int nstack = STACK_LEVEL() - 1, i;
     vinfo_t *v;
+#if !LE_HAS_INTERPRETER_FRAME
+    int traced = 0;
+    /* the await ran code, which may have started tracing: tested while
+       everything is still in the frame's slots, as a rare branch is */
+    if (after_await && (traced = psyco_tracing_on(po)) < 0)
+        return;
+#else
     (void)after_await;
-#if LE_RESUMES_GENERATORS_DIRECTLY
+#endif
     if (!records_held(po, stack_a, nstack))
         return;
-#endif
     if (!catcher_flush(po))
         return;
     /* every item real before anything is stored: making one may call */
@@ -8920,173 +9027,21 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
         }
     }
     v = stack_a[nstack];
-    stack_a[nstack] = NULL;
-    po->pr.stack_level = 0;
-    po->pr.iblock = 0;
-    PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
-}
-#else
-/* stores the constant 'value' in the field 'df' (item 'index' of it) of
-   'vi' */
-static bool
-put_nth_i(PsycoObject *po, vinfo_t *vi, defield_t df, int index, long value)
-{
-    vinfo_t *v = vinfo_new(CompileTime_New(value));
-    bool ok = psyco_put_nth_field(po, vi, df, index, v);
-    vinfo_decref(v, po);
-    return ok;
-}
-
-/* The frame of the run 'run', left as ceval's YIELD_VALUE at 'lasti'
-   leaves it, with 'nstack' items under the value and the compile's
-   blocks (mechanisms/frames.h:le_gen_frame_pause), its words stored
-   after; what Python wrote in its locals while the run ran is taken out
-   first (frames.c:psyco_gen_take_written). NULL on error. */
-static vinfo_t *
-gen_frame_pause(PsycoObject *po, vinfo_t *run, int lasti, int nstack)
-{
-    vinfo_t *frame, *kept;
-    condition_code_t cc;
-    int i, k;
-    kept = psyco_get_field(po, run, RUN_entry_locals);
-    cc = kept == NULL ? CC_ERROR : object_non_null(po, kept);
-    vinfo_xdecref(kept, po);
-    if (cc == CC_ERROR)
-        return NULL;
-    if (runtime_condition_f(po, cc) &&
-        psyco_generic_call(po, psyco_gen_take_written,
-                           CfNoReturnValue | CfNoPython, "v", run) == NULL)
-        return NULL;
-    frame = psyco_get_field(po, run, RUN_frame);
-    if (frame == NULL)
-        return NULL;
-    if (!put_nth_i(po, frame, FRAME_lasti, 0, lasti))
-        goto fail;
-#if LE_HAS_FRAME_STATE
-    if (!put_nth_i(po, frame, FRAME_stackdepth, 0, nstack))
-        goto fail;
-#else
-    {
-        /* the stack follows the locals (FRAME_localsplus) */
-        vinfo_t *top = integer_add_i(
-            po, frame,
-            offsetof(PyFrameObject, f_localsplus) +
-                (le_code_nlocalsplus(po->pr.co) + nstack) * sizeof(PyObject *),
-            false);
-        bool ok =
-            top != NULL && psyco_put_field(po, frame, FRAME_stacktop, top);
-        vinfo_xdecref(top, po);
-        if (!ok)
-            goto fail;
-    }
-#endif
-    if (!put_nth_i(po, frame, FRAME_iblock, 0, po->pr.iblock))
-        goto fail;
-    for (i = 0; i < po->pr.iblock; i++) {
-        const le_block_t *b = &po->pr.blockstack[i];
-        int ints[3] = {b->b_type, le_lasti_of(b->b_handler), b->b_level};
-        for (k = 0; k < 3; k++)
-            if (!put_nth_i(po, frame, FRAME_block_ints, 3 * i + k, ints[k]))
-                goto fail;
-    }
-#if LE_HAS_FRAME_STATE
-    if (!put_nth_i(po, frame, FRAME_state, 0, FRAME_SUSPENDED))
-        goto fail;
-#endif
-    return frame;
-fail:
-    vinfo_decref(frame, po);
-    return NULL;
-}
-
-/* A resumable generator's YIELD_VALUE at 'at': its frame (that of the
-   run in the GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it,
-   with the locals and the stack items under the value, each a reference it
-   takes, and the run ends returning the value (EReturn), with no block
-   run. The cells and free variables stay the frame's. Its caught
-   exception's frame is let go first, given the locals (catcher_flush). */
-static void
-yield_resumable(PsycoObject *po, int at, bool after_await)
-{
-    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    PyCodeObject *co = po->pr.co;
-    int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
-    int nstack = STACK_LEVEL() - 1, i;
-    vinfo_t *run = po->vlocals.items[GENEXPR_SLOT_ACC(co)], *frame, *v;
-#if LE_RESUMES_COROUTINES
-    int traced = 0;
-    /* the await ran code, which may have started tracing: tested while
-       everything is still in the frame's slots, as a rare branch is */
-    if (after_await && (traced = psyco_tracing_on(po)) < 0)
-        return;
-#else
-    (void)after_await;
-#endif
-    if (!catcher_flush(po))
-        return;
-    /* every item real before anything is stored: making one may call */
-    for (i = 0; i < nlocals + nstack; i++) {
-        v = i < nlocals ? LOC_LOCALS_PLUS[i] : stack_a[i - nlocals];
-        if (v != NULL && !psyco_knowntobe(v, 0) && !compute_vinfo(v, po))
-            return;
-    }
-    frame = gen_frame_pause(po, run, le_lasti_of(at), nstack);
-    if (frame == NULL)
-        return;
-    for (i = 0; i < nlocals + nstack; i++) {
-        vinfo_t **slot =
-            i < nlocals ? &LOC_LOCALS_PLUS[i] : &stack_a[i - nlocals];
-        v = *slot;
-        /* an unbound local's slot is already empty (LeGen_Run took the
-           locals), but a stack slot of a frame CPython reused may still
-           hold an old word: a NULL item (LOAD_METHOD's, under a method) is
-           stored */
-        if ((v == NULL || psyco_knowntobe(v, 0)) && i >= nlocals) {
-            vinfo_t *null = v != NULL ? v : psyco_vi_Zero();
-            bool ok = psyco_put_nth_field(
-                po, frame, FRAME_localsplus,
-                i < nlocals ? i : nplus + i - nlocals, null);
-            if (v == NULL)
-                vinfo_decref(null, po);
-            if (!ok) {
-                vinfo_decref(frame, po);
-                return;
-            }
-        }
-        else if (v != NULL && !psyco_knowntobe(v, 0)) {
-            if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
-                                     i < nlocals ? i : nplus + i - nlocals,
-                                     v)) {
-                vinfo_decref(frame, po);
-                return;
-            }
-            consume_reference(po, v);
-        }
-        if (v != NULL) {
-            vinfo_decref(v, po);
-            *slot = NULL;
-        }
-    }
-    v = stack_a[nstack];
-#if LE_RESUMES_COROUTINES
+#if !LE_HAS_INTERPRETER_FRAME
     if (traced) {
-        vinfo_t *ok =
-            psyco_generic_call(po, psyco_trace_yield,
-                               CfReturnTypeInt | CfPyErrIfNeg, "vv", frame, v);
-        if (ok == NULL) {
-            vinfo_decref(frame, po);
+        vinfo_t *ok = psyco_generic_call(po, psyco_trace_yield,
+                                         CfReturnTypeInt | CfPyErrIfNeg, "vv",
+                                         psyco_frame_words_frame(po), v);
+        if (ok == NULL)
             return;
-        }
         vinfo_decref(ok, po);
     }
 #endif
-    vinfo_decref(frame, po);
     stack_a[nstack] = NULL;
     po->pr.stack_level = 0;
     po->pr.iblock = 0;
     PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
 }
-#endif
 
 /* An await at 'at' that suspends in a coroutine's body run as a call
    (GENEXPR_DIRECT): the coroutine CPython would have made is made, its
@@ -9346,10 +9301,10 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             }
             goto fine;
 
-#if LE_RESUMES_ON_FRAME
         /* a resumable coroutine's await (psyco_is_resumable_generator):
-           GET_AWAITABLE, then SEND's loop; where GET_AWAITABLE doesn't push
-           SEND's NULL and None, PUSH_NULL and LOAD_CONST do */
+           GET_AWAITABLE, then SEND's or YIELD_FROM's loop; where
+           GET_AWAITABLE doesn't push SEND's NULL and None, PUSH_NULL and
+           LOAD_CONST do */
         case GET_AWAITABLE:
             /* a coroutine awaited as soon as it is made stays pending: the
                SEND may run its body as a call */
@@ -9369,78 +9324,6 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 PUSH(psyco_vi_None());
             }
             goto fine;
-#endif
-#if LE_RESUMES_COROUTINES
-        /* a resumable coroutine's await (psyco_is_resumable_generator):
-           GET_AWAITABLE, LOAD_CONST None, YIELD_FROM */
-        case GET_AWAITABLE:
-            /* a coroutine awaited as soon as it is made stays pending: the
-               YIELD_FROM may run its body as a call */
-            if (PsycoGenexpr_Check(TOP()))
-                goto fine;
-            x = psyco_generic_call(
-                po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl", TOP(),
-                (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
-                                     oparg));
-            if (x == NULL)
-                break;
-            POP_DECREF();
-            PUSH(x);
-            goto fine;
-
-        case YIELD_FROM: {
-            /* what the awaited object yields pauses the frame as ceval's
-               YIELD_FROM leaves it, at the instruction before, so that ceval
-               resumes it at the YIELD_FROM with the receiver on the stack */
-            vinfo_array_t *array;
-            if (PsycoGenexpr_Check(NTOP(2))) {
-                int start = psyco_coro_start(po, NTOP(2));
-                if (start > 0) {
-                    start = start_directly(po, 2, true);
-                    if (start < 0)
-                        break;
-                    if (start == 0)
-                        goto fine;
-                    goto pause_at_await;
-                }
-                if (start < 0)
-                    break;
-            }
-            array = array_new(1);
-            x = psyco_generic_call(po, cimpl_await_send,
-                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA",
-                                   NTOP(2), TOP(), array);
-            if (x == NULL) {
-                array_release(array);
-                break;
-            }
-            cc = integer_non_null(po, x);
-            vinfo_decref(x, po);
-            if (cc == CC_ERROR) {
-                vinfo_decref(array->items[0], po);
-                array_release(array);
-                break;
-            }
-            POP_DECREF(); /* the value sent */
-            if (runtime_condition_f(po, cc)) {
-                PUSH(array->items[0]);
-                array_release(array);
-                goto pause_at_await;
-            }
-            POP_DECREF(); /* the receiver */
-            PUSH(array->items[0]);
-            array_release(array);
-            goto fine;
-
-        pause_at_await:
-            if (psyco_generator_mode(po) == GENEXPR_DIRECT)
-                yield_direct(po, next_instr - 2 * LE_UNIT);
-            else
-                yield_resumable(po, next_instr - 2 * LE_UNIT, true);
-            break;
-        }
-#endif
-
         case MAKE_FUNCTION: {
             /* the optional fields in the order ceval pops them; each
                is made fit to cross calls before anything is popped, as
@@ -9598,7 +9481,7 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                 traceback_locals(po, NULL);
             goto exception_unwind;
 
-#if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
+#if LE_HAS_OPCODE_CLEANUP_THROW
         /* where a throw into yield from goes, under the iterator and the
            value last sent: the StopIteration it ended with gives the
            loop's value (with a None under it), any other exception is
@@ -10398,10 +10281,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                frame from this instruction, which the promotion restarted
                (Psyco_NeedType). A replay from a snapshot taken here does the
                same, as the flag is part of the snapshot. */
-#if LE_RESUMES_ON_FRAME
             if (!stack_words_taken(po))
                 break;
-#endif
             if (po->pr.go_interpreted) {
                 po->pr.go_interpreted = 0;
                 if (!resume_in_ceval(po, next_instr, &unwound))

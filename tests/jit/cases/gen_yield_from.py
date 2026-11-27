@@ -4,7 +4,6 @@
 # with that generator under the value it yields, as ceval leaves the frame.
 # Each case checks that what Python sees of both generators, their frames,
 # their exceptions and their ends is CPython's.
-import dis
 import sys
 
 
@@ -14,10 +13,8 @@ def work(x):
 
 def compiled(*fns):
     lejit = sys.modules.get('lejit')
-    # a release build can't say what compiled, and without SEND a body
-    # with yield from runs interpreted
-    if (lejit is None or not hasattr(lejit._core, '_code_info') or
-            'SEND' not in dis.opmap):
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)
