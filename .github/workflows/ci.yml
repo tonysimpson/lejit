@@ -200,6 +200,48 @@ jobs:
           assert not w, [str(x.message) for x in w]
           "
 
+  # uv's own interpreters (python-build-standalone: clang, link-time
+  # optimisation, BOLT, and the tail-call interpreter from 3.14): lejit
+  # installs, and check() finds no difference, also where a .pth starts
+  # LeJIT for every program
+  install-uv:
+    name: install (uv ${{ matrix.python }})
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install libffi and libunwind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+      - name: Install
+        run: |
+          uv venv --python-preference only-managed --python ${{ matrix.python }} "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv" .
+      - name: Check
+        run: |
+          py="$RUNNER_TEMP/venv/bin/python"
+          cd /
+          check='
+          import warnings, lejit
+          with warnings.catch_warnings(record=True) as w:
+              warnings.simplefilter("always")
+              diffs = lejit.check()
+          assert lejit._core is not None, "no extension was built"
+          assert not diffs and not w, (sorted(diffs), [str(x.message) for x in w])
+          '
+          "$py" -c "$check"
+          # again with LeJIT started by site, for every program in the venv
+          site=$("$py" -c "import site; print(site.getsitepackages()[0])")
+          echo 'import lejit; lejit.start()' > "$site/lejit_autostart.pth"
+          LEJIT_START_CHECK=warning timeout -s KILL 300 "$py" -c "$check"
+
   # a Python newer than LeJIT runs on: installing builds no extension, and
   # start() warns and does nothing
   install-main:
@@ -330,7 +372,7 @@ jobs:
   passed:
     name: all jobs passed
     needs: [changes, check, encoder, release, build, install-newer,
-            install-main, detectors-newer, format, lint, wheels]
+            install-uv, install-main, detectors-newer, format, lint, wheels]
     if: ${{ always() && !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     steps:

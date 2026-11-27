@@ -145,8 +145,8 @@ SKIPPED = {
         'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_class_load_attr_specialization_static_type',
     "C code that reads the running frame itself (sys._current_frames, "
-    "tracemalloc, another process reading the stack, a _warnings module imported after LeJIT started, type()'s "
-    "and typing.TypeAliasType's __module__) sees the nearest frame ceval runs, not the compiled ones":
+    "tracemalloc, another process reading the stack, a _warnings module imported after LeJIT started, "
+    "type()'s __module__) sees the nearest frame ceval runs, not the compiled ones":
         'test.test_sys.SysModuleTest.test_current_frames '
         'test.test_sys.SysModuleTest.test_current_exceptions '
         'test.test_tracemalloc.TestCAPI.* '
@@ -164,10 +164,6 @@ SKIPPED = {
         'test.test_warnings.CWarnTests.test_stacklevel_import '
         'test.test_builtin.TestType.test_new_type '
         'test.test_builtin.TestType.test_type_name '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_basic '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_generic '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_not_generic '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_keywords '
         'test.test_external_inspection.TestGetStackTrace.test_self_trace',
     "a compiled frame's line, frame object or f_back isn't always what "
     'CPython gives':

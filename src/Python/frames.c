@@ -1569,25 +1569,24 @@ drop_activation(activation_t *a)
 }
 
 static stack_frame_info_t **
-innermost_slot(PyFrameObject **real);
+innermost_slot(le_frame_t **real);
 
 /* the slot of the innermost compiled frame, as innermost_slot gives it */
 static stack_frame_info_t **
-innermost_own(stack_frame_info_t **slot, PyFrameObject *real)
+innermost_own(stack_frame_info_t **slot, le_frame_t *real)
 {
     FrameRuntime *fr;
     if (slot != NULL)
         return (*slot)->link_stack_depth == 0 ? slot
                                               : psyco_next_stack_frame(slot);
-    fr = real == NULL ? NULL : psyco_frame_start_get(le_frame_of(real));
+    fr = real == NULL ? NULL : psyco_frame_start_get(real);
     return fr == NULL ? NULL : *fr->psy_frames_start;
 }
 
 /* the kept frame of the frame of code 'co' inlined in the innermost
    compiled frame, if any and ceval doesn't run it */
 static activation_t *
-inline_kept_at(stack_frame_info_t **slot, PyFrameObject *real,
-               PyCodeObject *co)
+inline_kept_at(stack_frame_info_t **slot, le_frame_t *real, PyCodeObject *co)
 {
     stack_frame_info_t **own = innermost_own(slot, real);
     activation_t *a;
@@ -1601,7 +1600,7 @@ inline_kept_at(stack_frame_info_t **slot, PyFrameObject *real,
 DEFINEFN int
 psyco_inline_frame_left(void)
 {
-    PyFrameObject *real;
+    le_frame_t *real;
     stack_frame_info_t **slot = innermost_slot(&real), **own;
     activation_t *a;
     own = innermost_own(slot, real);
@@ -1609,6 +1608,23 @@ psyco_inline_frame_left(void)
         drop_activation(a);
     return 0;
 }
+
+/* The traceback entries' frames catching callees hold on this thread
+   (psyco_frame_catch), by the callee's own slot, so that a walk keeps
+   one as its call's frame (keep_frame). An entry is live while its word
+   holds its frame; past CATCHERS_MAX, a frame is left out and a walk
+   makes another. */
+#define CATCHERS_MAX 32
+typedef struct {
+    stack_frame_info_t **own;
+    PyObject **word;
+    PyFrameObject *frame;
+} catcher_t;
+static _Thread_local catcher_t catchers[CATCHERS_MAX] LE_FAST_TLS;
+static _Thread_local int ncatchers LE_FAST_TLS;
+
+static PyFrameObject *
+catcher_take(stack_frame_info_t **own, PyCodeObject *co);
 
 /* the activation with key 'own' for the frame of code 'co' whose record
    is in 'slot', made if need be. A compiled callee's call's return address
@@ -1634,7 +1650,13 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     }
     if (!inlined && ret == NULL)
         return NULL;
-    f = psyco_build_pyframe(co, globals, PyThreadState_GET());
+    /* a traceback's frame stands for the call already: it is the one */
+    f = inlined || ncatchers == 0 ? NULL
+                                  : catcher_take(own, (PyCodeObject *)co);
+    if (f != NULL)
+        Py_INCREF(f);
+    else
+        f = psyco_build_pyframe(co, globals, PyThreadState_GET());
     le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
     /* running, as CPython's: frame.clear() refuses it */
     le_pyframe_set_executing(f, 1);
@@ -1759,6 +1781,42 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
     return NULL;
 #endif
 }
+
+#if LE_HAS_INTERPRETER_FRAME
+/* The generator, coroutine or async generator RETURN_GENERATOR would have
+   made at the call of 'func', written as CPython's make_gen and
+   _Py_MakeCoro write it. A coroutine's origin is none, as the call's
+   origin tracking depth was 0 (psyco_coro_start). Its frame, left cleared
+   (FRAME_CLEARED), is for the caller to fill; the caller tracks it then. A
+   new reference, or NULL. */
+DEFINEFN PyObject *
+le_gen_make(PyFunctionObject *func)
+{
+    PyCodeObject *co = (PyCodeObject *)func->func_code;
+    PyTypeObject *type = (co->co_flags & CO_COROUTINE) ? &PyCoro_Type
+                         : (co->co_flags & CO_ASYNC_GENERATOR)
+                             ? &PyAsyncGen_Type
+                             : &PyGen_Type;
+    PyGenObject *gen = PyObject_GC_NewVar(
+        PyGenObject, type, co->co_nlocalsplus + co->co_stacksize);
+    if (gen == NULL)
+        return NULL;
+#if LE_HAS_GEN_CODE_FIELD
+    gen->gi_code = (PyCodeObject *)Py_NewRef(co);
+#endif
+    gen->gi_weakreflist = NULL;
+    gen->gi_name = Py_NewRef(func->func_name);
+    gen->gi_qualname = Py_NewRef(func->func_qualname);
+    gen->gi_exc_state.exc_value = NULL;
+    gen->gi_exc_state.previous_item = NULL;
+    gen->gi_origin_or_finalizer = NULL;
+    gen->gi_hooks_inited = 0;
+    gen->gi_closed = 0;
+    gen->gi_running_async = 0;
+    gen->gi_frame_state = FRAME_CLEARED;
+    return (PyObject *)gen;
+}
+#endif
 
 /* a realised coroutine runs (psyco_coros_realise) or not, as gen_send_ex
    marks it: on a frame with no state its own flag says so, and its frame
@@ -1888,6 +1946,9 @@ psyco_coros_realise(void)
     realising = 0;
 }
 
+static PyFrameObject *
+activation_caller(activation_t *a);
+
 DEFINEFN
 code_t *
 psyco_activation_returned(long *sp)
@@ -1909,6 +1970,17 @@ psyco_activation_returned(long *sp)
     gen = a->gen;
     keep = a->keep;
     nkeep = a->nkeep;
+    if (f->f_back == NULL && Py_REFCNT(f) > 1 && !gen && !a->suspended &&
+        !(le_pyframe_code(f)->co_flags &
+          (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR))) {
+        /* it outlives its call: linked to its caller, as CPython's is,
+           while the caller's record still says where the call was; a
+           generator's has none once it has ended */
+        PyErr_Fetch(&t, &v, &tb);
+        f->f_back = activation_caller(a);
+        PyErr_Restore(t, v, tb);
+        a = act_find((stack_frame_info_t **)(sp + 1));
+    }
     /* the call is over, as its caller is about to say: the frame's
        finaliser may walk the frames */
     *a->slot = (stack_frame_info_t *)-1;
@@ -1937,13 +2009,14 @@ psyco_activation_returned(long *sp)
 }
 
 static stack_frame_info_t **
-innermost_slot(PyFrameObject **real);
+innermost_slot(le_frame_t **real);
 
 DEFINEFN
 PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co)
 {
-    PyFrameObject *real, *g;
+    le_frame_t *real;
+    PyFrameObject *g;
     stack_frame_info_t **slot;
     activation_t *a;
     slot = innermost_slot(&real);
@@ -2396,11 +2469,51 @@ has_catcher_note(PyFrameObject *f)
 }
 
 static void
+catcher_add(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
+{
+    int i, n = 0;
+    for (i = 0; i < ncatchers; i++)
+        if (*catchers[i].word == (PyObject *)catchers[i].frame)
+            catchers[n++] = catchers[i];
+    ncatchers = n;
+    if (n < CATCHERS_MAX) {
+        catchers[n].own = own;
+        catchers[n].word = word;
+        catchers[n].frame = f;
+        ncatchers = n + 1;
+    }
+}
+
+static void
 clear_catcher_note(PyFrameObject *f)
 {
+    int i;
+    for (i = ncatchers; i-- > 0;)
+        if (catchers[i].frame == f) {
+            catchers[i] = catchers[--ncatchers];
+            break;
+        }
     if (has_catcher_note(f))
         le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] =
             le_pyframe_stack(f)[2] = NULL;
+}
+
+/* the frame of a traceback entry the catching callee of code 'co' with
+   own slot 'own' holds, taken out with its note, or NULL */
+static PyFrameObject *
+catcher_take(stack_frame_info_t **own, PyCodeObject *co)
+{
+    int i;
+    PyFrameObject *f;
+    for (i = ncatchers; i-- > 0;) {
+        f = catchers[i].frame;
+        if (catchers[i].own == own && *catchers[i].word == (PyObject *)f &&
+            !le_frame_is_executing(f) && le_pyframe_code(f) == co) {
+            clear_catcher_note(f);
+            return f;
+        }
+    }
+    return NULL;
 }
 
 /* the catching callee's own slot, if it runs on this thread and its word
@@ -2430,15 +2543,14 @@ catcher_slot(PyFrameObject *f, stack_frame_info_t ***tag, FrameRuntime **run)
     return NULL;
 }
 
-/* the catching callee's caller, emulated and linked, or NULL */
+/* the caller of the compiled callee of code 'co' whose record is in
+   'tag', in run 'fr': emulated and linked, or NULL. A callee 'returning'
+   is the innermost frame, which walks skip. */
 static PyFrameObject *
-catcher_caller(PyFrameObject *f)
+caller_at(stack_frame_info_t **tag, PyCodeObject *co, FrameRuntime *fr,
+          bool returning)
 {
-    stack_frame_info_t **tag;
-    FrameRuntime *fr;
-    struct back_s b = {NULL, NULL, NULL, NULL, false, 0, le_pyframe_code(f)};
-    if (catcher_slot(f, &tag, &fr) == NULL)
-        return NULL;
+    struct back_s b = {NULL, NULL, NULL, NULL, returning, 0, co};
     b.tag = (long)tag;
     b.back = le_frame_object(fr->frame);
     pvisitframes(visit_back_frame, &b);
@@ -2449,6 +2561,39 @@ catcher_caller(PyFrameObject *f)
         return b.back;
     }
     return b.top;
+}
+
+/* the catching callee's caller, emulated and linked, or NULL */
+static PyFrameObject *
+catcher_caller(PyFrameObject *f)
+{
+    stack_frame_info_t **tag;
+    FrameRuntime *fr;
+    if (catcher_slot(f, &tag, &fr) == NULL)
+        return NULL;
+    return caller_at(tag, le_pyframe_code(f), fr, false);
+}
+
+/* a kept callee's caller, as a walk links it: emulated and linked, or
+   NULL if its run isn't on this thread */
+static PyFrameObject *
+activation_caller(activation_t *a)
+{
+    FrameRuntime *fr;
+    stack_frame_info_t **f1;
+    for (fr = frame_runs; fr != NULL; fr = fr->next) {
+        if (fr->resumed || !le_frame_executing(fr->frame))
+            continue;
+        for (f1 = *fr->psy_frames_start; (((long)*f1) & 1) == 0;
+             f1 = psyco_next_stack_frame(f1)) {
+            if (f1 == a->slot)
+                return caller_at(f1, le_pyframe_code(a->frame), fr,
+                                 (long)*a->own == FINFO_RETURNING);
+            if ((*f1)->link_stack_depth == 0)
+                break;
+        }
+    }
+    return NULL;
 }
 
 #ifdef PyFrameLocalsProxy_Check
@@ -2538,14 +2683,14 @@ expose(PyFrameObject *f, int write)
 static int
 exposed_here(PyCodeObject *co)
 {
-    PyFrameObject *real;
+    le_frame_t *real;
     stack_frame_info_t **slot = innermost_slot(&real);
     activation_t *a;
     FrameRuntime *fr;
     if ((a = inline_kept_at(slot, real, co)) != NULL)
         return a->exposed;
-    if (slot == NULL && real != NULL && le_pyframe_code(real) == co) {
-        fr = psyco_frame_start_get(le_frame_of(real));
+    if (slot == NULL && real != NULL && le_frame_code(real) == co) {
+        fr = psyco_frame_start_get(real);
         return fr != NULL && fr->exposed;
     }
     if (slot != NULL && (a = act_at(slot, co)) != NULL && !a->resumed)
@@ -2647,6 +2792,9 @@ frame_get_back(PyFrameObject *frame, void *closure)
     activation_t *a;
     if (back == NULL && has_catcher_note(frame))
         back = frame->f_back = catcher_caller(frame); /* takes the reference */
+    else if (back == NULL && (a = live_activation(frame)) != NULL &&
+             !a->inlined && !a->gen)
+        back = frame->f_back = activation_caller(a);
     if (back == NULL)
         Py_RETURN_NONE;
     /* a generator's frame its body runs on as a direct call is linked
@@ -2969,7 +3117,7 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
           (le_pyframe_code(f)->co_flags &
            (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))) {
 #if ALL_CHECKS
-        PyFrameObject *real;
+        le_frame_t *real;
         stack_frame_info_t **last = innermost_slot(&real);
         extra_assert(last != NULL && psyco_next_stack_frame(last) == own);
 #endif
@@ -2977,6 +3125,8 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
         le_pyframe_stack(f)[1] = (PyObject *)own;
         le_pyframe_stack(f)[2] = (PyObject *)word;
     }
+    if (!le_frame_is_executing(f) && le_frame_stack_empty(f))
+        catcher_add(f, word, own);
 }
 
 /* what holds a catcher's frame besides its word: a real or kept frame,
@@ -4392,27 +4542,106 @@ capi_sync(PyFrameObject *f)
     PyErr_Restore(t, v, tb);
 }
 
+/* the innermost frame Python sees made the thread's current one, for C
+   that reads the current frame itself, until capi_current_end; NULL, and
+   nothing changed, where compiled code isn't the innermost. 'saved' gets
+   the frame that was current. */
+static PyFrameObject *
+capi_current_begin(PyThreadState *ts, int linked, int locals,
+                   le_frame_t **saved)
+{
+    PyFrameObject *top;
+    if (!capi_compiled_innermost(ts) ||
+        (top = capi_innermost(linked, locals)) == NULL)
+        return NULL;
+    *saved = le_frame_current(ts);
+    if (le_frame_of(top) != *saved)
+        le_pyframe_make_current(ts, top);
+    return top;
+}
+
+static void
+capi_current_end(PyThreadState *ts, PyFrameObject *top, le_frame_t *saved)
+{
+    le_frame_set_current(ts, saved);
+    if (le_frame_of(top) != saved)
+        le_pyframe_current_end(top);
+}
+
 /* CPython's 'fn' run with the innermost frame Python sees current */
 static PyObject *
 capi_call_current(PyObject *(*fn)(void), int locals)
 {
     PyThreadState *ts = PyThreadState_GET();
     le_frame_t *saved;
-    PyFrameObject *top;
-    PyObject *r;
-    if (!capi_compiled_innermost(ts) ||
-        (top = capi_innermost(0, locals)) == NULL)
-        return fn();
-    saved = le_frame_current(ts);
-    if (le_frame_of(top) != saved)
-        le_pyframe_make_current(ts, top);
-    r = fn();
-    le_frame_set_current(ts, saved);
-    if (le_frame_of(top) != saved)
-        le_pyframe_current_end(top);
-    capi_hold(top); /* what it gave borrowed may be the frame's */
+    PyFrameObject *top = capi_current_begin(ts, 0, locals, &saved);
+    PyObject *r = fn();
+    if (top != NULL) {
+        capi_current_end(ts, top, saved);
+        capi_hold(top); /* what it gave borrowed may be the frame's */
+    }
     return r;
 }
+
+#if LE_HAS_FRAME_FUNCOBJ
+/* types whose tp_new reads the current frame itself, for the module of
+   the function that makes the object (typevarobject.c:caller,
+   sentinelobject.c:caller), each with CPython's tp_new */
+static struct {
+    PyTypeObject *type;
+    newfunc cpython;
+} frame_reading_types[5];
+static int n_frame_reading_types = 0;
+
+/* their tp_new, run with the innermost frame Python sees current, linked
+   to the frames out for the Python it may call */
+static PyObject *
+capi_new_with_frame(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    newfunc cpython = NULL;
+    le_frame_t *saved;
+    PyFrameObject *top;
+    PyObject *r;
+    int i;
+    for (i = 0; i < n_frame_reading_types && cpython == NULL; i++)
+        if (PyType_IsSubtype(type, frame_reading_types[i].type))
+            cpython = frame_reading_types[i].cpython;
+    if (cpython == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    top = capi_current_begin(ts, 1, 0, &saved);
+    r = cpython(type, args, kwds);
+    if (top != NULL) {
+        capi_current_end(ts, top, saved);
+        Py_DECREF(top);
+    }
+    return r;
+}
+
+static void
+capi_replace_new(const char *module, const char *name)
+{
+    PyObject *mod = PyImport_ImportModule(module);
+    PyObject *o = mod == NULL ? NULL : PyObject_GetAttrString(mod, name);
+    PyTypeObject *tp = (PyTypeObject *)o;
+    Py_XDECREF(mod);
+    if (o == NULL) {
+        PyErr_Clear();
+        return;
+    }
+    if (!PyType_Check(o) || tp->tp_new == NULL) {
+        Py_DECREF(o);
+        return;
+    }
+    /* the reference is kept */
+    frame_reading_types[n_frame_reading_types].type = tp;
+    frame_reading_types[n_frame_reading_types++].cpython = tp->tp_new;
+    tp->tp_new = capi_new_with_frame;
+    PyType_Modified(tp);
+}
+#endif
 
 static PyFrameObject *
 capi_eval_getframe(void)
@@ -4569,6 +4798,13 @@ capi_init(void)
     REPLACE("PyFrame_FastToLocals", capi_frame_fasttolocals,
             frame_fasttolocals_cpython);
 #undef REPLACE
+#if LE_HAS_FRAME_FUNCOBJ
+    capi_replace_new("_typing", "TypeVar");
+    capi_replace_new("_typing", "ParamSpec");
+    capi_replace_new("_typing", "TypeVarTuple");
+    capi_replace_new("_typing", "TypeAliasType");
+    capi_replace_new("builtins", "sentinel");
+#endif
 }
 
 /* libunwind opens a pipe the first time it unwinds, to test the addresses
@@ -4685,10 +4921,12 @@ walked_push(FrameRuntime *fr, stack_frame_info_t **own)
 }
 
 /* the slot of the record whose first entry is the innermost compiled
-   frame, NULL when that frame is the real one 'real' is set to: walked
+   frame, NULL when that frame is the real one 'real' is set to (its
+   interpreter frame: its frame object is made only for a caller that needs
+   it): walked
    on from the innermost call the last walk saw that is still running */
 static stack_frame_info_t **
-innermost_slot(PyFrameObject **real)
+innermost_slot(le_frame_t **real)
 {
     le_frame_t *f = le_frame_current(PyThreadState_GET());
     FrameRuntime *fstart = f == NULL ? NULL : psyco_frame_start_get(f);
@@ -4699,7 +4937,7 @@ innermost_slot(PyFrameObject **real)
     *real = NULL;
     if (fstart == NULL)
         return NULL;
-    *real = le_frame_object(fstart->frame);
+    *real = fstart->frame;
     root = *(fstart->psy_frames_start);
     w = fstart->walked;
     if (w == NULL) {
@@ -4741,9 +4979,10 @@ innermost_slot(PyFrameObject **real)
 DEFINEFN
 struct resume_s *
 psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
-                   long nvalues, PyObject **word)
+                   long nvalues, PyObject **word, long frameless)
 {
-    PyFrameObject *real, *c = word != NULL ? (PyFrameObject *)*word : NULL;
+    le_frame_t *real;
+    PyFrameObject *c = word != NULL ? (PyFrameObject *)*word : NULL;
     PyFrameObject *g = NULL;
     activation_t *a;
     struct resume_s *st =
@@ -4807,12 +5046,12 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         st->f = g;
         st->gen = 1;
     }
-    else if (st->slot == NULL && real != NULL && le_pyframe_code(real) == co) {
-        st->f = real;
-        Py_INCREF(real);
+    else if (st->slot == NULL && real != NULL && le_frame_code(real) == co &&
+             (st->f = le_frame_object(real)) != NULL) {
+        Py_INCREF(st->f);
 #ifdef PyFrameLocalsProxy_Check
         {
-            FrameRuntime *fr = psyco_frame_start_get(le_frame_of(real));
+            FrameRuntime *fr = psyco_frame_start_get(real);
             if (fr != NULL && fr->exposed) {
                 fr->exposed = 0;
                 psyco_frames_exposed--;
@@ -4845,6 +5084,8 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         Py_INCREF(c);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
+    else if (frameless)
+        st->f = NULL; /* the caller makes the frame it needs */
     else {
         st->f = le_pyframe_new(PyThreadState_GET(), co, globals);
         if (st->f == NULL) {
@@ -5161,54 +5402,79 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack, long level,
                      PyFunctionObject *func, PyObject *value)
 {
     PyFrameObject *f = st->f;
+    le_frame_t *frame;
     int nlocals = st->nvalues - (int)nstack;
     int i;
-    PyObject *coro;
+    PyObject *coro = NULL;
     activation_t *a;
     _PyErr_StackItem held = {0};
+#if LE_HAS_INTERPRETER_FRAME
+    if (f == NULL) {
+        /* nothing stands for the call's frame: the coroutine is made with
+           its frame inside it, as RETURN_GENERATOR makes it, and no frame
+           object */
+        coro = le_gen_make(func);
+        if (coro == NULL) {
+            for (i = 0; i < st->nvalues; i++) Py_XDECREF(st->values[i]);
+            Py_XDECREF(st->catcher);
+            PyMem_Free(st);
+            return NULL;
+        }
+        frame =
+            (le_frame_t *)((char *)coro + offsetof(PyGenObject, gi_iframe));
+        le_frame_init_gen(frame, func, 0, FRAME_OWNED_BY_GENERATOR);
+    }
+    else
+#endif
+        frame = le_frame_of(f);
     /* suspending in its own handler */
     coro_exc_take(st, level, nstack, &held, PyThreadState_GET()->exc_info);
-    resume_locals(st, le_frame_of(f), nlocals);
+    resume_locals(st, frame, nlocals);
     for (i = 0; i < nstack; i++)
-        le_frame_word_put(le_frame_of(f), nlocals + i,
-                          st->values[nlocals + i]);
+        le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
     for (i = 0; i < nlocals; i++) Py_XDECREF(st->values[i]);
     if (st->catcher != NULL) {
         if (st->catcher != f)
-            catcher_write_locals(st->catcher, le_frame_of(f), nlocals);
+            catcher_write_locals(st->catcher, frame, nlocals);
         Py_DECREF(st->catcher);
     }
-    coro = NULL;
-    if (st->slot != NULL &&
-        (a = act_at(st->slot, le_pyframe_code(f))) != NULL && a->frame == f) {
-        a->suspended = 1;
-        /* realised already: that coroutine suspends */
-        coro = a->coro;
-        a->coro = NULL;
-    }
-    Py_CLEAR(f->f_back);
-    /* the words to the stack's top go into the coroutine */
-    le_frame_set_stack_depth(f, (int)nstack);
-    if (coro != NULL) {
-        coro_set_running(coro, 0);
-        Py_DECREF(f);
-    }
-    else if ((coro = le_gen_of_frame(f, func)) == NULL) {
-        _PyErr_StackItem none = {0};
-        coro_exc_give(&held, &none); /* it goes with the body */
-        PyMem_Free(st);
-        return NULL;
+    if (f != NULL) {
+        if (st->slot != NULL &&
+            (a = act_at(st->slot, le_pyframe_code(f))) != NULL &&
+            a->frame == f) {
+            a->suspended = 1;
+            /* realised already: that coroutine suspends */
+            coro = a->coro;
+            a->coro = NULL;
+        }
+        Py_CLEAR(f->f_back);
+        /* the words to the stack's top go into the coroutine */
+        le_frame_set_stack_depth(f, (int)nstack);
+        if (coro != NULL) {
+            coro_set_running(coro, 0);
+            Py_DECREF(f);
+        }
+        else if ((coro = le_gen_of_frame(f, func)) == NULL) {
+            _PyErr_StackItem none = {0};
+            coro_exc_give(&held, &none); /* it goes with the body */
+            PyMem_Free(st);
+            return NULL;
+        }
+        /* the coroutine holds the frame now */
+        frame = le_frame_of(f);
     }
     coro_exc_give(&((PyGenObject *)coro)->gi_exc_state, &held);
     /* paused once the coroutine exists, which holds the state where the
        frame is inside it */
 #if LE_HAS_EXCEPTION_TABLE
-    le_gen_frame_pause(le_frame_of(f), le_lasti_of((int)at), (int)nstack);
+    le_gen_frame_pause(frame, le_lasti_of((int)at), (int)nstack);
 #else
     le_gen_frame_pause(f, le_lasti_of((int)at), (int)nstack, st->iblock,
                        st->blocks);
 #endif
-    le_gen_frame_end(le_frame_of(f), value);
+    le_gen_frame_end(frame, value);
+    if (f == NULL)
+        PyObject_GC_Track(coro); /* made whole */
     PyMem_Free(st);
 #if LE_RESUMES_COROUTINES
     if (psyco_trace_yield(f, value) < 0) {
