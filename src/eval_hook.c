@@ -112,7 +112,7 @@ LeCode_Run(PyThreadState *tstate, PyObject *codebuf, le_frame_t *f)
     else
         result = run_on_words((CodeBufferObject *)codebuf, f, &finfo);
 #if LE_HAS_EVAL_FRAME_POPS
-    if (fr.frame == NULL) {
+    if (fr.popped) {
         /* ceval ran it on to its end and popped it (frames.c:
            psyco_resume_run) */
         le_recursion_leave(tstate);
@@ -130,6 +130,47 @@ LeCode_Run(PyThreadState *tstate, PyObject *codebuf, le_frame_t *f)
         psyco_frame_returned(f);
 #endif
     return le_frame_finish(tstate, f, result, frame_done);
+}
+
+/* A call of 'func' from C run with no real frame: its compiled entry
+   'codebuf' (le_function_entry) runs on 'args', every word of its
+   arguments, which the run holds a reference to, as a frame does: a
+   caller may pass one only the call keeps alive (ceval's
+   WITH_EXCEPT_START, the traceback), and the frame has a view only when
+   asked
+   (frames.c:keep_root). The caller has bound the arguments and made the
+   tests a frame would: no tracing, no cells or free variables, not a
+   generator's code. As ceval, the depth is counted and the eval_breaker
+   tested at the start. */
+DEFINEFN PyObject *
+le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
+                 PyObject *const *args, Py_ssize_t nargs)
+{
+    PyThreadState *tstate = PyThreadState_GET();
+    stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
+    stack_frame_info_t **finfo = &no_frames;
+    FrameRuntime fr;
+    PyObject *result;
+    Py_ssize_t i;
+    extra_assert(RUN_ARGC(codebuf) == nargs);
+    if (le_recursion_enter(tstate))
+        return NULL;
+    for (i = 0; i < nargs; i++) Py_XINCREF(args[i]);
+    psyco_frame_start_register_frameless(&fr, func, &finfo);
+    if (le_eval_breaker_at_entry(tstate, (PyCodeObject *)func->func_code) <
+        0) {
+        PyFrameObject *f = psyco_frameless_frame(&fr);
+        PyTraceBack_Here(f);
+        Py_DECREF(f);
+        result = NULL;
+    }
+    else
+        result = psyco_processor_run((CodeBufferObject *)codebuf, (long *)args,
+                                     &finfo);
+    le_recursion_leave(tstate);
+    psyco_frame_start_unregister(&fr);
+    for (i = 0; i < nargs; i++) Py_XDECREF(args[i]);
+    return result;
 }
 
 #if LE_HAS_EVAL_FRAME_POPS
@@ -490,7 +531,7 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f,
     le_gen_frame_run(f);
     result = psyco_processor_run(codebuf, args, &finfo);
 #if LE_HAS_EVAL_FRAME_POPS
-    if (fr.frame == NULL) {
+    if (fr.popped) {
         /* ceval ran it on to a yield or its end (frames.c:
            psyco_resume_run) */
         le_recursion_leave(tstate);
@@ -662,6 +703,19 @@ le_code_to_run(PyThreadState *tstate, PyCodeObject *co, PyObject *globals,
         }
     }
     return NULL;
+}
+
+/* the compiled entry to run a call of 'func' on, compiled now if need
+   be, or NULL to run it interpreted */
+DEFINEFN PyObject *
+le_function_entry(PyFunctionObject *func)
+{
+    PyObject *globals = func->func_globals;
+    PyObject *builtins = psy_get_builtins(globals);
+    if (builtins == NULL)
+        return NULL;
+    return le_code_to_run(PyThreadState_GET(), (PyCodeObject *)func->func_code,
+                          globals, NULL, builtins);
 }
 
 /* how CPython hands calls to LeJIT: LeEval_EvalFrame and le_entry_install */
