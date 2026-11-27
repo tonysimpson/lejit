@@ -138,6 +138,34 @@ def iterable_dies(n):
     return out
 
 
+# consumed inside a generator's body, between its yields; and a generator
+# a loop with no yield in it leaves paused, held across the body's yield
+def pairs(xs):
+    for i in range(len(xs)):
+        yield tuple(xs[j] for j in range(i + 1))
+        yield sum(1 for x in xs if x > i), set(x - i for x in xs)
+
+
+def half(xs):
+    for x in xs:
+        yield x
+
+
+def held_gen(xs):
+    g = half(xs)
+    for x in g:
+        if x == 1:
+            break
+    yield x
+    yield list(g)
+    yield sorted(g.gi_frame.f_locals) if g.gi_frame else None
+
+
+def in_generator(n):
+    xs = list(range(n))
+    return [list(pairs(xs)), list(held_gen(xs))]
+
+
 CASES = [
     ('consumers', [(0,), (1,), (3,)], {}),
     ('strings', [(0,), (3,)], {}),
@@ -147,4 +175,5 @@ CASES = [
     ('body_frames', [(2,)], {}),
     ('stops_early', [(3,)], {}),
     ('iterable_dies', [(2,)], {}),
+    ('in_generator', [(3,)], {}),
 ]

@@ -2196,6 +2196,26 @@ error:
     return -1;
 }
 
+/* whether the instruction being compiled is the FOR_ITER of a loop with
+   no yield in it, so that a generator it steps is dropped before the body
+   pauses, or made real at the pause if something still holds it */
+static bool
+loop_has_no_yield(PsycoObject *po)
+{
+    le_code_t c = le_code(po->pr.co);
+    le_instr_t in = le_instr(c, po->pr.next_instr);
+    int pos;
+    if (in.op != FOR_ITER)
+        return false;
+    for (pos = in.next; pos < in.target;) {
+        le_instr_t body = le_instr(c, pos);
+        if (body.op == YIELD_VALUE)
+            return false;
+        pos = body.next;
+    }
+    return true;
+}
+
 /* le_iter_send of the real generator of the record 'rec' a frame word
    holds (yield_resumable) */
 static int
@@ -2262,11 +2282,13 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         co = pending_code(vgen);
         /* a generator's body pausing would make one it steps real at
            once, its record in the body's frame: such a one is made real
-           now and stepped as a real one. yield from's is kept in the
-           frame's word as a record (yield_resumable). */
+           now and stepped as a real one, unless a for loop with no yield
+           in it steps it. yield from's is kept in the frame's word as a
+           record (yield_resumable). */
         if (PsycoGenexpr_Check(vgen) &&
             (!vgen_startable(vgen, co) ||
-             (psyco_generator_mode(po) == GENEXPR_RESUMABLE && out == NULL))) {
+             (psyco_generator_mode(po) == GENEXPR_RESUMABLE && out == NULL &&
+              !loop_has_no_yield(po)))) {
             if (!compute_vinfo(vgen, po))
                 return NULL;
         }
