@@ -672,6 +672,13 @@ inline_func_item(PsycoObject *po, vinfo_t *vfunc)
     return 0;
 }
 
+DEFINEFN
+bool
+psyco_inlined_call_returned(PsycoObject *po)
+{
+    return !po->pr.is_inlining && LOC_INLINING != NULL;
+}
+
 static vinfo_t *
 call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
                        vinfo_t *vfunc, int recursion)

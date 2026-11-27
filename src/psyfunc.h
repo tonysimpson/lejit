@@ -29,6 +29,14 @@ EXTERNFN vinfo_t *
 psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                    vinfo_t *arg_tuple);
 
+/* whether the call instruction being compiled is restarting with its
+   inlined body's result (pycompiler.c, at the body's return): the body
+   has run, so the tests made before it, of the function's code, defaults
+   and vectorcall, are not made again; they would see what the body
+   changed and call the function a second time */
+EXTERNFN bool
+psyco_inlined_call_returned(PsycoObject *po);
+
 /* emits the test of whether a trace or profile function is set in this
    thread; true on its rare path, -1 with an exception set in 'po' */
 EXTERNFN int
