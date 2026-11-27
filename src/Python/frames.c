@@ -3339,8 +3339,11 @@ frame_get_back(PyFrameObject *frame, void *closure)
     if (back == NULL)
         Py_RETURN_NONE;
     /* a generator's frame its body runs on as a direct call is linked
-       only to the frame the call was made from */
-    if (le_frame_is_executing(frame) && runs_compiled(back) &&
+       only to the frame the call was made from; a frame entered through
+       C from a frameless run is in that run, entered at 'back' */
+    if (le_frame_is_executing(frame) &&
+        (runs_compiled(back) ||
+         frameless_at(NULL, le_frame_of(back)) != NULL) &&
         ((a = live_activation(frame)) == NULL || a->gen)) {
         struct back_s b = {frame, back, NULL, NULL, false, NULL, NULL, NULL};
         pvisitframes(visit_back_frame, &b);
