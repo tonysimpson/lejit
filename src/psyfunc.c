@@ -1306,6 +1306,8 @@ call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     bool dict_kw = psyco_dict_keywords(po, kw);
     vinfo_array_t *dict_values = NULL;
     vinfo_t *kwdict = NULL;
+    /* a bound method's f(*a, **kw) call, which CPython runs from C */
+    int through_c = po->pr.ex_method ? LE_C_EX_METHOD : LE_C_NONE;
 #if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
     /* an f(*a, **kw) call: its frame is counted untested, here or where
        the real call's frame is entered (le_ex_callee) */
@@ -1313,6 +1315,7 @@ call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     po->pr.ex_call = 0;
 #endif
     po->pr.ex_keywords = 0;
+    po->pr.ex_method = 0;
 
     /* a generator is run only by a consumer that knows it
        (psyco_call_genexpr): until then it is a pending generator, of a
@@ -1396,9 +1399,10 @@ call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        and a closure calling itself through its cell would
        reach RecursionError at twice CPython's depth. Not a call whose
        binding emits code (a dict's keywords): the instruction restarting
-       after an inlined body would emit it again. */
-    inlining = !generator && !dict_kw && allow_inline && !po->pr.is_inlining &&
-               co != po->pr.co &&
+       after an inlined body would emit it again. Not a frame CPython runs
+       from C, whose level counts C too. */
+    inlining = !generator && !dict_kw && through_c == LE_C_NONE &&
+               allow_inline && !po->pr.is_inlining && co != po->pr.co &&
                (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE) &&
                (LOC_INLINING != NULL || inline_into(po));
     /* the instruction restarting with the inlined body's result binds again
@@ -1514,7 +1518,7 @@ call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         else
 #endif
             if (!refused && entered && !inlining)
-            entered = psyco_enter_recursive_call(po, vts, LE_C_NONE);
+            entered = psyco_enter_recursive_call(po, vts, through_c);
         vinfo_decref(vts, po);
         if (refused || !entered) {
             array_delete(fncall.inputvinfos, po);
@@ -1538,7 +1542,7 @@ call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         Psyco_ForgetClasses(po);
         mypo = psyco_build_frame(po, &fncall, recursion, &sources);
         if (mypo == NULL) {
-            psyco_leave_recursive_call(po, LE_C_NONE);
+            psyco_leave_recursive_call(po, through_c);
             goto pyerr;
         }
         argcount = get_arguments_count(&mypo->vlocals);
@@ -1550,7 +1554,7 @@ call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         /* get the run-time argument sources and push them on the stack
            and write the actual CALL */
         result =
-            psyco_call_psyco(po, codebuf, sources, argcount, finfo, LE_C_NONE);
+            psyco_call_psyco(po, codebuf, sources, argcount, finfo, through_c);
         PyMem_FREE(sources);
     }
     vinfo_decref(vbuiltins, po);

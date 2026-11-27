@@ -137,6 +137,9 @@ typedef struct {
     char ex_keywords;       /* the call being compiled is an f(*a, **d)
                                call whose keywords are a run-time exact dict
                                the binder may read (psyco_dict_keywords) */
+    char ex_method;         /* the call being compiled is an f(*a, **kw)
+                               of a bound method, which CPython runs from C
+                               (PyObject_Call) */
     int call_site; /* 1 + the CALL_* instruction being compiled, or 0 */
     struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                          which gives it its return address */

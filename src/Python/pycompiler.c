@@ -4521,6 +4521,19 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     return ex_call(po, func, callargs, kwargs, t);
 }
 
+/* PsycoObject_Call for ex_call: CPython runs a bound method's frame from
+   C (PyObject_Call), as the direct call then counts it */
+static vinfo_t *
+ex_direct_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs,
+               vinfo_t *kwargs)
+{
+    vinfo_t *result;
+    po->pr.ex_method = Psyco_KnownType(func) == &PyMethod_Type;
+    result = PsycoObject_Call(po, func, callargs, kwargs);
+    po->pr.ex_method = 0;
+    return result;
+}
+
 /* psyco_ext_do_call_ex's call, once callargs' type 't' is known */
 static vinfo_t *
 ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
@@ -4538,14 +4551,14 @@ ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
             return NULL;
         if (ft == &PyFunction_Type || ft == &PyMethod_Type)
             kwargs = zero = psyco_vi_Zero();
-        result = PsycoObject_Call(po, func, callargs, kwargs);
+        result = ex_direct_call(po, func, callargs, kwargs);
         goto done;
     }
     if (t == &PyTuple_Type && zero != NULL) {
         /* f(*args): the call can be specialised. With **kwargs it goes to the
            run-time helper, which holds a reference to the dict as ceval does
          */
-        result = PsycoObject_Call(po, func, callargs, kwargs);
+        result = ex_direct_call(po, func, callargs, kwargs);
         goto done;
     }
     if (t == &PyTuple_Type && PsycoTuple_Load(callargs) >= 0 &&
@@ -4555,7 +4568,7 @@ ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
         /* f(*args, **d) of a Python function, d an exact dict: its keywords
            bind at run time (psyfunc.c:psyco_dict_keywords) */
         po->pr.ex_keywords = 1;
-        result = PsycoObject_Call(po, func, callargs, kwargs);
+        result = ex_direct_call(po, func, callargs, kwargs);
         po->pr.ex_keywords = 0;
         goto done;
     }
