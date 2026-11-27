@@ -55,13 +55,20 @@ psyco_inline_frame_left(void);
    its f_localsplus and value stack items in order (psyco_resume_value) and
    its blocks (psyco_resume_block); psyco_resume_run runs it in ceval from
    the instruction after 'lasti' and returns its result. Called from
-   compiled code (pycompiler.c:resume_if_tracing). 'frameless': no frame
-   object is made where none stands for the call's frame yet, for
-   psyco_resume_suspend to make the coroutine's frame itself. */
+   compiled code (pycompiler.c:resume_if_tracing). 'frame' says what is
+   made where nothing stands for the call's frame yet: a frame object
+   (RESUME_FRAME_OBJECT); nothing (RESUME_NO_FRAME), for
+   psyco_resume_suspend to make the coroutine's frame itself; or, for
+   psyco_resume_run, a compiled callee's frame of the thread's with no
+   frame object, as CPython's call has, where frames are not frame objects
+   (RESUME_THREAD_FRAME). */
+#define RESUME_FRAME_OBJECT 0
+#define RESUME_NO_FRAME 1
+#define RESUME_THREAD_FRAME 2
 struct resume_s;
 EXTERNFN struct resume_s *
 psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
-                   long nvalues, PyObject **word, long frameless);
+                   long nvalues, PyObject **word, long frame);
 EXTERNFN void
 psyco_resume_value(struct resume_s *st, long i, PyObject *v);
 #if !LE_HAS_EXCEPTION_TABLE
@@ -163,6 +170,10 @@ struct locals_map_s {
     /* the frame's catcher word (pycompiler.c:catcher_word) as an offset
        from data, or -1 if it has none */
     long word;
+    /* whether one more value follows the locals': the function of the
+       frame the record is for, known only at run time (the callee's, or
+       for an own map the inlined frame's) */
+    int func;
     long items[1];
 };
 
@@ -209,9 +220,12 @@ struct stack_frame_info_s {
    inlined frame's parent's, whose slot the call uses, unless 'own'. A
    local only in a register is found there (LM_REG), or with reg_pos at
    the position its register is pushed at for this call
-   (psyco_call_psyco). Nothing is emitted. */
+   (psyco_call_psyco). Nothing is emitted. After the locals, the
+   function of the frame called, if known only at run time: 'func', or
+   for 'own' the inlined frame's (LOC_INLINE_FUNC). */
 EXTERNFN struct locals_map_s *
-psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own);
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own,
+                 vinfo_t *func);
 EXTERNVAR struct locals_map_s **psyco_locals_maps;
 EXTERNFN bool
 psyco_locals_map_reads(vinfo_t *vi, int level);

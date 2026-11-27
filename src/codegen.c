@@ -510,14 +510,14 @@ psyco_note_call_site(PsycoObject *po, int lasti)
     long i;
     if (lasti < 0)
         return;
-    map = psyco_locals_map(po, lasti, NULL, 0);
+    map = psyco_locals_map(po, lasti, NULL, 0, NULL);
     if (po->pr.is_inlining) {
         /* the slot keeps a record of the inlined frame, here with its place
            and its parent's locals, read as a note's (frames.c:slot_locals) */
         stack_frame_info_t *rec = psyco_finfo(NULL, po);
         rec->own_lasti = lasti;
         rec->back_locals = map;
-        rec->own_locals = psyco_locals_map(po, lasti, NULL, 1);
+        rec->own_locals = psyco_locals_map(po, lasti, NULL, 1, NULL);
         po->pr.pending_map = map;
         BEGIN_CODE
         ABOUT_TO_CALL_SUBFUNCTION((long)rec);
@@ -650,9 +650,42 @@ psyco_locals_map_reads(vinfo_t *vi, int level)
     return true;
 }
 
+/* the inlined frame's function where its parent holds it at run time
+   (Python/pycheader.h:LOC_INLINE_FUNC), else NULL */
+static vinfo_t *
+inlined_func_vinfo(PsycoObject *po)
+{
+    vinfo_array_t *a;
+    long f;
+    if (!po->pr.is_inlining)
+        return NULL;
+    a = LOC_INLINING->array;
+    f = CompileTime_Get(a->items[LOC_INLINE_FUNC]->source)->value;
+    if ((f & 1) == 0 || TOTAL_LOC_INLINE + (f >> 1) >= a->count)
+        return NULL;
+    return a->items[TOTAL_LOC_INLINE + (f >> 1)];
+}
+
+/* whether run-time 'vi' can be mapped without emitting anything */
+static bool
+lm_func_found(vinfo_t *vi, const long *reg_pos)
+{
+    reg_t rg;
+    if (vi == NULL || !is_runtime(vi->source))
+        return false;
+    if (getstack(vi->source) != RUNTIME_STACK_NONE)
+        return true;
+    rg = getreg(vi->source);
+    if (rg == REG_NONE || REG_IS_XMM(rg))
+        return false;
+    return reg_pos != NULL ? reg_pos[rg] != RUNTIME_STACK_NONE
+                           : callee_saved_reg_table[rg];
+}
+
 DEFINEFN
 struct locals_map_s *
-psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own)
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own,
+                 vinfo_t *func)
 {
     PyCodeObject *co = po->pr.co;
     vinfo_t **locals = LOC_LOCALS_PLUS;
@@ -670,10 +703,17 @@ psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own)
     n = le_code_nlocalsplus(co);
     b.count = 0;
     for (i = 0; i < n; i++) lm_value(po, &b, locals[i], reg_pos, 0);
+    if (own)
+        func = inlined_func_vinfo(po);
+    if (func != NULL && !lm_func_found(func, reg_pos))
+        func = NULL;
+    if (func != NULL)
+        lm_value(po, &b, func, reg_pos, 0);
     map = psyco_owner_alloc(offsetof(struct locals_map_s, items) +
                             (b.count + 1) * sizeof(long));
     map->lasti = lasti;
     map->nvalues = n;
+    map->func = func != NULL;
     /* after the pushes: positions are offsets down from the stack top */
     map->below = po->stack_depth - INITIAL_STACK_DEPTH;
     map->word = -1;

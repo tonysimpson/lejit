@@ -3,7 +3,8 @@
 # own function, as CPython's frame does: gc.get_referents finds it there,
 # and no other function is made for the frame, so a function watcher
 # (PyFunction_AddWatcher) is told of none. Where CPython has no function
-# watchers, only the functions are compared.
+# watchers, only the functions are compared. The function called may be
+# known only at run time: passed in, or a closure made by the caller.
 import gc
 import sys
 import types
@@ -27,16 +28,30 @@ def _raise(n):
     return _raise(n - 1)
 
 
-def through_calls(n):
-    try:
-        _raise(n)
-    except ValueError as e:
-        tb = e.__traceback__
+def _walk(tb):
     out = []
     while tb is not None:
         out.append((tb.tb_frame.f_code.co_name, _functions(tb.tb_frame)))
         tb = tb.tb_next
     return out
+
+
+def through_calls(n):
+    try:
+        _raise(n)
+    except ValueError as e:
+        return _walk(e.__traceback__)
+
+
+def _call(f, n):
+    return f(n)
+
+
+def passed_in(n):
+    try:
+        _call(_raise, n)
+    except ValueError as e:
+        return _walk(e.__traceback__)
 
 
 def _callers(depth):
@@ -55,6 +70,21 @@ class Callers:
 
 def _middle(depth):
     return Callers().method(depth)
+
+
+def _maker():
+    def inner(depth):
+        return _callers(depth)
+    return inner
+
+
+# made once, so the call reads it at run time
+_made = [_maker()]
+
+
+def closure_seen(depth):
+    frames = _made[0](depth)
+    return [(fr.f_code.co_name, _functions(fr)) for fr in frames[:-1]]
 
 
 def seen_from_callee(depth):
@@ -78,7 +108,8 @@ def watched(n):
     if WATCHERS:
         wid = _testcapi.add_func_watcher(
             lambda e, f, v: events.append(f.__qualname__))
-    out = through_calls(n), seen_from_callee(3)
+    out = (through_calls(n), seen_from_callee(3), passed_in(n),
+           closure_seen(3))
     if WATCHERS:
         _testcapi.clear_func_watcher(wid)
     return out, events
@@ -87,6 +118,8 @@ def watched(n):
 CASES = [
     ('through_calls', [(0,), (4,)], {}),
     ('seen_from_callee', [(3,)], {}),
+    ('passed_in', [(0,), (4,)], {}),
+    ('closure_seen', [(3,)], {}),
     ('kept_after_return', [()], {}),
     ('watched', [(4,)], {}),
 ]

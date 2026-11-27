@@ -45,8 +45,9 @@
 
 /* LOC_INLINING's array, while a frame is inlined: the parent's code
    object, position and code serial (psyfunc.c:psyco_save_inline_po), the
-   inlined frame's function where the call knows it (0 where not), then
-   the parent's vlocals */
+   inlined frame's function where the call knows it, else (i << 1) | 1 if
+   it is the parent's run-time vlocal i, else 0, then the
+   parent's vlocals */
 #define LOC_INLINE_CO 0
 #define LOC_INLINE_NEXT_INSTR 1
 #define LOC_INLINE_SERIAL 2

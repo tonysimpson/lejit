@@ -284,6 +284,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
       - name: Install libffi and libunwind
         run: |
+          # the runner's Microsoft package source sometimes refuses with 403
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libffi-dev libunwind-dev
       - name: Install
@@ -319,6 +321,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build CPython main
         run: |
+          # the runner's Microsoft package source sometimes refuses with 403
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libssl-dev zlib1g-dev libffi-dev
           git clone --depth 1 https://github.com/python/cpython "$RUNNER_TEMP/cpython"

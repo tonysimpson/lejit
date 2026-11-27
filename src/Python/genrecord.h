@@ -15,6 +15,12 @@ EXTERNVAR long le_stat_gen_records[6];
    of its code: no words yet. A new reference, or NULL with an exception. */
 EXTERNFN PyObject *
 le_gen_record_new(PyObject *func, long start);
+/* frame 'f' cleared as CPython clears a frame that ends, but its code,
+   which the caller lets go: a frame object that outlives it takes it;
+   else its locals go, then its function (a record's frame, as a
+   generator's, keeps its code for the record's life) */
+EXTERNFN void
+le_frame_clear(le_frame_t *f);
 /* its arguments are in its words: its cells and free variables are made,
    as the instructions before RETURN_GENERATOR make them. -1 with an
    exception. */
