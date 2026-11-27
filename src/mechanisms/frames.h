@@ -684,6 +684,14 @@ le_frame_stack_depth(le_frame_t *f)
     return f->stacktop - LE_FRAME_CODE(f)->co_nlocalsplus;
 #endif
 }
+/* whether gen_send_ex2 has pushed the value it sends on the stack of
+   the generator's frame 'f' it resumes: always */
+static inline int
+le_gen_frame_sent_pushed(le_frame_t *f)
+{
+    (void)f;
+    return 1;
+}
 static inline void
 le_gen_frame_set_depth(le_frame_t *f, int n)
 {
@@ -733,8 +741,8 @@ le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
 {
     le_frame_init(f, (PyCodeObject *)func->func_code, func, start, owner);
 }
-/* the generator's frame runs, its stack held by compiled code (and its
-   locals, but where LE_RESUMES_ON_FRAME those the code hasn't taken):
+/* the generator's frame runs, its stack held by compiled code (and the
+   locals the code hasn't taken):
    gen_send_ex has marked it as running. Its place moves off the yield
    (LE_GEN_RUN_STEP), as ceval's would: gen.close() and gi_yieldfrom
    read a frame at a yield as paused there. */
@@ -1084,13 +1092,79 @@ le_frame_stack_depth(PyFrameObject *f)
     return (int)(f->f_stacktop - f->f_valuestack);
 #endif
 }
-/* the frame is a generator's, resumed: a generator function's frame is
-   made when the generator is */
+/* the frame is a generator's, a coroutine's or an async generator's, or
+   a virtual generator's record's: CPython links such a frame to its
+   generator (f_gen) from the generator's making to its end */
 static inline int
 le_frame_is_gen(le_frame_t *f)
 {
-    (void)f;
-    return 1;
+    return f->f_gen != NULL;
+}
+static inline PyGenObject *
+le_frame_gen(le_frame_t *f)
+{
+    return (PyGenObject *)f->f_gen;
+}
+static inline void
+le_gen_frame_set_depth(le_frame_t *f, int n)
+{
+    le_frame_set_stack_depth(f, n);
+}
+/* whether gen_send_ex has pushed the value it sends on the stack of the
+   generator's frame 'f' it resumes: where the code has an instruction to
+   pop it at the start (GEN_START), always, else only past the start */
+static inline int
+le_gen_frame_sent_pushed(le_frame_t *f)
+{
+    return LE_HAS_OPCODE_GEN_START || f->f_lasti != -1;
+}
+#define le_frame_iterators_real(f, nstack) true
+/* whether the generator's frame 'f', after a run, is paused at a yield
+   (le_gen_frame_end has run): else its body returned or raised */
+static inline int
+le_gen_frame_paused(le_frame_t *f)
+{
+#if LE_HAS_FRAME_STATE
+    return f->f_state == FRAME_SUSPENDED;
+#else
+    return f->f_stacktop != NULL;
+#endif
+}
+/* A virtual generator's record (Python/genrecord.c): where a generator's
+   body that compiled code runs before any generator object exists keeps
+   its paused state between runs. It is a generator object of the
+   record's type, untracked, holding a frame object of its own, untracked
+   too and linked to it as a generator's frame is (f_gen), so that the
+   body reads and writes either the same way; when it escapes it becomes
+   the generator, in place, and its frame the generator's frame. */
+typedef PyGenObject le_gen_record_t;
+extern PyTypeObject le_gen_record_type; /* Python/genrecord.c */
+static inline le_frame_t *
+le_record_frame(le_gen_record_t *r)
+{
+    return r->gi_frame;
+}
+static inline le_gen_record_t *
+le_frame_record(le_frame_t *f)
+{
+    return (le_gen_record_t *)f->f_gen;
+}
+static inline int
+le_frame_is_record(le_frame_t *f)
+{
+    return f->f_gen != NULL && Py_TYPE(f->f_gen) == &le_gen_record_type;
+}
+/* A generator's frame's place, new or paused, as an index into its code's
+   table of direct entries (psyco.h:le_gen_direct_t): its f_lasti in code
+   units, plus one, since a new frame's is -1. The table has a slot for
+   each unit and two more. */
+static inline long
+le_gen_direct_index(le_frame_t *f)
+{
+    int lasti = f->f_lasti;
+    if (!LE_HAS_LASTI_IN_INSTRUCTIONS && lasti >= 0)
+        lasti /= (int)sizeof(_Py_CODEUNIT);
+    return lasti + 1;
 }
 /* the generator's frame runs, its stack held by compiled code: as ceval's
    prologue leaves it */
@@ -1142,11 +1216,13 @@ le_frame_executing(le_frame_t *f)
     return le_frame_is_executing(f);
 }
 /* a frame object made for a call compiled code runs (frames.c:kept_frame)
-   is running while 'on', as the thread's frames are */
+   is running while 'on', as the thread's frames are; a generator's runs
+   and pauses as its steps do */
 static inline void
 le_pyframe_set_executing(PyFrameObject *f, int on)
 {
-    le_frame_set_executing(f, on);
+    if (f->f_gen == NULL)
+        le_frame_set_executing(f, on);
 }
 /* ceval is to run the frame object itself (frames.c:psyco_resume_run),
    which needs nothing first: ceval links it and puts back the thread's

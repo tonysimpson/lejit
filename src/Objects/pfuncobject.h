@@ -104,7 +104,6 @@ PsycoInlineGen_Place(vinfo_t *v);
 EXTERNFN void
 PsycoInlineGen_SetPlace(PsycoObject *po, vinfo_t *v, long place);
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* A virtual generator: one compiled code has started stepping
    (psyfunc.c:gen_send), its paused state in a record (Python/genrecord.c,
    a run-time reference) in place of the arguments. Anything else makes it
@@ -116,8 +115,5 @@ PsycoVgen_FromPending(PsycoObject *po, vinfo_t *v, vinfo_t *rec);
 EXTERNFN bool
 PsycoVgen_Check(vinfo_t *v);
 #define LE_VGEN_CHECK(v) PsycoVgen_Check(v)
-#else
-#define LE_VGEN_CHECK(v) false
-#endif
 
 #endif /* _PSY_FUNCOBJECT_H */

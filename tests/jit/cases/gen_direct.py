@@ -560,6 +560,28 @@ def coro_send(n):
     return out
 
 
+def thread_counted(s):
+    for c in s:
+        yield c
+
+
+def thread_loop(out, n):
+    for k in range(n):
+        out.append([x for x in thread_counted('abc')])
+        out.append(sum(1 for _ in thread_counted('ab')))
+
+
+# stepped in a thread whose target is compiled code run from C, with no
+# Python frame for the generator's frame to link to
+def in_thread(n):
+    import threading
+    out = []
+    t = threading.Thread(target=thread_loop, args=(out, n))
+    t.start()
+    t.join()
+    return out
+
+
 CASES = [
     ('plain', [(3,), (0,)], {}),
     ('frames', [(2,)], {}),
@@ -579,4 +601,5 @@ CASES = [
     ('sends_between', [(2,)], {}),
     ('send_tracing', [(0,)], {}),
     ('coro_send', [(1,)], {}),
+    ('in_thread', [(20,)], {}),
 ]

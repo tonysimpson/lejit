@@ -68,11 +68,10 @@
 #define GENEXPR_ALL 5  /* all(): return False on a false value */
 #define GENEXPR_MIN 6  /* min(), max(): acc is the best so far, or NULL */
 #define GENEXPR_MAX 7
-/* Not fused: the generator's own body, resumed through the eval hook
-   (eval_hook.c:LeGen_Run). acc is its run (FrameRuntime), or where
-   LE_RESUMES_ON_FRAME its frame, borrowed: YIELD_VALUE saves the locals,
-   stack and blocks into the frame, as ceval leaves a paused generator's
-   frame, and returns the value. */
+/* Not fused: the generator's own body, resumed on its frame
+   (eval_hook.c:compile_resume). acc is its frame, borrowed: YIELD_VALUE
+   saves the locals, stack and blocks into the frame, as ceval leaves a
+   paused generator's frame, and returns the value. */
 #define GENEXPR_RESUMABLE 8
 /* A coroutine awaited as soon as it is made (await f(x)), run as a call
    (psyfunc.c:psyco_coro_start): its RETURN_VALUE returns the await's

@@ -1128,7 +1128,7 @@ handler_yields_kept(PyCodeObject *co, le_code_t c)
 DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
-#if LE_RESUMES_COROUTINES
+#if !LE_HAS_EXCEPTION_TABLE
     return (co->co_flags & (CO_COROUTINE | CO_ASYNC_GENERATOR)) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
@@ -1143,14 +1143,11 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 static int
 async_gens_compiled(void)
 {
-    return LE_RESUMES_COROUTINES_COMPILED && psyco_async_gen_wrapper != NULL;
+    return psyco_async_gen_wrapper != NULL;
 }
 
 /* whether the body of 'co', a plain generator, a coroutine or an async
-   generator, can run
-   compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
-   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
-   compiled only as SEND's loop), and, where handlers have
+   generator, can run compiled in its own frame: where handlers have
    blocks, no yield inside an exception handler, whose stack and blocks
    LeJIT keeps apart from the frame's (an EXCEPT_HANDLER block, a finally
    block's pseudo-exception); a coroutine's handlers that can await run in
@@ -1161,32 +1158,15 @@ async_gens_compiled(void)
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
-    int pos;
     int kind =
         co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
-    if (kind != CO_GENERATOR &&
-        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED) &&
-        (kind != CO_ASYNC_GENERATOR || !async_gens_compiled()))
+    if (kind == CO_ASYNC_GENERATOR && !async_gens_compiled())
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */
         return 0;
     }
     *c = le_code(co);
-    for (pos = 0; pos < c->size;) {
-        le_instr_t in = le_instr(*c, pos);
-        pos = in.next;
-        switch (in.op) {
-            case YIELD_FROM:
-                if (kind == CO_GENERATOR)
-                    return 0;
-                break;
-            case GET_YIELD_FROM_ITER:
-                if (!LE_HAS_OPCODE_SEND || !LE_RESUMES_ON_FRAME)
-                    return 0;
-                break;
-        }
-    }
     if (LE_HAS_EXCEPTION_TABLE)
         return 1;
     if (kind != CO_GENERATOR)
@@ -1211,7 +1191,7 @@ psyco_is_resumable_generator(PyCodeObject *co)
 DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
-#if LE_RESUMES_COROUTINES || LE_HAS_TAGGED_LASTI
+#if !LE_HAS_EXCEPTION_TABLE || LE_HAS_TAGGED_LASTI
     return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;

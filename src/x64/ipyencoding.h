@@ -141,36 +141,27 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
 
 /* internal utilities for the macros below */
 EXTERNFN code_t *
-decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
+decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg,
+                       PyTypeObject *type);
+/* whether that decref is too long to jump over with an 8-bit jump */
+EXTERNFN bool
+decref_dealloc_long(PsycoObject *po, PyTypeObject *type);
+#if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+EXTERNFN code_t *
+dealloc_testing_margin(code_t *code, PsycoObject *po, destructor fn,
+                       void *tracer);
+#endif
 
 /* the equivalent of Py_DECREF(): it calls tp_dealloc itself where that is
    all _Py_Dealloc would do, and _Py_Dealloc where it does more; where
    _Py_Dealloc's only additions are the ref tracer and, for a type the GC
    tracks, the trashcan, it tests both at run time (decref_dealloc_calling) */
-#if defined(Py_TRACE_REFS)
-#define DEC_OB_REFCNT(rg) \
-    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
-#else
 #define DEC_OB_REFCNT(rg) (code = decref_dealloc_calling(code, po, rg, NULL))
-#endif
 
 /* the equivalent of Py_DECREF() when we know the type of the object
-   (assuming that tp_dealloc never changes for a given type); where
-   _Py_Dealloc may defer a free to the trashcan, it does so only for a type
-   the GC tracks */
-#if defined(Py_TRACE_REFS)
+   (assuming that tp_dealloc never changes for a given type) */
 #define DEC_OB_REFCNT_T(rg, type) \
-    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
-#elif LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
-#define DEC_OB_REFCNT_T(rg, type)                                          \
-    (code = decref_dealloc_calling(code, po, rg,                           \
-                                   ((type)->tp_flags & Py_TPFLAGS_HAVE_GC) \
-                                       ? _Py_Dealloc                       \
-                                       : (type)->tp_dealloc))
-#else
-#define DEC_OB_REFCNT_T(rg, type) \
-    (code = decref_dealloc_calling(code, po, rg, (type)->tp_dealloc))
-#endif
+    (code = decref_dealloc_calling(code, po, rg, (type)))
 
 /***************************************************************/
 /***   generic reference counting functions                  ***/
@@ -244,8 +235,7 @@ psyco_xdecref_rt(PsycoObject *po, vinfo_t *v)
     rg = RUNTIME_REG(v);
     NEED_CC_REG(rg);
     TEST_R_R(rg, rg);
-    /* with XMM registers to save, the decref is too long for 8 bits */
-    BEGIN_COND_JUMP_OF(1, CC_E, psyco_xmm_live(po));
+    BEGIN_COND_JUMP_OF(1, CC_E, decref_dealloc_long(po, tp));
     if (tp != NULL)
         DEC_OB_REFCNT_T(rg, tp);
     else

@@ -281,7 +281,6 @@ PsycoInlineGen_SetPlace(PsycoObject *po, vinfo_t *v, long place)
         vinfo_new(CompileTime_NewSk(sk_new(place, SkFlagFixed)));
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 static source_virtual_t psyco_virtual_gen;
 
 static bool
@@ -321,7 +320,6 @@ PsycoVgen_Check(vinfo_t *v)
     return is_virtualtime(v->source) &&
            VirtualTime_Get(v->source) == &psyco_virtual_gen;
 }
-#endif
 
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
@@ -838,7 +836,5 @@ psy_funcobject_init(void)
     /* a weight of nothing: at a merge point the nested weight's limit would
        make it real */
     INIT_SVIRTUAL_NOCALL(psyco_inline_gen, compute_inline_gen, 0);
-#if LE_RESUMES_GENERATORS_DIRECTLY
     INIT_SVIRTUAL_NOCALL(psyco_virtual_gen, compute_vgen, 1);
-#endif
 }

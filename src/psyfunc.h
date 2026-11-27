@@ -56,7 +56,6 @@ EXTERNFN PsycoObject *
 psyco_gen_inline_yield(PsycoObject *po, vinfo_t *value);
 EXTERNFN void
 psyco_gen_inline_ended(PsycoObject *po);
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* compiled code's step of the generator 'vgen', as a for loop's */
 EXTERNFN vinfo_t *
 psyco_gen_step(PsycoObject *po, vinfo_t *vgen);
@@ -77,7 +76,6 @@ le_iter_send(PyObject *iter, PyObject *v, PyObject *out[]);
 EXTERNFN vinfo_t *
 psyco_gen_send_status(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,
                       vinfo_array_t *out);
-#endif
 /* whether the await being compiled runs the body of the pending coroutine
    'v' as a call, emitting the tests: 1 to, 0 not to, -1 with an
    exception */

@@ -13,6 +13,7 @@
 #include "pyver.h"
 #include "v_mem_mov.h"
 #include "../mechanisms/exc.h"
+#include "../mechanisms/tstate.h"
 
 /*#define MAX3(a,b,c)  ((a)>(b)?((a)>(c)?(a):(c)):(b)>(c)?(b):(c))*/
 
@@ -263,7 +264,6 @@ psyco_can_go_interpreted(PsycoObject *po);
    pycheader.h), or 0 if it is not a generator's code */
 EXTERNFN long
 psyco_generator_mode(PsycoObject *po);
-#if LE_RESUMES_ON_FRAME
 /* a resumed generator's frame word i, as a virtual value its frame still
    holds (pycompiler.c says how it is read); which word a value still is,
    or -1; and the frame, which the resumable body is given */
@@ -273,8 +273,7 @@ EXTERNFN int
 psyco_frame_word_index(vinfo_t *v);
 EXTERNFN vinfo_t *
 psyco_frame_words_frame(PsycoObject *po);
-#endif
-#if LE_RESUMES_COROUTINES
+#if !LE_HAS_INTERPRETER_FRAME
 EXTERNFN int
 psyco_trace_yield(PyFrameObject *frame, PyObject *value);
 #endif
@@ -325,9 +324,7 @@ psyco_PyErr_Occurred(PsycoObject *po)
         /* inline PyErr_Occurred */
         vinfo_t *vtstate;
         vinfo_t *vcurexc;
-        /* XXX Can we get _PyThreadState_Current to make this quicker ? */
-        vtstate =
-            psyco_generic_call(po, PyThreadState_Get, CfReturnTypePtr, "");
+        vtstate = le_tstate_load(po);
         vcurexc = v_mem_mov(po, NULL, vtstate, NULL, LE_EXC_OCCURRED_OFFSET,
                             V_MEM_MOV_SCALE_POINTER, false);
         vinfo_decref(vtstate, po);
