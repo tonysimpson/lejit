@@ -828,12 +828,16 @@ typedef qword_t stackitem_t;
    because of how conditional jumps are emitted (pycompiler.c). Past the
    limit there are GUARANTEED_MINIMUM bytes more, for what is written
    before the next END_CODE, which then goes on in a new extent after a
-   jump (codemanager.c:psyco_code_continue). */
+   jump (codemanager.c:psyco_code_continue). So no block between
+   BEGIN_CODE and END_CODE may write more than that, less the jump, from
+   wherever it starts; checked builds assert it at every END_CODE, and a
+   block that writes in a loop as long as its input makes room as it goes
+   (CODE_ROOM_IN_BLOCK). */
 #ifndef BUFFER_MARGIN
 #define BUFFER_MARGIN 1024
 #endif
 #ifndef GUARANTEED_MINIMUM
-#define GUARANTEED_MINIMUM 64
+#define GUARANTEED_MINIMUM 1024
 #endif
 
 #define EXTERNVAR extern
@@ -1290,17 +1294,47 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match);
     } while (0)
 #endif
 
+#if ALL_CHECKS
+/* where the block, or its part since CODE_ROOM_IN_BLOCK, began */
+#define CODE_BLOCK_BEGIN code_t *code_block_start = code;
+#define CODE_BLOCK_RESTART code_block_start = code;
+#define CODE_BLOCK_CHECK                    \
+    psyco_assert(code < code_block_start || \
+                 code - code_block_start <= \
+                     GUARANTEED_MINIMUM - MAXIMUM_SIZE_OF_FAR_JUMP);
+#else
+#define CODE_BLOCK_BEGIN
+#define CODE_BLOCK_RESTART
+#define CODE_BLOCK_CHECK
+#endif
+
 #define BEGIN_CODE               \
     do {                         \
         code_t *code = po->code; \
+        CODE_BLOCK_BEGIN         \
         le_trace_begin_code(po);
 #define END_CODE                           \
     po->code = code;                       \
+    CODE_BLOCK_CHECK                       \
     le_trace_end_code(po);                 \
     if (code >= po->codelimit) {           \
         PsycoObject_EmergencyCodeRoom(po); \
     }                                      \
     }                                      \
     while (0);
+
+/* inside a block, at a point where nothing written so far depends on where
+   the code after it goes: go on in a new extent if past the limit, as
+   END_CODE does */
+#define CODE_ROOM_IN_BLOCK()                   \
+    do {                                       \
+        po->code = code;                       \
+        CODE_BLOCK_CHECK                       \
+        if (code >= po->codelimit) {           \
+            PsycoObject_EmergencyCodeRoom(po); \
+            code = po->code;                   \
+        }                                      \
+        CODE_BLOCK_RESTART                     \
+    } while (0)
 
 #endif /* _PSYCO_H */
