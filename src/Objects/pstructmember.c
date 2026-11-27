@@ -45,6 +45,12 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
 {
     vinfo_t *v, *res;
     condition_code_t cc;
+#ifdef _Py_AFTER_ITEMS
+    /* placed after the items: its offset moves with the size */
+    if (l->flags & _Py_AFTER_ITEMS)
+        return psyco_generic_call(po, PyMember_GetOne, CfCommonNewRefPyObject,
+                                  "vl", addr, (long)l);
+#endif
     switch (l->type) {
         INT_MEMBER(T_BOOL, FMUT(DEF_ARRAY(char, 0)), PsycoBool_FromLong);
         INT_MEMBER(T_BYTE, FMUT(DEF_ARRAY(char, 0)), PsycoLong_FromLong);

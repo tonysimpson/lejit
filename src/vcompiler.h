@@ -816,6 +816,14 @@ psyco_put_nth_field(PsycoObject *po, vinfo_t *vi, defield_t df, int index,
     return psyco_internal_putfld(po, FIELD_INDEX(df) + index, df, vi,
                                  FIELD_C_OFFSET(df) + ofs, value);
 }
+PSY_INLINE bool
+psyco_put_field_offset(PsycoObject *po, vinfo_t *vi, defield_t df, long offset,
+                       vinfo_t *value)
+{
+    extra_assert((long)df & FIELD_MUTABLE);
+    return psyco_internal_putfld(po, FIELD_RESERVED_INDEX, df, vi,
+                                 FIELD_C_OFFSET(df) + offset, value);
+}
 EXTERNFN bool
 psyco_put_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
                       vinfo_t *vindex, vinfo_t *value);
