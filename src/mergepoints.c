@@ -859,8 +859,9 @@ walk_successors(le_code_t c, int unit, int next[2])
 /* whether a for loop can compile the generator of code 'co' into its own
    body (psyfunc.c:psyco_gen_inline_next), each step running the code from
    where it paused to its one yield: fusable, with no exception handler but
-   PEP 479's around the whole body nor a loop block (an inlined frame's
-   exceptions go straight to its caller), no cycle that misses the yield
+   PEP 479's around the whole body nor a break or continue (an inlined
+   frame keeps no blocks, and its exceptions go straight to its caller),
+   no cycle that misses the yield
    (an inlined frame has no merge points: psyco_inline_merge_points), and
    no heavier than a function LeJIT inlines. 'yield' is where the yield
    is. */
@@ -904,7 +905,6 @@ inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
     for (r = 0; r < 2 && ok; r++) {
         if (roots[r] >= units || state[roots[r]] != 0)
             continue;
-        top = 0;
         state[roots[r]] = 1;
         work[0] = roots[r];
         work[1] = 0;
