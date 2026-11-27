@@ -968,6 +968,17 @@ def gen_keeps_code(s):
     return False, 'every header: _PyFrame_ClearExceptCode'
 
 
+def gen_code_field(s):
+    """a generator holds its code in a field of its own (gi_code in
+    _PyGenObject_HEAD), not only in its frame"""
+    for path in s.headers:
+        with open(os.path.join(s.src, path), encoding='latin-1') as f:
+            text = ''.join(f.read().split())
+        if '#define_PyGenObject_HEAD(prefix)' in text:
+            return 'prefix##_code;' in text, '%s:_PyGenObject_HEAD' % path
+    return False, 'every header: _PyGenObject_HEAD'
+
+
 def frame_stackrefs(s):
     """an interpreter frame's words are _PyStackRefs (f_executable,
     f_funcobj, localsplus): a word with its low bit set holds no reference
@@ -1688,6 +1699,7 @@ FRAMES = [
     ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
     ('GEN_NEW_AROUND_FRAME', gen_new_around_frame),
     ('GEN_KEEPS_CODE', gen_keeps_code),
+    ('GEN_CODE_FIELD', gen_code_field),
     ('GETFRAME_AUDITS_RESULT', D('sys._getframe\'s audit event names the frame it returns, after the walk (none when the stack is too shallow), not the current frame before it',
                                  lambda s: _body_has(s, 'Python/sysmodule.c', 'sys__getframe_impl', '"sys._getframe", "(O)", pyFrame', missing=False))),
 ]
