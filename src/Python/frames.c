@@ -3539,13 +3539,15 @@ DEFINEFN
 int
 psyco_frame_called_from_callee(le_frame_t *back)
 {
-    FrameRuntime *fr = run_at(complete_frame(back));
+    le_frame_t *f = complete_frame(back);
+    FrameRuntime *fr = run_at(f);
     /* a frameless run entered at it made the call, or the root slot is
        even while the code is in a compiled callee or inlined frame
        (psyco_running_real_frame) */
     if (fr != NULL && run_frameless(fr))
         return !fr->resumed;
-    fr = back == NULL ? NULL : psyco_frame_start_get(back);
+    if (f != back)
+        fr = back == NULL ? NULL : psyco_frame_start_get(back);
     return fr != NULL && !fr->resumed && le_frame_executing(back) &&
            (((long)**fr->psy_frames_start) & 1) == 0;
 }
