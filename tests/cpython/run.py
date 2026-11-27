@@ -39,7 +39,12 @@ SKIPPED = {
         'test.test_os.TimerfdTests.test_timerfd_*interval '
         'test.test_os.TimerfdTests.test_timerfd_*TFD_TIMER_ABSTIME '
         'test.test_os.TimerfdTests.test_timerfd_*select '
-        'test.test_os.TimerfdTests.test_timerfd_*poll',
+        'test.test_os.TimerfdTests.test_timerfd_*poll '
+        'test.test_os.test_os.TimerfdTests.test_timerfd_*initval '
+        'test.test_os.test_os.TimerfdTests.test_timerfd_*interval '
+        'test.test_os.test_os.TimerfdTests.test_timerfd_*TFD_TIMER_ABSTIME '
+        'test.test_os.test_os.TimerfdTests.test_timerfd_*select '
+        'test.test_os.test_os.TimerfdTests.test_timerfd_*poll',
     'connects to a port it found unused, which a test running at the same '
     'time can take, and expects the connection to fail':
         'test.test_asyncio.test_events.*EventLoopTests.'
@@ -50,7 +55,8 @@ SKIPPED = {
         'test.test_xml_etree_c.BugsTest.test_bug_xmltoolkit63 '
         'ctypes.test.test_refcounts.AnotherLeak.test_callback '
         'test.test_ctypes.test_refcounts.AnotherLeak.test_callback '
-        'test.test_os.FileTests.test_rename',
+        'test.test_os.FileTests.test_rename '
+        'test.test_os.test_os.FileTests.test_rename',
     "CPython doesn't specialise Python calls, __getitem__ and properties "
     'while a frame-evaluation hook is installed (specialize.c, '
     'SPEC_FAIL_CALL_PEP_523)':
