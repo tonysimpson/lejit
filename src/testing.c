@@ -274,7 +274,7 @@ le_dead_locals(PyObject *self, PyObject *co)
     }
     if (le_not_set_up("_dead_locals"))
         return NULL;
-    mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+    mps = psyco_get_merge_points((PyCodeObject *)co);
     if (mps == Py_None)
         Py_RETURN_NONE;
     result = PyDict_New();
@@ -323,7 +323,7 @@ le_inlinable(PyObject *self, PyObject *co)
     }
     if (le_not_set_up("_inlinable"))
         return NULL;
-    mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+    mps = psyco_get_merge_points((PyCodeObject *)co);
     return PyBool_FromLong(mps != Py_None &&
                            (psyco_mp_flags(mps) & MP_FLAGS_INLINABLE) != 0);
 }
@@ -442,6 +442,39 @@ le_allocs_asked(void)
 }
 #endif
 
+#if ALL_CHECKS
+/* f(*args) run with no real frame (eval_hook.c:le_run_frameless), for a
+   function whose call can be: positional arguments, exactly as many as it
+   takes, no cells or free variables, not a generator's */
+static PyObject *
+le_run_frameless_test(PyObject *self, PyObject *const *args, Py_ssize_t n)
+{
+    PyFunctionObject *func;
+    PyCodeObject *co;
+    PyObject *entry;
+    if (n < 1 || !PyFunction_Check(args[0])) {
+        PyErr_SetString(PyExc_TypeError, "_run_frameless() needs a function");
+        return NULL;
+    }
+    func = (PyFunctionObject *)args[0];
+    co = (PyCodeObject *)func->func_code;
+    if (co->co_argcount + co->co_kwonlyargcount != n - 1 ||
+        (co->co_flags & (CO_VARARGS | CO_VARKEYWORDS | CO_GENERATOR |
+                         CO_COROUTINE | CO_ASYNC_GENERATOR)) != 0 ||
+        le_code_ncells(co) != 0 || le_code_nfrees(co) != 0) {
+        PyErr_SetString(PyExc_ValueError,
+                        "_run_frameless() can't run this call");
+        return NULL;
+    }
+    if ((entry = le_function_entry(func)) == NULL) {
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_ValueError, "no compiled entry");
+        return NULL;
+    }
+    return le_run_frameless(entry, func, args + 1, n - 1);
+}
+#endif
+
 DEFINEVAR PyMethodDef le_testing_methods[] = {
 #if LE_CODESTATS
     {"_codestats", le_codestats, METH_NOARGS, "Code size per instruction."},
@@ -451,6 +484,8 @@ DEFINEVAR PyMethodDef le_testing_methods[] = {
     {"_fail_after", le_fail_after, METH_VARARGS,
      "Make the n-th allocation at a site fail."},
     {"_stats", le_stats, METH_NOARGS, "Internal counters."},
+    {"_run_frameless", (PyCFunction)(void (*)(void))le_run_frameless_test,
+     METH_FASTCALL, "f(*args), run with no real frame."},
     {"_code_info", le_code_info, METH_O,
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
     {"_dead_locals", le_dead_locals, METH_O,

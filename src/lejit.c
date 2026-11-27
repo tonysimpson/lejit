@@ -202,6 +202,7 @@ le_code_extra_reset(le_code_extra_t *x, PyObject **mergepoints,
     x->inline_end = 0;
     x->serial = ++next_serial;
     x->cold = 0;
+    x->frameless = 0;
 }
 
 static int

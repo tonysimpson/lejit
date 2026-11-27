@@ -602,10 +602,15 @@ compiled_intrinsic(int arg)
 }
 
 /* the CALL_INTRINSIC_2 arguments pycompiler.c compiles: a class pattern
-   with no arguments (`case C():`), where CPython has one for it */
+   with no arguments (`case C():`), where CPython has one for it, and
+   module code's record of an annotation it reaches */
 static int
 compiled_intrinsic_2(int arg)
 {
+#ifdef INTRINSIC_ADD_CONDITIONAL_ANNOTATION
+    if (arg == INTRINSIC_ADD_CONDITIONAL_ANNOTATION)
+        return 1;
+#endif
 #ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
     return arg == INTRINSIC_MATCH_CLASS_ISINSTANCE;
 #else
@@ -615,17 +620,13 @@ compiled_intrinsic_2(int arg)
 }
 
 static PyObject *
-_build_merge_points(PyCodeObject *co, int module)
+_build_merge_points(PyCodeObject *co)
 {
     le_code_t c;
     int pos, opcode = -1, oparg;
     co_report_t *report;
     int reads_class, resumable, bad = 0;
 
-    /* XXX tony: all these not supported/buggy currently */
-    if (module) {
-        goto not_ok;
-    }
     if (le_code_prepare(co) < 0)
         return NULL;
     if (le_code_nlocalsplus(co) + co->co_stacksize > MAX_FRAME_VALUES)
@@ -669,6 +670,16 @@ _build_merge_points(PyCodeObject *co, int module)
             goto not_ok;
         if (opcode == LOAD_GLOBAL &&
             loads_frame_locals_builtin(co, LE_GLOBAL_NAME(oparg)))
+            goto not_ok;
+        if (opcode == LOAD_NAME && loads_frame_locals_builtin(co, oparg))
+            goto not_ok;
+        /* the name forms, compiled as globals' for module code, whose
+           locals mapping is its globals (eval_hook.c:le_code_to_run): in a
+           function's code CPython finds no locals mapping and raises */
+        if (co->co_flags & CO_OPTIMIZED &&
+            (opcode == LOAD_NAME || opcode == STORE_NAME ||
+             opcode == DELETE_NAME || opcode == IMPORT_STAR ||
+             opcode == SETUP_ANNOTATIONS))
             goto not_ok;
         if (reads_class && oparg == 0 &&
             (opcode == STORE_FAST || opcode == DELETE_FAST))
@@ -1160,7 +1171,7 @@ psyco_is_startable_coroutine(PyCodeObject *co)
 }
 
 DEFINEFN PyObject *
-psyco_get_merge_points(PyCodeObject *co, int module)
+psyco_get_merge_points(PyCodeObject *co)
 {
     /* borrowed: the record keeps it */
     le_code_extra_t *x = le_code_extra(co);
@@ -1170,16 +1181,16 @@ psyco_get_merge_points(PyCodeObject *co, int module)
     }
     if (x->merge_points != NULL)
         return x->merge_points;
-    return psyco_analyse_code(co, x, module);
+    return psyco_analyse_code(co, x);
 }
 
 DEFINEFN __attribute__((noinline)) PyObject *
-psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x, int module)
+psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x)
 {
     if (x->merge_points == NULL) {
         PyObject *mps;
         LE_COMPILE_BEGIN(LE_ENTER_ANALYSE);
-        mps = _build_merge_points(co, module);
+        mps = _build_merge_points(co);
         LE_COMPILE_END(LE_ENTER_ANALYSE);
         if (mps == NULL) {
             /* out of memory: don't compile this time, and

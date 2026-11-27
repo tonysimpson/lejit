@@ -152,15 +152,17 @@ struct fncall_arg_s {
 };
 
 /* What LeJIT's frames support, tested before anything is emitted: free
-   variables only when the caller has the cells (psyco_call_pyfunc). */
+   variables only when the caller has the cells (psyco_call_pyfunc), and
+   a function's code, not module code made into a function, whose frame
+   has its globals as its locals mapping */
 static bool
 fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co, int nfrees)
 {
-    if (le_code_nfrees(co) != nfrees) {
+    if (le_code_nfrees(co) != nfrees || !(co->co_flags & CO_OPTIMIZED)) {
         return false;
     }
     fncall->co = co;
-    fncall->merge_points = psyco_get_merge_points(co, 0);
+    fncall->merge_points = psyco_get_merge_points(co);
     return fncall->merge_points != Py_None;
 }
 
@@ -785,7 +787,7 @@ psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
     vinfo_xdecref(array->items[LOC_INLINE_FUNC], NULL);
     array_release(array);
 
-    pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));
+    pyc_data_build(po, psyco_get_merge_points(po->pr.co));
 
     /* leaving an inlined frame restores its (never inlining) parent; on
        entry the old locals were already moved out (psyco_save_inline_po) */
@@ -1832,25 +1834,9 @@ struct gen_layout {
     void *end, *send_end, *send_status;
 };
 static struct gen_layout gen_layout, record_layout;
-#define REC_state \
-    FMUT(DEF_FIELD(le_gen_record_t, int8_t, state, NO_PREV_FIELD))
-#define REC_FRAME(ctype, f, prev) \
-    FMUT(DEF_FIELD(le_gen_record_t, ctype, f, prev))
-#define REC_exc_previous REC_FRAME(void *, exc_state.previous_item, REC_state)
-#define REC_locals REC_FRAME(PyObject *, frame.f_locals, REC_exc_previous)
-#define REC_globals REC_FRAME(PyObject *, frame.f_globals, REC_locals)
-#define REC_builtins REC_FRAME(PyObject *, frame.f_builtins, REC_globals)
-#define REC_place \
-    REC_FRAME(_Py_CODEUNIT *, frame.LE_FRAME_PLACE_FIELD, REC_builtins)
-#define REC_previous REC_FRAME(le_frame_t *, frame.previous, REC_place)
-#if LE_HAS_FRAME_STACKREFS
-#define REC_stack REC_FRAME(void *, frame.stackpointer, REC_previous)
-#else
-#define REC_stack REC_FRAME(int, frame.stacktop, REC_previous)
-#endif
-/* the record's words, as the frame's */
+/* a record's words, as its frame's */
 #define REC_words                                                 \
-    FMUT(DEF_ARRAY(PyObject *, offsetof(le_gen_record_t, frame) + \
+    FMUT(DEF_ARRAY(PyObject *, offsetof(PyGenObject, gi_iframe) + \
                                    offsetof(le_frame_t, localsplus)))
 static void
 gen_layouts_init(void)
@@ -1872,19 +1858,11 @@ gen_layouts_init(void)
                            (void *)le_gen_direct_end,
                            (void *)le_gen_direct_send_end,
                            (void *)le_gen_direct_send_status};
-    struct gen_layout r = {REC_state,
-                           REC_exc_previous,
-                           REC_locals,
-                           REC_globals,
-                           REC_builtins,
-                           REC_place,
-                           REC_previous,
-                           REC_stack,
-                           offsetof(le_gen_record_t, frame),
-                           offsetof(le_gen_record_t, exc_state),
-                           (void *)le_gen_record_end,
-                           (void *)le_gen_record_send_end,
-                           (void *)le_gen_record_send_status};
+    /* a record is laid out as a generator: only the ends differ */
+    struct gen_layout r = g;
+    r.end = (void *)le_gen_record_end;
+    r.send_end = (void *)le_gen_record_send_end;
+    r.send_status = (void *)le_gen_record_send_status;
     gen_layout = g;
     record_layout = r;
 }
@@ -1918,13 +1896,6 @@ code_of(PsycoObject *po, vinfo_t *vgen, defield_t df)
     vinfo_setitem(po, vgen, iGEN_CODE, v);
     return v;
 }
-#if LE_HAS_FRAME_STACKREFS || LE_HAS_FRAME_EXECUTABLE
-#define REC_code_word \
-    FMUT(DEF_FIELD(le_gen_record_t, void *, frame.f_executable, NO_PREV_FIELD))
-#else
-#define REC_code_word \
-    FMUT(DEF_FIELD(le_gen_record_t, void *, frame.f_code, NO_PREV_FIELD))
-#endif
 
 /* whether 'cc' holds at run time, -1 on error (or a promotion) */
 static int
@@ -2261,7 +2232,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
                 !(is_compiletime(varg->source) &&
                   CompileTime_Get(varg->source)->value == (long)Py_None);
     if (L == &gen_layout || held) {
-        vcode = code_of(po, vgen, held ? REC_code_word : GEN_code_word);
+        vcode = code_of(po, vgen, GEN_code_word);
         if (vcode == NULL)
             return NULL;
         r = psyco_pyobj_atcompiletime_mega(po, vcode, &o);
@@ -2520,7 +2491,7 @@ pending_runnable(PsycoObject *po, vinfo_t *v)
         return false;
     co = pending_code(v);
     nfrees = PyCode_GetNumFree(co);
-    if (psyco_get_merge_points(co, 0) == Py_None || nfrees > MAX_CALL_FREES)
+    if (psyco_get_merge_points(co) == Py_None || nfrees > MAX_CALL_FREES)
         return false;
     /* a virtual function's cells: its closure tuple's (load_frees) */
     if (nfrees > 0 && is_virtualtime(vfunc->source)) {
@@ -2553,8 +2524,8 @@ static int
 fuse_stopped(PsycoObject *po, vinfo_t *v)
 {
     PyCodeObject *co = pending_code(v);
-    vinfo_t *vslot = vinfo_new(CompileTime_New(
-        (long)psyco_fuse_stopped(psyco_get_merge_points(co, 0))));
+    vinfo_t *vslot = vinfo_new(
+        CompileTime_New((long)psyco_fuse_stopped(psyco_get_merge_points(co))));
     vinfo_t *vflag = psyco_get_field(po, vslot, INT_value);
     condition_code_t cc;
     vinfo_decref(vslot, po);

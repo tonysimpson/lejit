@@ -381,6 +381,7 @@ HEADER_DETECTORS = {
     'TSTATE_STATUS': features.tstate_status,
     'TSTATE_ATTACH': features.tstate_attach,
     'TSTATE_HOLDS_GIL': features.tstate_holds_gil,
+    'FUNCTION_VECTORCALL': features.function_vectorcall,
     'TSTATE_GIL_REQUESTED': features.tstate_gil_requested,
     'INTERP_MONITORING_VERSION': internal(features.interp_monitoring_version),
     'TRACEBACK_FROM_FRAME_API': traceback_from_frame_api,

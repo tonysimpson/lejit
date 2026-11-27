@@ -5,7 +5,7 @@
 # every way a step ends, the order objects die in when it is dropped
 # paused or ends, frames and tracebacks from inside its body, and every way
 # it is made real (escapes) followed by each use of the real one.
-import dis, gc, sys
+import dis, gc, sys, weakref
 
 LOG = []
 
@@ -318,6 +318,56 @@ def escapes_held(n):
     return out
 
 
+# made real, then the compiled code drops the last reference: not started,
+# paused in a try/finally and ended; each dies as a generator does
+def dropped_escaped(n):
+    out = []
+    LOG.clear()
+    g = finally_gen(n)
+    HELD.append(weakref.ref(g, lambda r: LOG.append('created')))
+    del g
+    g = finally_gen(n)
+    out.append(next(g))
+    HELD.append(weakref.ref(g, lambda r: LOG.append('paused')))
+    del g
+    g = finally_gen(n)
+    HELD.append(weakref.ref(g, lambda r: LOG.append('ended')))
+    for x in g:
+        out.append(x)
+    del g
+    out.append([r() for r in HELD])
+    HELD.clear()
+    out.append(list(LOG))
+    return out
+
+
+def children(node):
+    yield node * 2
+    yield node * 2 + 1
+
+
+def finds(node, depth):
+    if depth == 0:
+        yield node
+        return
+    for child in children(node):
+        yield from finds(child, depth - 1)
+
+
+# a recursive generator left paused in a yield from itself, inside a loop
+# over another generator: every level is dropped paused, as a loop that
+# stops at the first match leaves it
+def dropped_in_yield_from(n):
+    out = []
+    for i in range(n):
+        for x in finds(1, n):
+            if x > 8:
+                out.append(x)
+                break
+    out.append([gc.collect() >= 0 for _ in range(n)])
+    return out
+
+
 def stored(n):
     out = []
     it = iter(two(n))
@@ -421,6 +471,8 @@ CASES = [
     ('kept_frames', [(3,)], {}),
     ('frame_clear', [(0,)], {}),
     ('escapes_held', [(3,)], {}),
+    ('dropped_escaped', [(3,)], {}),
+    ('dropped_in_yield_from', [(3,)], {}),
     ('stored', [(3,)], {}),
     ('traces', [(3,)], {}),
     ('recursion', [(4,)], {}),

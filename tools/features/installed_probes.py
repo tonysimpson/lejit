@@ -211,7 +211,8 @@ for _feature, _function in [
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
         ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
         ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
-        ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify')]:
+        ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
+        ('LAZY_IMPORT_NAME_LINKABLE', '_PyEval_LazyImportName')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -923,6 +924,23 @@ def TAGGED_DICT_OR_VALUES():
         raise Unanswered('class C: word -3 %#x, values[0] %r, then with'
                          ' __dict__ %r' % (before, first, after))
     return found, 'class C: word -3 %r, then with __dict__ %r' % (
+        before, after)
+
+
+@probe
+def RANGE_ITER_FREE_LIST():
+    """range iterators given up are kept for the next ones, not all freed:
+    the object allocator's blocks in use fall by fewer than the 100 that
+    go, give or take the few the counts themselves take (run)"""
+    r = range(3)
+    taken = [iter(r) for _ in range(100)]
+    before = sys.getallocatedblocks()
+    taken.clear()
+    after = sys.getallocatedblocks()
+    kept = 100 - (before - after)
+    if before == 0 or not -3 <= kept <= 50:
+        raise Unanswered('blocks in use %d, then %d' % (before, after))
+    return kept >= 3, '100 range iterators freed: blocks in use %d, then %d' % (
         before, after)
 
 
