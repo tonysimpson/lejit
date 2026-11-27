@@ -870,8 +870,17 @@ inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
     int units = c.size / LE_UNIT, pos, top, weight = 0, ok = 1, r;
     int roots[2], *work;
     unsigned char *state; /* 0 unseen, 1 on the walk's path, 2 done */
+    Py_ssize_t i;
     if (!psyco_handlers_only_pep479(co))
         return 0;
+    /* a body compiled into its loop has a frame object only for the step
+       that asks for one (frames.c, as an inlined call's), where CPython's
+       generator keeps one: not one that names sys._getframe, which may
+       keep it past its yield */
+    for (i = 0; i < PyTuple_GET_SIZE(co->co_names); i++)
+        if (!PyUnicode_CompareWithASCIIString(
+                PyTuple_GET_ITEM(co->co_names, i), "_getframe"))
+            return 0;
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
         pos = in.next;

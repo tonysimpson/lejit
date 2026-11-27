@@ -9289,8 +9289,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             if (mode == GENEXPR_INLINED) {
                 POP(v);
                 PUSH(psyco_vi_None());
-                PycException_Raise(po, vinfo_new(VirtualTime_New(&EYield)),
-                                   v);
+                PycException_Raise(po, vinfo_new(VirtualTime_New(&EYield)), v);
                 break;
             }
             v = TOP();

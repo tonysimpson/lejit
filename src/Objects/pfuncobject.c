@@ -251,8 +251,8 @@ PsycoInlineGen_FromPending(PsycoObject *po, vinfo_t *v, vinfo_t *func,
     v->array = array_new(iINLGEN_WORDS + nwords);
     v->array->items[iOB_TYPE] = old->items[iOB_TYPE];
     v->array->items[iINLGEN_CODE] = old->items[iGENEXPR_CODE];
-    v->array->items[iINLGEN_PLACE] = vinfo_new(
-        CompileTime_NewSk(sk_new(INLGEN_RUNNING, SkFlagFixed)));
+    v->array->items[iINLGEN_PLACE] =
+        vinfo_new(CompileTime_NewSk(sk_new(INLGEN_RUNNING, SkFlagFixed)));
     v->array->items[iINLGEN_FUNC] = func;
     for (i = iGENEXPR_FUNC; i <= iGENEXPR_GLOBALS; i++)
         vinfo_xdecref(old->items[i], po);

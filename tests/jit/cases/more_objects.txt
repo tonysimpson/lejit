@@ -113,6 +113,8 @@ gen_direct.send_tracing                            3.9,3.10,3.12,3.13           
 gen_functions.arguments_freed                      3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 gen_functions.early_stop                           3.14,3.15                          not looked at yet
 gen_iters.nexts                                    3.12                               not looked at yet
+gen_loops_inlined.frames                           3.15                               a frame asked for in a generator body compiled into its loop is made for each step, where CPython keeps one for the generator
+gen_loops_inlined.many_kinds                       3.11,3.12,3.13,3.14,3.15           not looked at yet
 gen_virtual.closes                                 3.14                               not looked at yet
 gen_virtual.dropped_in_yield_from                  3.14,3.15                          not looked at yet
 gen_virtual.escapes_held                           3.12,3.13,3.14,3.15                not looked at yet

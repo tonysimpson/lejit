@@ -81,11 +81,11 @@ psyco_exact_merge_point(PyObject *mergepoints, int position);
 EXTERNFN global_entries_t *
 psyco_join_point(PyObject *mergepoints, int position);
 
-#define MP_FLAGS_HAS_EXCEPT 1   /* the code block has an 'except' clause */
-#define MP_FLAGS_HAS_FINALLY 2  /* the code block has a 'finally' clause */
-#define MP_FLAGS_INLINABLE 4    /* function could be inlined             */
-#define MP_FLAGS_CONTROLFLOW 16 /* can use early deletion of locals      */
-#define MP_FLAGS_RESUMABLE 32   /* psyco_is_resumable_generator          */
+#define MP_FLAGS_HAS_EXCEPT 1     /* the code block has an 'except' clause */
+#define MP_FLAGS_HAS_FINALLY 2    /* the code block has a 'finally' clause */
+#define MP_FLAGS_INLINABLE 4      /* function could be inlined             */
+#define MP_FLAGS_CONTROLFLOW 16   /* can use early deletion of locals      */
+#define MP_FLAGS_RESUMABLE 32     /* psyco_is_resumable_generator          */
 #define MP_FLAGS_GEN_INLINABLE 64 /* mergepoints.c:inlinable_generator   */
 #define MP_FLAGS_EXTRA (-256)
 

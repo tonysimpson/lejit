@@ -120,8 +120,11 @@ def outer(n):
 
 def nested(n):
     out = []
+    # where the loop has outer's body compiled into it, inner is stepped
+    # from there; next() steps outer itself
     for x in outer(n):
         out.append(x)
+    out.append(next(outer(n)))
     return out, compiled(inner, outer)
 
 
