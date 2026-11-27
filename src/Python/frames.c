@@ -351,6 +351,14 @@ run_frameless(const FrameRuntime *fr)
     return fr->frame == NULL && !fr->popped;
 }
 
+/* a frameless run entered while 'f' was the current thread state's
+   current frame */
+static bool
+frameless_entered_at(const FrameRuntime *fr, le_frame_t *f)
+{
+    return run_frameless(fr) && fr->back == f && fr->ts == PyThreadState_GET();
+}
+
 /* the frame a run is found by: its own, or a frameless run's back */
 static le_frame_t *
 run_key(const FrameRuntime *fr)
@@ -385,7 +393,7 @@ run_at(le_frame_t *f)
     for (fr = *runs_hashed(f); fr != NULL; fr = fr->same_hash)
         if (fr->list == &frame_runs &&
             ((fr->frame != NULL && fr->frame == f) ||
-             (run_frameless(fr) && fr->back == f)))
+             frameless_entered_at(fr, f)))
             return fr;
     return NULL;
 }
@@ -402,7 +410,7 @@ frameless_at(FrameRuntime *run, le_frame_t *f)
 {
     if (nframeless == 0)
         return NULL;
-    if (run != NULL && run_frameless(run) && run->back == f)
+    if (run != NULL && frameless_entered_at(run, f))
         return run;
     run = run_at(f);
     return run != NULL && run_frameless(run) ? run : NULL;
@@ -413,7 +421,10 @@ static FrameRuntime *
 frameless_next(FrameRuntime *run)
 {
     FrameRuntime *n = run->next;
-    return n != NULL && run_frameless(n) && n->back == run->back ? n : NULL;
+    return n != NULL && run_frameless(n) && n->back == run->back &&
+                   n->ts == run->ts
+               ? n
+               : NULL;
 }
 
 /* the run whose compiled code this thread runs innermost, if Python's
@@ -471,9 +482,10 @@ DEFINEFN void
 psyco_frame_start_register_frameless(FrameRuntime *fr, PyFunctionObject *func,
                                      stack_frame_info_t ***psy_frames_start)
 {
-    run_register(
-        fr, NULL, complete_frame(le_frame_current(PyThreadState_GET())), func,
-        psy_frames_start, (PyCodeObject *)func->func_code, func->func_globals);
+    fr->ts = PyThreadState_GET();
+    run_register(fr, NULL, complete_frame(le_frame_current(fr->ts)), func,
+                 psy_frames_start, (PyCodeObject *)func->func_code,
+                 func->func_globals);
     nframeless++;
 }
 
@@ -5655,6 +5667,12 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         }
 #endif
         st->root = run;
+        /* a frame made now was put in the word the call's end gives its
+           locals to (stand_for_call): ceval ends it with its own */
+        if (c == NULL && word != NULL && *word == (PyObject *)st->f) {
+            *word = NULL;
+            Py_DECREF(st->f);
+        }
         if (co->co_stacksize >= 2)
             le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
         le_frame_set_builtins(le_frame_of(st->f), builtins);

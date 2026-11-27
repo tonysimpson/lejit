@@ -135,7 +135,10 @@ LeCode_Run(PyThreadState *tstate, PyObject *codebuf, le_frame_t *f)
 
 /* A call of 'func' from C run with no real frame: its compiled entry
    'codebuf' (le_function_entry) runs on 'args', every word of its
-   arguments, borrowed, and the frame has a view only when asked
+   arguments, which the run holds a reference to, as a frame does: a
+   caller may pass one only the call keeps alive (ceval's
+   WITH_EXCEPT_START, the traceback), and the frame has a view only when
+   asked
    (frames.c:keep_root). The caller has bound the arguments and made the
    tests a frame would: no tracing, no cells or free variables, not a
    generator's code. As ceval, the depth is counted and the eval_breaker
@@ -149,10 +152,11 @@ le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
     stack_frame_info_t **finfo = &no_frames;
     FrameRuntime fr;
     PyObject *result;
+    Py_ssize_t i;
     extra_assert(RUN_ARGC(codebuf) == nargs);
-    (void)nargs;
     if (le_recursion_enter(tstate))
         return NULL;
+    for (i = 0; i < nargs; i++) Py_XINCREF(args[i]);
     psyco_frame_start_register_frameless(&fr, func, &finfo);
     if (le_eval_breaker_at_entry(tstate, (PyCodeObject *)func->func_code) <
         0) {
@@ -166,6 +170,7 @@ le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
                                      &finfo);
     le_recursion_leave(tstate);
     psyco_frame_start_unregister(&fr);
+    for (i = 0; i < nargs; i++) Py_XDECREF(args[i]);
     return result;
 }
 
