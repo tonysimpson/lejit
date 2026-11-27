@@ -1277,14 +1277,9 @@ compile_callee(PsycoObject *mypo, PyCodeObject *co)
 static bool
 pending_steppable(PyCodeObject *co)
 {
-#if LE_RESUMES_GENERATORS_DIRECTLY
     return (co->co_flags & CO_GENERATOR) &&
            !(co->co_flags & (CO_VARARGS | CO_VARKEYWORDS)) &&
            psyco_is_resumable_generator(co);
-#else
-    (void)co;
-    return false;
-#endif
 }
 
 /* whether the coroutine of 'co' that the call being compiled makes is
@@ -1815,7 +1810,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
     return result;
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
+#if LE_HAS_INTERPRETER_FRAME
 /* A generator's fields and its frame's (mechanisms/frames.h), and the
    thread state's that a step changes. The code is the one field known
    once read: the frame never changes it. On 3.14 the word is a
@@ -1847,6 +1842,45 @@ typedef __typeof__(*((PyThreadState *)0)->cframe) le_gen_cframe_t;
     FMUT(DEF_FIELD(le_gen_cframe_t, le_frame_t *, current_frame, \
                    NO_PREV_FIELD))
 #endif
+#else
+/* A generator's fields and its frame object's (gi_frame), and the thread
+   state's that a step changes. The code is the one field known once read:
+   the generator never changes it. */
+#define GEN_code DEF_FIELD(PyGenObject, PyObject *, gi_code, OB_type)
+#define iGEN_CODE FIELD_INDEX(GEN_code)
+#define GEN_code_word FMUT(GEN_code)
+#define GEN_frame \
+    FMUT(DEF_FIELD(PyGenObject, PyFrameObject *, gi_frame, NO_PREV_FIELD))
+#define GEN_exc_previous                            \
+    FMUT(DEF_FIELD(PyGenObject, _PyErr_StackItem *, \
+                   gi_exc_state.previous_item, NO_PREV_FIELD))
+#define FO_globals \
+    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_globals, NO_PREV_FIELD))
+#define FO_builtins \
+    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_builtins, NO_PREV_FIELD))
+#define FO_locals \
+    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_locals, NO_PREV_FIELD))
+#define FO_back \
+    FMUT(DEF_FIELD(PyFrameObject, PyFrameObject *, f_back, NO_PREV_FIELD))
+#define FO_lasti FMUT(DEF_FIELD(PyFrameObject, int, f_lasti, NO_PREV_FIELD))
+#if LE_HAS_FRAME_STATE
+#define FO_state \
+    FMUT(DEF_FIELD(PyFrameObject, PyFrameState, f_state, NO_PREV_FIELD))
+#define FO_stackdepth \
+    FMUT(DEF_FIELD(PyFrameObject, int, f_stackdepth, NO_PREV_FIELD))
+#else
+#define GEN_running \
+    FMUT(DEF_FIELD(PyGenObject, char, gi_running, NO_PREV_FIELD))
+#define FO_executing \
+    FMUT(DEF_FIELD(PyFrameObject, char, f_executing, NO_PREV_FIELD))
+#define FO_stacktop \
+    FMUT(DEF_FIELD(PyFrameObject, PyObject **, f_stacktop, NO_PREV_FIELD))
+#endif
+#define TSTATE_exc_info \
+    FMUT(DEF_FIELD(PyThreadState, _PyErr_StackItem *, exc_info, NO_PREV_FIELD))
+#define TSTATE_frame \
+    FMUT(DEF_FIELD(PyThreadState, PyFrameObject *, frame, NO_PREV_FIELD))
+#endif
 /* a code's table of direct entries (psyco.h:le_gen_direct_t) */
 #define DIRECT_globals \
     FMUT(DEF_FIELD(le_gen_direct_t, PyObject *, globals, NO_PREV_FIELD))
@@ -1859,15 +1893,20 @@ typedef __typeof__(*((PyThreadState *)0)->cframe) le_gen_cframe_t;
 
 /* What a step reads and writes of a generator, or of a virtual one's
    record (mechanisms/frames.h:le_gen_record_t), which keeps the same
-   fields elsewhere; and what ends a step that didn't pause in the usual
-   way */
+   fields; and what ends a step that didn't pause in the usual way. The
+   fields of the frame (globals, builtins, locals) are read on the frame's
+   base (gen_frame_base). */
 struct gen_layout {
-    defield_t state, exc_previous, locals, globals, builtins, place, previous;
-    defield_t stack;
-    long frame_ofs, exc_ofs;
+    defield_t exc_previous, locals, globals, builtins;
+#if LE_HAS_INTERPRETER_FRAME
+    defield_t state, place, previous, stack;
+    long frame_ofs;
+#endif
+    long exc_ofs;
     void *end, *send_end, *send_status;
 };
 static struct gen_layout gen_layout, record_layout;
+#if LE_HAS_INTERPRETER_FRAME
 /* a record's words, as its frame's */
 #define REC_words                                                 \
     FMUT(DEF_ARRAY(PyObject *, offsetof(PyGenObject, gi_iframe) + \
@@ -1875,11 +1914,11 @@ static struct gen_layout gen_layout, record_layout;
 static void
 gen_layouts_init(void)
 {
-    struct gen_layout g = {GEN_frame_state,
-                           GEN_exc_previous,
+    struct gen_layout g = {GEN_exc_previous,
                            GEN_locals,
                            GEN_globals,
                            GEN_builtins,
+                           GEN_frame_state,
                            GEN_place,
                            GEN_previous,
 #if LE_HAS_FRAME_STACKREFS
@@ -1900,6 +1939,41 @@ gen_layouts_init(void)
     gen_layout = g;
     record_layout = r;
 }
+
+/* the base the fields of the frame of 'vobj', a generator or record, are
+   read on: itself, its frame inside it */
+static vinfo_t *
+gen_frame_base(PsycoObject *po, vinfo_t *vobj)
+{
+    (void)po;
+    vinfo_incref(vobj);
+    return vobj;
+}
+#else
+/* a record's words, its frame object's */
+#define REC_words FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
+static void
+gen_layouts_init(void)
+{
+    /* a record is a generator, its runs ended as a generator's */
+    struct gen_layout g = {GEN_exc_previous,
+                           FO_locals,
+                           FO_globals,
+                           FO_builtins,
+                           offsetof(PyGenObject, gi_exc_state),
+                           (void *)le_gen_direct_end,
+                           (void *)le_gen_direct_send_end,
+                           (void *)le_gen_direct_send_status};
+    gen_layout = g;
+    record_layout = g;
+}
+
+static vinfo_t *
+gen_frame_base(PsycoObject *po, vinfo_t *vobj)
+{
+    return psyco_get_field(po, vobj, GEN_frame);
+}
+#endif
 
 /* the code object in the field 'df' of the generator, or of the record a
    frame word holds (yield_resumable), 'vgen': read once, kept in its
@@ -1964,6 +2038,7 @@ gen_put_i(PsycoObject *po, vinfo_t *vi, defield_t df, long value)
     return ok;
 }
 
+#if LE_HAS_INTERPRETER_FRAME
 /* the thread's innermost frame */
 static vinfo_t *
 gen_current_frame(PsycoObject *po, vinfo_t *vts)
@@ -1979,25 +2054,15 @@ gen_current_frame(PsycoObject *po, vinfo_t *vts)
     return v;
 #endif
 }
+#endif
 
-/* the entry in the table 't' for the place 'vplace' of a frame of 'co',
-   by its unit, tested: 1 with it in '*ventry' if there is one, 0 if
-   none, -1 on error */
+/* the entry in the table 't' at 'vindex' (le_gen_direct_index), tested:
+   1 with it in '*ventry' if there is one, 0 if none, -1 on error */
 static int
-gen_entry_at(PsycoObject *po, PyCodeObject *co, vinfo_t *vt, vinfo_t *vplace,
-             vinfo_t **ventry)
+gen_entry_at(PsycoObject *po, vinfo_t *vt, vinfo_t *vindex, vinfo_t **ventry)
 {
-    vinfo_t *vstart, *vdiff, *vindex, *ve;
+    vinfo_t *ve = psyco_get_field_array(po, vt, DIRECT_entries, vindex);
     int r;
-    vstart = vinfo_new(CompileTime_New((long)_PyCode_CODE(co)));
-    vdiff = integer_sub(po, vplace, vstart, false);
-    vinfo_decref(vstart, po);
-    vindex = vdiff == NULL ? NULL : integer_urshift_i(po, vdiff, 1);
-    vinfo_xdecref(vdiff, po);
-    ve = vindex == NULL
-             ? NULL
-             : psyco_get_field_array(po, vt, DIRECT_entries, vindex);
-    vinfo_xdecref(vindex, po);
     if (ve == NULL)
         return -1;
     r = gen_test(po, integer_cmp_i(po, ve, 0, Py_EQ));
@@ -2007,6 +2072,35 @@ gen_entry_at(PsycoObject *po, PyCodeObject *co, vinfo_t *vt, vinfo_t *vplace,
     }
     *ventry = ve;
     return 1;
+}
+
+/* le_gen_direct_index less one, as DIRECT_entries is indexed, of the
+   frame whose base is 'vbase' (gen_frame_base), of code 'co' */
+static vinfo_t *
+gen_direct_index(PsycoObject *po, PyCodeObject *co, vinfo_t *vbase)
+{
+#if LE_HAS_INTERPRETER_FRAME
+    vinfo_t *vstart, *vdiff, *vindex, *vplace;
+    vplace = psyco_get_field(po, vbase, GEN_place);
+    if (vplace == NULL)
+        return NULL;
+    vstart = vinfo_new(CompileTime_New((long)_PyCode_CODE(co)));
+    vdiff = integer_sub(po, vplace, vstart, false);
+    vinfo_decref(vstart, po);
+    vinfo_decref(vplace, po);
+    vindex = vdiff == NULL ? NULL : integer_urshift_i(po, vdiff, 1);
+    vinfo_xdecref(vdiff, po);
+    return vindex;
+#else
+    /* f_lasti in units: a new frame's -1 stays -1 */
+    vinfo_t *vlasti = psyco_get_field(po, vbase, FO_lasti), *v;
+    (void)co;
+    if (vlasti == NULL || LE_HAS_LASTI_IN_INSTRUCTIONS)
+        return vlasti;
+    v = integer_rshift_i(po, vlasti, 1);
+    vinfo_decref(vlasti, po);
+    return v;
+#endif
 }
 
 /* 'vg', or the field 'df' of 'vgen' where 'vg' is NULL, compared with
@@ -2041,6 +2135,13 @@ gen_run_tests(PsycoObject *po, PyCodeObject *co, vinfo_t *vt, vinfo_t *vts,
         return 1;
     if ((r = gen_test(po, le_eval_breaker_test_on(po, vts))) != 0)
         return r;
+#if !LE_HAS_INTERPRETER_FRAME
+    /* the frame links to the thread's innermost frame while it runs; with
+       none (compiled code run from C without one) the step is left to
+       gen_send_ex */
+    if ((r = gen_field_test_i(po, vts, TSTATE_frame, 0, Py_EQ)) != 0)
+        return r;
+#endif
     tg = psyco_get_field(po, vt, DIRECT_globals);
     tb = psyco_get_field(po, vt, DIRECT_builtins);
     r = tg == NULL || tb == NULL
@@ -2056,36 +2157,72 @@ gen_run_tests(PsycoObject *po, PyCodeObject *co, vinfo_t *vt, vinfo_t *vts,
 /* The tests before a direct step of the run-time generator, or virtual
    generator's record, 'vgen' (laid out as 'L') of code 'co', whose table
    is 't', on the thread state 'vts': 1 if all pass, with the entry to
-   call in '*ventry', 0 for the step's fallback instead (anything
-   gen_send_ex2 or le_gen_to_run would do other than run the entry: the
-   generator running or finished, or not started when the value sent may
-   not be None, frame locals made, gen_run_tests, no entry compiled yet),
-   -1 on error. */
+   call in '*ventry' and the frame's base (gen_frame_base) in '*vbase', 0
+   for the step's fallback instead (anything gen_send_ex2 or le_gen_to_run
+   would do other than run the entry: the generator running or finished,
+   or not started when the value sent may not be None, frame locals made,
+   gen_run_tests, no entry compiled yet), -1 on error. */
 static int
 gen_step_tests(PsycoObject *po, const struct gen_layout *L, vinfo_t *vgen,
                PyCodeObject *co, le_gen_direct_t *t, vinfo_t *vts,
-               bool sends_any, vinfo_t **ventry)
+               bool sends_any, vinfo_t **vbase, vinfo_t **ventry)
 {
-    vinfo_t *vt, *vplace;
+    vinfo_t *vt, *vindex, *vb;
     int r;
+#if LE_HAS_INTERPRETER_FRAME
     if ((r = gen_field_test_i(po, vgen, L->state, FRAME_EXECUTING, Py_GE)) !=
             0 ||
         (sends_any && (r = gen_field_test_i(po, vgen, L->state, FRAME_CREATED,
-                                            Py_EQ)) != 0) ||
-        (r = gen_field_test_i(po, vgen, L->locals, 0, Py_NE)) != 0)
+                                            Py_EQ)) != 0))
         return r < 0 ? -1 : 0;
-    vt = vinfo_new(CompileTime_New((long)t));
-    r = gen_run_tests(po, co, vt, vts, vgen, L, NULL, NULL);
+    vb = gen_frame_base(po, vgen);
+#else
+    /* finished (no frame), or running */
+#if !LE_HAS_FRAME_STATE
+    if ((r = gen_field_test_i(po, vgen, GEN_running, 0, Py_NE)) != 0)
+        return r < 0 ? -1 : 0;
+#endif
+    vb = gen_frame_base(po, vgen);
+    if (vb == NULL)
+        return -1;
+    r = gen_test(po, integer_cmp_i(po, vb, 0, Py_EQ));
+#if LE_HAS_FRAME_STATE
+    if (r == 0)
+        r = gen_field_test_i(po, vb, FO_state, FRAME_EXECUTING, Py_GE);
+    if (r == 0 && sends_any)
+        r = gen_field_test_i(po, vb, FO_state, FRAME_CREATED, Py_EQ);
+#else
+    if (r == 0)
+        r = gen_field_test_i(po, vb, FO_stacktop, 0, Py_EQ);
+    if (r == 0 && sends_any)
+        r = gen_field_test_i(po, vb, FO_lasti, -1, Py_EQ);
+#endif
     if (r != 0) {
-        vinfo_decref(vt, po);
+        vinfo_decref(vb, po);
         return r < 0 ? -1 : 0;
     }
-    /* the entry at the frame's place */
-    vplace = psyco_get_field(po, vgen, L->place);
-    r = vplace == NULL ? -1 : gen_entry_at(po, co, vt, vplace, ventry);
-    vinfo_xdecref(vplace, po);
+#endif
+    if ((r = gen_field_test_i(po, vb, L->locals, 0, Py_NE)) != 0) {
+        vinfo_decref(vb, po);
+        return r < 0 ? -1 : 0;
+    }
+    vt = vinfo_new(CompileTime_New((long)t));
+    r = gen_run_tests(po, co, vt, vts, vb, L, NULL, NULL);
+    if (r == 0) {
+        /* the entry at the frame's place */
+        vindex = gen_direct_index(po, co, vb);
+        r = vindex == NULL ? -1 : gen_entry_at(po, vt, vindex, ventry);
+        vinfo_xdecref(vindex, po);
+    }
+    else
+        r = r < 0 ? -1 : 0;
     vinfo_decref(vt, po);
-    return r;
+    if (r != 1) {
+        vinfo_decref(vb, po);
+        return r;
+    }
+    *vbase = vb;
+    return 1;
 }
 
 /* whether iter() of an object of type 'tp' can't raise but for memory,
@@ -2132,10 +2269,11 @@ vgen_startable(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co)
     return r > 0 ? iter_cannot_raise(tp) : r;
 }
 
-/* 'v' put in word 'k' of the record 'vrec', made real first, the word
-   taking a reference to it */
+/* 'v' put in word 'k' of a record whose words are on 'vwords' (its
+   frame's base, gen_frame_base), made real first, the word taking a
+   reference to it */
 static bool
-record_word_put(PsycoObject *po, vinfo_t *vrec, int k, vinfo_t *v)
+record_word_put(PsycoObject *po, vinfo_t *vwords, int k, vinfo_t *v)
 {
     vinfo_t *w;
     bool ok;
@@ -2147,7 +2285,7 @@ record_word_put(PsycoObject *po, vinfo_t *vrec, int k, vinfo_t *v)
     w = v;
     vinfo_incref(w);
 #endif
-    ok = w != NULL && psyco_put_nth_field(po, vrec, REC_words, k, w);
+    ok = w != NULL && psyco_put_nth_field(po, vwords, REC_words, k, w);
     vinfo_xdecref(w, po);
     if (ok)
         consume_reference(po, v);
@@ -2155,18 +2293,18 @@ record_word_put(PsycoObject *po, vinfo_t *vrec, int k, vinfo_t *v)
 }
 
 /* the free variables' cells of the function 'vfunc' of code 'co' put in
-   the words of its record 'vrec', as its COPY_FREE_VARS would (genrecord.c:
-   le_gen_record_start does it in C): 1, or 0 where the cells aren't
-   known, or -1 on error */
+   the words of its record, on 'vwords' (record_word_put), as its
+   COPY_FREE_VARS would (genrecord.c:le_gen_record_start does it in C): 1,
+   or 0 where the cells aren't known, or -1 on error */
 static int
-record_frees_put(PsycoObject *po, vinfo_t *vrec, vinfo_t *vfunc,
+record_frees_put(PsycoObject *po, vinfo_t *vwords, vinfo_t *vfunc,
                  PyCodeObject *co)
 {
     vinfo_t *freebuf[MAX_CALL_FREES], **frees = NULL;
-    int nfrees = co->co_nfreevars, ofs = le_code_nlocalsplus(co) - nfrees;
+    int nfrees = le_code_nfrees(co), ofs = le_code_nlocalsplus(co) - nfrees;
     int i, r = load_frees(po, vfunc, nfrees, freebuf, &frees);
     for (i = 0; r > 0 && i < nfrees; i++)
-        if (!record_word_put(po, vrec, ofs + i, frees[i]))
+        if (!record_word_put(po, vwords, ofs + i, frees[i]))
             r = -1;
     return r;
 }
@@ -2184,7 +2322,7 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *vglobals = vgen->array->items[iGENEXPR_GLOBALS];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-    vinfo_t *vt, *vb, *vplace, *vrec, *viter = NULL;
+    vinfo_t *vt, *vb, *vindex, *vrec, *vwords, *viter = NULL;
     bool takes_iter;
     long start = le_gen_record_start_unit(co, &takes_iter);
     long nstack = takes_iter ? 1 + LE_HAS_GET_ITER_INDEX : 0;
@@ -2195,10 +2333,14 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     r = gen_run_tests(po, co, vt, vts, NULL, &record_layout, vglobals, vb);
     vinfo_decref(vb, po);
     if (r == 0) {
-        vplace = vinfo_new(CompileTime_New(
-            (long)(_PyCode_CODE(co) + start + LE_HAS_FRAME_INSTR_PTR)));
-        r = gen_entry_at(po, co, vt, vplace, ventry);
-        vinfo_decref(vplace, po);
+        /* the start's entry */
+#if LE_HAS_INTERPRETER_FRAME
+        vindex = vinfo_new(CompileTime_New(start + LE_HAS_FRAME_INSTR_PTR));
+#else
+        vindex = vinfo_new(CompileTime_New(-1));
+#endif
+        r = gen_entry_at(po, vt, vindex, ventry);
+        vinfo_decref(vindex, po);
     }
     else
         r = r < 0 ? -1 : 0;
@@ -2220,28 +2362,40 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
         goto error;
     vinfo_incref(args);
     PsycoVgen_FromPending(po, vgen, vrec);
+    vwords = gen_frame_base(po, vrec);
+    if (vwords == NULL) {
+        vinfo_decref(args, po);
+        goto error;
+    }
     for (i = 0; i < co->co_argcount; i++)
-        if (!record_word_put(po, vrec, i, PsycoTuple_GET_ITEM(args, i))) {
+        if (!record_word_put(po, vwords, i, PsycoTuple_GET_ITEM(args, i))) {
+            vinfo_decref(vwords, po);
             vinfo_decref(args, po);
             goto error;
         }
     vinfo_decref(args, po);
     if (viter != NULL) {
-        if (!record_word_put(po, vrec, le_code_nlocalsplus(co), viter))
+        if (!record_word_put(po, vwords, le_code_nlocalsplus(co), viter)) {
+            vinfo_decref(vwords, po);
             goto error;
+        }
         vinfo_decref(viter, po);
         viter = NULL;
     }
-    if (co->co_ncellvars == 0 && co->co_nfreevars > 0) {
-        r = record_frees_put(po, vrec, vfunc, co);
+    if (le_code_ncells(co) == 0 && le_code_nfrees(co) > 0) {
+        r = record_frees_put(po, vwords, vfunc, co);
+        if (r != 0)
+            vinfo_decref(vwords, po);
         if (r < 0)
             goto error;
         if (r > 0)
             return 1;
     }
-    if ((co->co_ncellvars > 0 || co->co_nfreevars > 0) &&
+    vinfo_decref(vwords, po);
+    if ((le_code_ncells(co) > 0 || le_code_nfrees(co) > 0) &&
         psyco_generic_call(po, le_gen_record_start,
-                           CfReturnTypeInt | CfPyErrIfNeg, "v", vrec) == NULL)
+                           CfReturnTypeInt | CfPyErrIfNeg, "vv", vrec,
+                           vfunc) == NULL)
         goto error;
     return 1;
 
@@ -2265,7 +2419,7 @@ loop_has_no_yield(PsycoObject *po)
         return false;
     for (pos = in.next; pos < in.target;) {
         le_instr_t body = le_instr(c, pos);
-        if (body.op == YIELD_VALUE)
+        if (body.op == YIELD_VALUE || body.op == YIELD_FROM)
             return false;
         pos = body.next;
     }
@@ -2325,7 +2479,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     const struct gen_layout *L = &gen_layout;
     PyCodeObject *co = NULL;
     vinfo_t *vobj = vgen, *vcode, *vts = NULL, *ventry = NULL, *vf = NULL;
-    vinfo_t *v, *vresult = NULL, *vsent = NULL;
+    vinfo_t *v, *vresult = NULL, *vsent = NULL, *vbase = NULL;
     PyObject *o;
     le_code_extra_t *x;
     le_gen_direct_t *t;
@@ -2333,7 +2487,10 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     Source sources[2];
     bool sends_any;
     int r, startable = 1;
-    bool as_direct = false, held = false;
+    bool held = false;
+#if LE_STACK_SEGMENTS
+    bool as_direct = false;
+#endif
     if (PsycoGenexpr_Check(vgen) || PsycoVgen_Check(vgen)) {
         co = pending_code(vgen);
         /* a generator's body pausing would make one it steps real at
@@ -2396,7 +2553,14 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     else {
         if (PsycoVgen_Check(vgen))
             vobj = vgen->array->items[iVGEN_RECORD];
-        r = gen_step_tests(po, L, vobj, co, t, vts, sends_any, &ventry);
+        r = gen_step_tests(po, L, vobj, co, t, vts, sends_any, &vbase,
+                           &ventry);
+    }
+    if (r == 1 && vbase == NULL) {
+        /* a new virtual generator's: its record's frame */
+        vbase = gen_frame_base(po, vgen->array->items[iVGEN_RECORD]);
+        if (vbase == NULL)
+            r = -1;
     }
 #if LE_STACK_SEGMENTS
     /* with the stack low, the step through C instead, on a segment */
@@ -2404,6 +2568,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         runtime_condition_f(po, psyco_stack_low(po))) {
         vinfo_decref(vts, po);
         vinfo_xdecref(ventry, po);
+        vinfo_xdecref(vbase, po);
         as_direct = true;
         goto generic;
     }
@@ -2415,6 +2580,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     if (r <= 0) {
         vinfo_decref(vts, po);
         vinfo_xdecref(ventry, po);
+        vinfo_xdecref(vbase, po);
         if (r < 0)
             return NULL;
         goto generic;
@@ -2432,6 +2598,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     if (v == NULL || !psyco_put_field(po, vts, TSTATE_exc_info, v))
         goto error;
     vinfo_decref(v, po);
+#if LE_HAS_INTERPRETER_FRAME
     if (!gen_put_i(po, vobj, L->state, FRAME_EXECUTING))
         goto error_nov;
     v = gen_current_frame(po, vts);
@@ -2462,6 +2629,25 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
                    LE_HAS_RUNNING_STACK_HIDDEN ? -1 : le_code_nlocalsplus(co)))
         goto error_nov;
 #endif
+#else
+    /* linked to the thread's innermost frame, as gen_send_ex links it,
+       and running as ceval's prologue leaves it (le_gen_frame_run) */
+    v = psyco_get_field(po, vts, TSTATE_frame);
+    if (v == NULL || !psyco_incref_v(po, v) ||
+        !psyco_put_field(po, vbase, FO_back, v))
+        goto error;
+    vinfo_decref(v, po);
+#if LE_HAS_FRAME_STATE
+    if (!gen_put_i(po, vbase, FO_stackdepth, -1) ||
+        !gen_put_i(po, vbase, FO_state, FRAME_EXECUTING))
+        goto error_nov;
+#else
+    if (!gen_put_i(po, vobj, GEN_running, 1) ||
+        !gen_put_i(po, vbase, FO_stacktop, 0) ||
+        !gen_put_i(po, vbase, FO_executing, 1))
+        goto error_nov;
+#endif
+#endif
 
     /* the value sent, as gen_send_ex2 sends it, and the frame */
     vsent = varg != NULL ? (vinfo_incref(varg), varg) : psyco_vi_None();
@@ -2470,7 +2656,12 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     v = make_runtime_copy(po, vsent);
     vinfo_decref(vsent, po);
     vsent = v;
+#if LE_HAS_INTERPRETER_FRAME
     vf = integer_add_i(po, vobj, L->frame_ofs, true);
+#else
+    vf = vbase;
+    vinfo_incref(vf);
+#endif
     if (vsent == NULL || vf == NULL || !compute_vinfo(vf, po) ||
         !compute_vinfo(ventry, po))
         goto error_nov;
@@ -2493,9 +2684,15 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         goto error_nov;
 
     /* paused at a yield, compiled: what gen_send_ex2 does then */
+#if LE_HAS_INTERPRETER_FRAME
     r = gen_field_test_i(po, vobj, L->state, FRAME_EXECUTING, Py_GE);
     if (r == 0)
         r = gen_field_test_i(po, vobj, L->exc_previous, 0, Py_EQ);
+#elif LE_HAS_FRAME_STATE
+    r = gen_field_test_i(po, vbase, FO_state, FRAME_SUSPENDED, Py_NE);
+#else
+    r = gen_field_test_i(po, vbase, FO_stacktop, 0, Py_EQ);
+#endif
     if (r < 0)
         goto error_nov;
     if (r > 0) {
@@ -2511,6 +2708,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
                                    vobj, vresult);
         vinfo_decref(vts, po);
         vinfo_decref(vresult, po);
+        vinfo_decref(vbase, po);
         vinfo_decref(vobj, po);
         return v;
     }
@@ -2519,12 +2717,29 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         goto error;
     vinfo_decref(v, po);
     vinfo_decref(vts, po);
-    if (!gen_put_i(po, vobj, L->exc_previous, 0) ||
-        !gen_put_i(po, vobj, L->previous, 0)) {
-        vinfo_decref(vresult, po);
-        vinfo_decref(vobj, po);
-        return NULL;
-    }
+    vts = NULL;
+    if (!gen_put_i(po, vobj, L->exc_previous, 0))
+        goto error_nov;
+#if LE_HAS_INTERPRETER_FRAME
+    if (!gen_put_i(po, vobj, L->previous, 0))
+        goto error_nov;
+#else
+    /* unlinked, as gen_send_ex unlinks it, and no longer running, as
+       ceval's epilogue and gen_send_ex leave it (le_gen_frame_end) */
+    v = psyco_get_field(po, vbase, FO_back);
+    if (v == NULL)
+        goto error_nov;
+    psyco_decref_v(po, v);
+    vinfo_decref(v, po);
+    if (!gen_put_i(po, vbase, FO_back, 0))
+        goto error_nov;
+#if !LE_HAS_FRAME_STATE
+    if (!gen_put_i(po, vbase, FO_executing, 0) ||
+        !gen_put_i(po, vobj, GEN_running, 0))
+        goto error_nov;
+#endif
+#endif
+    vinfo_decref(vbase, po);
     vinfo_decref(vobj, po);
     vresult->source = add_rtref(vresult->source);
     if (out != NULL) {
@@ -2540,7 +2755,8 @@ error_nov:
     vinfo_xdecref(vf, po);
     vinfo_xdecref(ventry, po);
     vinfo_xdecref(vresult, po);
-    vinfo_decref(vts, po);
+    vinfo_xdecref(vts, po);
+    vinfo_decref(vbase, po);
     vinfo_decref(vobj, po);
     return NULL;
 
@@ -2591,10 +2807,29 @@ DEFINEFN
 int
 le_iter_send(PyObject *iter, PyObject *v, PyObject *out[])
 {
+#if LE_HAS_ITER_SEND
     PySendResult r = PyIter_Send(iter, v, &out[0]);
     if (r == PYGEN_ERROR)
         return -1;
     return r == PYGEN_NEXT;
+#else
+    /* as ceval's YIELD_FROM sends */
+    _Py_IDENTIFIER(send);
+    PyObject *res;
+    if (PyGen_CheckExact(iter) || PyCoro_CheckExact(iter))
+        res = _PyGen_Send((PyGenObject *)iter, v);
+    else if (v == Py_None)
+        res = Py_TYPE(iter)->tp_iternext(iter);
+    else
+        res = _PyObject_CallMethodIdObjArgs(iter, &PyId_send, v, NULL);
+    if (res != NULL) {
+        out[0] = res;
+        return 1;
+    }
+    if (_PyGen_FetchStopIterationValue(&out[0]) < 0)
+        return -1;
+    return 0;
+#endif
 }
 
 DEFINEFN
@@ -2604,7 +2839,6 @@ psyco_gen_send_status(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,
 {
     return gen_send(po, vgen, varg, NULL, out, LE_C_NONE);
 }
-#endif
 
 /* whether psyco_call_genexpr can run 'v', a pending generator or
    coroutine */
@@ -2763,7 +2997,5 @@ psycofunction_init(void)
     le_tracing_recheck(NULL); /* the first version seen */
 #endif
     cannot_block_init();
-#if LE_RESUMES_GENERATORS_DIRECTLY
     gen_layouts_init();
-#endif
 }

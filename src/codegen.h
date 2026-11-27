@@ -188,7 +188,6 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
                  struct stack_frame_info_s *finfo, int through_c,
                  vinfo_t *vfunc);
-#if LE_RESUMES_GENERATORS_DIRECTLY
 /* As psyco_call_psyco, to the compiled code at 'ventry' (run time), with
    'vframe' (run time) in the word above the callee's own slot, where the
    record says to find it (Python/frames.h:on_gen_frame). The callee's
@@ -198,7 +197,6 @@ EXTERNFN vinfo_t *
 psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
                           Source argsources[], int argcount, vinfo_t *vframe,
                           struct stack_frame_info_s *finfo);
-#endif
 
 PSY_INLINE int
 get_arguments_count(vinfo_array_t *vlocals)

@@ -1993,10 +1993,8 @@ made_real_when_dead(vinfo_t *vi, mergepoint_t *mp)
     source_virtual_t *sv;
     if (vi == NULL || !is_virtualtime(vi->source))
         return false;
-#if LE_RESUMES_ON_FRAME
     if (psyco_frame_word_index(vi) >= 0)
         return false;
-#endif
     sv = VirtualTime_Get(vi->source);
     if (sv == &psyco_computed_long || sv == &psyco_computed_bool) {
         vinfo_t *value = vinfo_getitem(vi, iLONG_VALUE);

@@ -230,7 +230,6 @@ PsycoGenexpr_Check(vinfo_t *v)
            VirtualTime_Get(v->source) == &psyco_pending_genexpr;
 }
 
-#if LE_RESUMES_GENERATORS_DIRECTLY
 static source_virtual_t psyco_virtual_gen;
 
 static bool
@@ -270,7 +269,6 @@ PsycoVgen_Check(vinfo_t *v)
     return is_virtualtime(v->source) &&
            VirtualTime_Get(v->source) == &psyco_virtual_gen;
 }
-#endif
 
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
@@ -784,7 +782,5 @@ psy_funcobject_init(void)
     INIT_SVIRTUAL_NOCALL(psyco_computed_function, compute_function, 1);
     /* a generator has an identity: made real before any call */
     INIT_SVIRTUAL_NOCALL(psyco_pending_genexpr, compute_genexpr, 1);
-#if LE_RESUMES_GENERATORS_DIRECTLY
     INIT_SVIRTUAL_NOCALL(psyco_virtual_gen, compute_vgen, 1);
-#endif
 }

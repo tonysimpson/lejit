@@ -251,6 +251,9 @@ SKIPPED = {
         'test.test_gc.GCTests.test_get_objects_arguments '
         'test.test_gc.GCTests.test_heap_size '
         'test.test_sys.SysModuleTest.test_getallocatedblocks',
+    'compiling allocates objects the gc tracks, so automatic collections '
+    'come at other moments, and the test expects none between two lines':
+        'test.test_weakref.ReferencesTestCase.test_callbacks_on_callback',
     'marshal of a code object with one reference':
         'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_code_bad_* '
         'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_no_bytecode',
