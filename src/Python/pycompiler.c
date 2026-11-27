@@ -4100,6 +4100,16 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 }
 
 #if LE_HAS_OPCODE_DICT_MERGE || LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
+/* the callable a ** error names: for a bound method not made yet, its
+   function, whose name, qualified name and module the method's are */
+static vinfo_t *
+named_callable(vinfo_t *f)
+{
+    if (f->source == VirtualTime_New(&psyco_computed_method))
+        return vinfo_getitem(f, iMETHOD_IM_FUNC);
+    return f;
+}
+
 /* ceval.c DICT_MERGE, and each mapping of BUILD_MAP_UNPACK_WITH_CALL */
 static int
 cimpl_dict_merge(PyObject *dict, PyObject *update, PyObject *func)
@@ -4441,9 +4451,10 @@ ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
    [kwargs], args, and the callable beside its NULL. The kwargs slot is
    there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
-   (a NULL there for a call with none). f(*tuple), and f(*tuple, **k)
-   while k is empty, go straight to PsycoObject_Call, which can specialise
-   the call; anything else runs CPython's whole case at run time (its copy
+   (a NULL there for a call with none). f(*tuple), f(*tuple, **k) while k
+   is empty, and f(*tuple, **d) of a Python function or method with d an
+   exact dict, go straight to PsycoObject_Call, which can specialise the
+   call; anything else runs CPython's whole case at run time (its copy
    cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
@@ -4453,6 +4464,7 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
     vinfo_t *callargs = stack_top[-1 - slot];
     vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
+    vinfo_t **kwvalues;
     PyTypeObject *t;
 #if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
     vinfo_t *result;
@@ -4464,6 +4476,13 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
 
     t = Psyco_NeedType(po, callargs);
     if (t == NULL)
+        return NULL;
+    /* what ex_call tests for a dict's keywords, promoted before anything is
+       emitted */
+    if (kwargs != NULL && t == &PyTuple_Type &&
+        PsycoDict_PendingNames(kwargs, &kwvalues) == NULL &&
+        (Psyco_NeedType(po, kwargs) == NULL ||
+         Psyco_NeedType(po, func) == NULL))
         return NULL;
 #if LE_HAS_EX_CALL_SKIPS_RECURSION_TEST
     /* ceval's specialised call of a Python function counts its frame
@@ -4495,6 +4514,19 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     return ex_call(po, func, callargs, kwargs, t);
 }
 
+/* PsycoObject_Call for ex_call: CPython runs a bound method's frame from
+   C (PyObject_Call), as the direct call then counts it */
+static vinfo_t *
+ex_direct_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs,
+               vinfo_t *kwargs)
+{
+    vinfo_t *result;
+    po->pr.ex_method = Psyco_KnownType(func) == &PyMethod_Type;
+    result = PsycoObject_Call(po, func, callargs, kwargs);
+    po->pr.ex_method = 0;
+    return result;
+}
+
 /* psyco_ext_do_call_ex's call, once callargs' type 't' is known */
 static vinfo_t *
 ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
@@ -4512,14 +4544,25 @@ ex_call(PsycoObject *po, vinfo_t *func, vinfo_t *callargs, vinfo_t *kwargs,
             return NULL;
         if (ft == &PyFunction_Type || ft == &PyMethod_Type)
             kwargs = zero = psyco_vi_Zero();
-        result = PsycoObject_Call(po, func, callargs, kwargs);
+        result = ex_direct_call(po, func, callargs, kwargs);
         goto done;
     }
     if (t == &PyTuple_Type && zero != NULL) {
         /* f(*args): the call can be specialised. With **kwargs it goes to the
            run-time helper, which holds a reference to the dict as ceval does
          */
-        result = PsycoObject_Call(po, func, callargs, kwargs);
+        result = ex_direct_call(po, func, callargs, kwargs);
+        goto done;
+    }
+    if (t == &PyTuple_Type && PsycoTuple_Load(callargs) >= 0 &&
+        Psyco_KnownType(kwargs) == &PyDict_Type &&
+        (Psyco_KnownType(func) == &PyFunction_Type ||
+         Psyco_KnownType(func) == &PyMethod_Type)) {
+        /* f(*args, **d) of a Python function, d an exact dict: its keywords
+           bind at run time (psyfunc.c:psyco_dict_keywords) */
+        po->pr.ex_keywords = 1;
+        result = ex_direct_call(po, func, callargs, kwargs);
+        po->pr.ex_keywords = 0;
         goto done;
     }
     result = psyco_generic_call(po, cimpl_call_function_ex_maybe_direct,
@@ -7244,14 +7287,25 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *err;
             vinfo_t *sum;
             int i;
+            /* the types PsycoDict_MergeEmpty reads, promoted first */
+            for (i = oparg; i > 0; i--)
+                if (Psyco_NeedType(po, NTOP(i)) == NULL)
+                    break;
+            if (i > 0)
+                break;
             sum = PsycoDict_New(po);
             if (sum == NULL) {
                 break;
             }
             for (i = oparg; i > 0; i--) {
-                err = psyco_generic_call(po, cimpl_dict_merge,
-                                         CfCommonIntBoolOrError, "vvv", sum,
-                                         NTOP(i), NTOP(2 + oparg));
+                int empty = PsycoDict_MergeEmpty(po, sum, NTOP(i));
+                if (empty < 0)
+                    break;
+                if (empty > 0)
+                    continue;
+                err = psyco_generic_call(
+                    po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv", sum,
+                    NTOP(i), named_callable(NTOP(2 + oparg)));
                 if (err == NULL) {
                     break;
                 }
@@ -7291,7 +7345,8 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
                 x = psyco_generic_call(
                     po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
                     NTOP(oparg + 1), TOP(),
-                    NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
+                    named_callable(
+                        NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL)));
                 if (x == NULL)
                     break;
                 vinfo_decref(x, po);
