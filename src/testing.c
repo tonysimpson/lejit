@@ -49,6 +49,11 @@ le_promostats(PyObject *self, PyObject *unused)
 #endif
 
 #if ALL_CHECKS
+/* calls to these functions while allocations are counted
+   (le_allocs_begin): a case that asks them in its rounds does work a run
+   without LeJIT doesn't */
+static long allocs_asked;
+
 static PyObject *
 le_stats(PyObject *self, PyObject *unused)
 {
@@ -64,6 +69,7 @@ le_stats(PyObject *self, PyObject *unused)
         "load_type_changes", psyco_stat_load_type_changes, "load_repairs",
         psyco_stat_load_repairs);
     int i;
+    allocs_asked++;
     for (i = 0; d != NULL && i < LE_ENTER_KINDS; i++) {
         PyObject *t = Py_BuildValue("(ld)", psyco_stat_compile_count[i],
                                     psyco_stat_compile_ns[i] * 1e-9);
@@ -232,6 +238,7 @@ static PyObject *
 le_code_info(PyObject *self, PyObject *co)
 {
     le_code_extra_t *e;
+    allocs_asked++;
     if (!PyCode_Check(co)) {
         PyErr_SetString(PyExc_TypeError, "_code_info() needs a code object");
         return NULL;
@@ -260,6 +267,7 @@ le_dead_locals(PyObject *self, PyObject *co)
 {
     PyObject *mps, *result;
     mergepoint_t *mp;
+    allocs_asked++;
     if (!PyCode_Check(co)) {
         PyErr_SetString(PyExc_TypeError, "_dead_locals() needs a code object");
         return NULL;
@@ -308,6 +316,7 @@ static PyObject *
 le_inlinable(PyObject *self, PyObject *co)
 {
     PyObject *mps;
+    allocs_asked++;
     if (!PyCode_Check(co)) {
         PyErr_SetString(PyExc_TypeError, "_inlinable() needs a code object");
         return NULL;
@@ -323,6 +332,7 @@ le_inlinable(PyObject *self, PyObject *co)
 static PyObject *
 le_unregistered_metas(PyObject *self, PyObject *unused)
 {
+    allocs_asked++;
     if (Psyco_Unregistered_Metas == NULL)
         return PyList_New(0);
     return PyList_GetSlice(Psyco_Unregistered_Metas, 0, PY_SSIZE_T_MAX);
@@ -339,6 +349,7 @@ le_fail_after(PyObject *self, PyObject *args)
     const char *site;
     long n, left;
     int i;
+    allocs_asked++;
     if (!PyArg_ParseTuple(args, "sl", &site, &n))
         return NULL;
     for (i = 0; i < LE_FAIL_SITES; i++)
@@ -349,6 +360,85 @@ le_fail_after(PyObject *self, PyObject *args)
         }
     PyErr_SetString(PyExc_ValueError, "unknown site");
     return NULL;
+}
+
+/* For tests/jit: counts the object allocator's allocations (PyObject_Malloc,
+   _Calloc, and _Realloc of NULL) made outside compiles, from
+   le_allocs_begin to le_allocs_end. They are plain C functions, called
+   through ctypes, so a run without LeJIT counts the same way without
+   importing lejit. */
+static PyMemAllocatorEx allocs_under;
+static long allocs_made;
+static bool allocs_on = false;
+
+static void *
+allocs_malloc(void *ctx, size_t size)
+{
+    allocs_made += le_compile_depth == 0;
+    return allocs_under.malloc(allocs_under.ctx, size);
+}
+
+static void *
+allocs_calloc(void *ctx, size_t nelem, size_t elsize)
+{
+    allocs_made += le_compile_depth == 0;
+    return allocs_under.calloc(allocs_under.ctx, nelem, elsize);
+}
+
+static void *
+allocs_realloc(void *ctx, void *ptr, size_t size)
+{
+    allocs_made += ptr == NULL && le_compile_depth == 0;
+    return allocs_under.realloc(allocs_under.ctx, ptr, size);
+}
+
+static void
+allocs_free(void *ctx, void *ptr)
+{
+    allocs_under.free(allocs_under.ctx, ptr);
+}
+
+EXTERNFN void
+le_allocs_begin(void);
+EXTERNFN long
+le_allocs_end(void);
+EXTERNFN long
+le_allocs_asked(void);
+
+DEFINEFN void
+le_allocs_begin(void)
+{
+    PyMemAllocatorEx hook = {NULL, allocs_malloc, allocs_calloc,
+                             allocs_realloc, allocs_free};
+    allocs_made = allocs_asked = 0;
+    if (allocs_on)
+        return;
+    PyMem_GetAllocator(PYMEM_DOMAIN_OBJ, &allocs_under);
+    PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &hook);
+    allocs_on = true;
+}
+
+/* the count, or -1 if another hook was put over this one meanwhile (a
+   tracemalloc.start() not stopped): this one then stays, under it */
+DEFINEFN long
+le_allocs_end(void)
+{
+    PyMemAllocatorEx now;
+    if (!allocs_on)
+        return -1;
+    PyMem_GetAllocator(PYMEM_DOMAIN_OBJ, &now);
+    if (now.malloc != allocs_malloc)
+        return -1;
+    PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &allocs_under);
+    allocs_on = false;
+    return allocs_made;
+}
+
+/* the calls to lejit._core's test functions since le_allocs_begin */
+DEFINEFN long
+le_allocs_asked(void)
+{
+    return allocs_asked;
 }
 #endif
 

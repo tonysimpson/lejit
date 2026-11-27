@@ -448,14 +448,18 @@ def replaced_functions():
     return out
 
 
+# a log record holds the time it was made: whether its ints are new objects
+# or cached small ones depends on when it runs
+LOGS = {'objects': "a log record's time decides whether its ints are new objects"}
+
 CASES = [
     ('pos_call_chain', "[()]", {}),
     ('kw_call_chain', "[()]", {}),
     ('warn_stacklevel', "[()]", {}),
-    ('log_caller', "[()]", {}),
-    ('log_kw_caller', "[()]", {}),
-    ('log_init_caller', "[()]", {}),
-    ('log_gen_caller', "[()]", {}),
+    ('log_caller', "[()]", LOGS),
+    ('log_kw_caller', "[()]", LOGS),
+    ('log_init_caller', "[()]", LOGS),
+    ('log_gen_caller', "[()]", LOGS),
     ('warn_through', "[(1,), (2,)]", {}),
     ('c_warning_places', "[()]", {}),
     ('init_frames_caller', "[()]", {}),
