@@ -242,6 +242,9 @@ typedef struct frame_runtime_s {
     /* a frameless run's: the thread's current frame as it started, or
        NULL; its frames come just inside that one's */
     le_frame_t *back;
+    /* a frameless run's thread state: the OS thread may run another's
+       (a subinterpreter's) inside it, whose walks must not find it */
+    PyThreadState *ts;
     PyFunctionObject
         *func; /* a frameless run's function; its caller holds it */
     /* the key of a frameless run's own frame's kept frame (frames.c:

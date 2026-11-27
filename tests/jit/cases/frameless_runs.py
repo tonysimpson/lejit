@@ -230,6 +230,47 @@ def generators(n):
     return [run(_iterates, i) for i in range(n)]
 
 
+# subinterpreters run inside a frameless call from C with no frame out of
+# it (a thread's start), on the same OS thread: they never see its frames,
+# and what they make with their own allocator stays theirs
+def _subinterpreters():
+    for name in ('_interpreters', '_xxsubinterpreters'):
+        try:
+            return __import__(name)
+        except ImportError:
+            pass
+    return None
+
+
+def _sub(interps, out, done):
+    run = getattr(interps, 'exec', None) or interps.run_string
+    try:
+        i = interps.create()
+        out.append(run(i, 'import struct, sys; assert sys._getframe().f_back is None'))
+        interps.destroy(i)
+    finally:
+        done.release()
+
+
+def subinterpreter(n):
+    import _thread
+    interps = _subinterpreters()
+    if interps is None:
+        return None
+    lejit = sys.modules.get('lejit')
+    out = []
+    for _ in range(n):
+        done = _thread.allocate_lock()
+        done.acquire()
+        if lejit is not None and lejit._started:
+            _thread.start_new_thread(lejit._core._run_frameless,
+                                     (_sub, interps, out, done))
+        else:
+            _thread.start_new_thread(_sub, (interps, out, done))
+        done.acquire()
+    return out
+
+
 CASES = [
     ('chain', [(5,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('nested', [(4,)], {'checked': 'needs lejit._core._run_frameless'}),
@@ -245,4 +286,5 @@ CASES = [
     ('clears', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('lines', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
     ('generators', [(4,)], {'checked': 'needs lejit._core._run_frameless'}),
+    ('subinterpreter', [(3,)], {'checked': 'needs lejit._core._run_frameless'}),
 ]
