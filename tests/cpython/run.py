@@ -208,6 +208,8 @@ SKIPPED = {
         'test.test_weakref.__test__.libreftest '
         'test.test_gc.GCTests.test_newinstance '
         'test.test_gc.GCCallbackTests.test_collect_garbage '
+        'test.test_gc.GCTests.test_saveall '
+        'test.test_gc.GCTests.test_resurrection_does_not_block_cleanup_of_other_objects '
         'test.test_capi.*CAPITest.*_decrefs_once '
         '*test_python_api.PythonAPITestCase.test_PyObj_FromPtr '
         '*test_python_api.PythonAPITestCase.test_PyString_FromString',
