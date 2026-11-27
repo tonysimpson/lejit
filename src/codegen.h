@@ -181,11 +181,13 @@ psyco_check_eval_breaker(PsycoObject *po);
    test (psyfunc.c) */
 EXTERNFN bool
 psyco_cannot_block(void *c_function);
-/* 'through_c' as psyco_leave_recursive_call's */
+/* 'through_c' as psyco_leave_recursive_call's; 'vfunc' is the function
+   called, or NULL (Python/frames.h:psyco_locals_map) */
 EXTERNFN vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
-                 struct stack_frame_info_s *finfo, int through_c);
+                 struct stack_frame_info_s *finfo, int through_c,
+                 vinfo_t *vfunc);
 #if LE_RESUMES_GENERATORS_DIRECTLY
 /* As psyco_call_psyco, to the compiled code at 'ventry' (run time), with
    'vframe' (run time) in the word above the callee's own slot, where the

@@ -655,6 +655,23 @@ psyco_build_frame(PsycoObject *caller, struct fncall_arg_s *fncall,
     return po;
 }
 
+/* LOC_INLINE_FUNC for a call of 'vfunc' (Python/pycheader.h) */
+static long
+inline_func_item(PsycoObject *po, vinfo_t *vfunc)
+{
+    int i;
+    if (vfunc == NULL)
+        return 0;
+    if (is_compiletime(vfunc->source))
+        return CompileTime_Get(vfunc->source)->value;
+    if (!is_runtime(vfunc->source))
+        return 0;
+    for (i = 0; i < po->vlocals.count; i++)
+        if (po->vlocals.items[i] == vfunc)
+            return ((long)i << 1) | 1;
+    return 0;
+}
+
 static vinfo_t *
 call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
                        vinfo_t *vfunc, int recursion)
@@ -674,12 +691,10 @@ call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
         v->array = array_new(TOTAL_LOC_INLINE + fncall->po_size);
         v->array->items[LOC_INLINE_CO] = vinfo_new(
             CompileTime_New((long)fncall->co)); /* borrowed, as above */
-        /* borrowed: the constant the call knows it by holds it */
+        /* borrowed: the constant the call knows it by holds it, or the
+           caller's stack does */
         v->array->items[LOC_INLINE_FUNC] = vinfo_new(CompileTime_NewSk(
-            sk_new(vfunc != NULL && is_compiletime(vfunc->source)
-                       ? CompileTime_Get(vfunc->source)->value
-                       : 0,
-                   SkFlagFixed)));
+            sk_new(inline_func_item(po, vfunc), SkFlagFixed)));
         fncall_store_arguments(fncall, v->array->items + TOTAL_LOC_INLINE);
         array_release(fncall->inputvinfos);
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EInline)), v);
@@ -1579,8 +1594,8 @@ call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
 
         /* get the run-time argument sources and push them on the stack
            and write the actual CALL */
-        result =
-            psyco_call_psyco(po, codebuf, sources, argcount, finfo, through_c);
+        result = psyco_call_psyco(po, codebuf, sources, argcount, finfo,
+                                  through_c, vfunc);
         PyMem_FREE(sources);
     }
     vinfo_decref(vbuiltins, po);
@@ -1751,7 +1766,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
                     (PyFunctionObject *)CompileTime_Get(vfunc->source)->value;
             codebuf = compile_callee(mypo, co);
             result = psyco_call_psyco(po, codebuf, sources, argcount, finfo,
-                                      through_c);
+                                      through_c, vfunc);
             PyMem_FREE(sources);
         }
     }

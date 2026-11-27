@@ -119,9 +119,8 @@ static PyFunctionObject *
 inlined_function(PsycoObject *po)
 {
     vinfo_t *v = po->vlocals.items[INDEX_LOC_INLINING];
-    return (PyFunctionObject *)CompileTime_Get(
-               v->array->items[LOC_INLINE_FUNC]->source)
-        ->value;
+    long f = CompileTime_Get(v->array->items[LOC_INLINE_FUNC]->source)->value;
+    return (f & 1) != 0 ? NULL : (PyFunctionObject *)f;
 }
 
 /* the entry after a record's first for the inlined frame 'caller' runs
@@ -1916,6 +1915,70 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     return f;
 }
 
+/* the function of code 'co' that 'map' of the call in 'slot' holds after
+   its locals (frames.h:locals_map_s), else NULL; borrowed, as the frame
+   that makes the call holds it */
+static PyFunctionObject *
+map_function(stack_frame_info_t **slot, struct locals_map_s *map,
+             const long *regs, PyCodeObject *co)
+{
+    long *p;
+    vinfo_t *vi;
+    PyObject *o, *t, *val, *tb;
+    int i;
+    if (map == NULL || !map->func)
+        return NULL;
+    p = map->items;
+    for (i = 0; i < map->nvalues; i++) vinfo_xdecref(lm_vinfo(&p, regs), NULL);
+    vi = lm_vinfo(&p, regs);
+    if (vi == NULL)
+        return NULL;
+    PyErr_Fetch(&t, &val, &tb);
+    o = direct_xobj_vinfo(vi, (char *)slot - map->below);
+    vinfo_decref(vi, NULL);
+    if (o == NULL)
+        PyErr_Clear();
+    PyErr_Restore(t, val, tb);
+    if (o == NULL)
+        return NULL;
+    Py_DECREF(o);
+    if (!PyFunction_Check(o) ||
+        ((PyFunctionObject *)o)->func_code != (PyObject *)co)
+        return NULL;
+    return (PyFunctionObject *)o;
+}
+
+/* the function of entry 'entry' of the record in 'slot' while its call
+   runs, where it is known: the record's, or one the caller holds at run
+   time (map_function); else NULL */
+static PyFunctionObject *
+record_function(stack_frame_info_t **slot, long entry)
+{
+    stack_frame_info_t *rec = *slot, *in;
+    long regs[REG_TOTAL];
+    code_t *ip;
+    if (rec[entry].func != NULL)
+        return rec[entry].func;
+    if (entry == 0 && rec->nargs >= 0 && rec->link_stack_depth != 0)
+        /* a compiled callee: its caller's map, at the call */
+        return rec->back_locals == NULL || rec->back_locals->retaddr != NULL
+                   ? NULL
+                   : map_function(slot, rec->back_locals, NULL, rec->co);
+    /* an inlined frame, in the compiled call it makes or in its own record
+       (as slot_locals reads its locals) */
+    in = rec->link_stack_depth == 0 ? rec : rec + 1;
+    if (in != rec + entry || in->own_locals == NULL)
+        return NULL;
+    if (in == rec && rec->back_locals != NULL &&
+        rec->back_locals->retaddr != NULL) {
+        if (!slot_registers(slot, regs, &ip) ||
+            ip != rec->back_locals->retaddr)
+            return NULL;
+        return map_function(slot, in->own_locals, regs, in->co);
+    }
+    return map_function(slot, in->own_locals, NULL, in->co);
+}
+
 /* the frame of the frameless run 'fr''s own frame, kept until the run
    ends (root_ended), keyed by its slot; at 'lasti'. A new reference. */
 static PyFrameObject *
@@ -1968,8 +2031,8 @@ root_ended(FrameRuntime *fr)
     drop_activation(a);
 }
 
-/* the function of the compiled frame of 'tag' (kept_frame) where its
-   record knows it, else NULL */
+/* the function of the compiled frame of 'tag' (kept_frame) where it is
+   known, else NULL */
 static PyFunctionObject *
 tag_function(long tag)
 {
@@ -1977,7 +2040,7 @@ tag_function(long tag)
     if (TAG_ROOT(tag) != NULL)
         return TAG_ROOT(tag)->func;
     entry = (-tag) & (sizeof(long) - 1);
-    return (*(stack_frame_info_t **)(tag + entry))[entry].func;
+    return record_function((stack_frame_info_t **)(tag + entry), entry);
 }
 
 /* 'tag' is the slot holding the frame's record, less one per inlined
@@ -2000,7 +2063,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         return keep_frame(
             own, slot, 0,
             act_find(own) != NULL ? NULL : return_address(own, rec), co,
-            globals, rec->func, lasti);
+            globals, record_function(slot, 0), lasti);
     }
     if ((entry == 1 && rec->nargs >= 0 && finfo_last(rec) == rec + 1 &&
          (rec + 1)->co == (PyCodeObject *)co) ||
@@ -2009,7 +2072,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         /* an inlined frame, in the compiled call it makes or in its own
            record: its parent's slot is the one holding them */
         return keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals,
-                          rec[entry].func, lasti);
+                          record_function(slot, entry), lasti);
     return NULL;
 }
 
@@ -2364,7 +2427,7 @@ psyco_innermost_function(PyCodeObject *co)
     FrameRuntime *run;
     stack_frame_info_t **slot = innermost_slot(&run);
     if (slot != NULL)
-        return (*slot)->co == co ? (*slot)->func : NULL;
+        return (*slot)->co == co ? record_function(slot, 0) : NULL;
     if (run == NULL || run->psy_code != co)
         return NULL;
     return run->frame != NULL ? le_frame_function(run->frame) : run->func;
@@ -5494,7 +5557,12 @@ psyco_frames_init(void)
    its end, would be stale. */
 
 struct resume_s {
+    /* NULL: ceval goes on with a frame of the thread's of 'func' made by
+       psyco_resume_run, with 'builtins' (borrowed, as the call holds
+       them) */
     PyFrameObject *f;
+    PyFunctionObject *func;
+    PyObject *builtins;
     /* the frame the catcher word held, if not 'f': given the locals now */
     PyFrameObject *catcher;
     stack_frame_info_t **slot; /* the compiled frame's record, or NULL */
@@ -5594,7 +5662,7 @@ innermost_slot(FrameRuntime **run)
 DEFINEFN
 struct resume_s *
 psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
-                   long nvalues, PyObject **word, long frameless)
+                   long nvalues, PyObject **word, long frame)
 {
     FrameRuntime *run;
     PyFrameObject *c = word != NULL ? (PyFrameObject *)*word : NULL;
@@ -5722,12 +5790,21 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         Py_INCREF(c);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
-    else if (frameless)
+    else if (frame == RESUME_NO_FRAME)
         st->f = NULL; /* the caller makes the frame it needs */
+#if LE_HAS_INTERPRETER_FRAME
+    else if (frame == RESUME_THREAD_FRAME && st->slot != NULL &&
+             (*st->slot)->co == co && (*st->slot)->func != NULL) {
+        /* none was asked for: psyco_resume_run makes the frame */
+        st->f = NULL;
+        st->func = (*st->slot)->func;
+        st->builtins = builtins;
+    }
+#endif
     else {
         st->f = le_pyframe_new(PyThreadState_GET(), co, globals,
                                st->slot != NULL && (*st->slot)->co == co
-                                   ? (*st->slot)->func
+                                   ? record_function(st->slot, 0)
                                    : NULL);
         if (st->f == NULL) {
             Py_XDECREF(c);
@@ -5849,12 +5926,55 @@ catcher_write_locals(PyFrameObject *catcher, le_frame_t *frame, int nlocals)
     psyco_frame_write_locals(catcher, 0, locals, nlocals);
 }
 
+#if LE_HAS_INTERPRETER_FRAME
+/* The frame of the thread's a compiled callee goes on with in ceval when
+   nothing stands for its call's frame (psyco_resume_begin), as CPython's
+   call has it: no frame object, which is made only if asked for. Where
+   ceval clears and pops the frames it runs, it is on the thread's data
+   stack; else it is the caller's, given back by thread_frame_end. NULL if
+   there is no memory. */
+static le_frame_t *
+thread_frame_new(PyThreadState *ts, struct resume_s *st)
+{
+    PyCodeObject *co = (PyCodeObject *)st->func->func_code;
+    le_frame_t *f;
+#if LE_HAS_EVAL_FRAME_POPS
+    f = le_frame_push_room(ts, co->co_framesize);
+#else
+    (void)ts;
+    f = PyMem_Malloc(offsetof(le_frame_t, localsplus) +
+                     (co->co_nlocalsplus + co->co_stacksize) *
+                         sizeof(PyObject *));
+#endif
+    if (f == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    le_frame_init(f, co, st->func, 0, FRAME_OWNED_BY_THREAD);
+    le_frame_set_builtins(f, st->builtins);
+    return f;
+}
+
+#if !LE_HAS_EVAL_FRAME_POPS
+/* ceval has run it to its end: cleared as CPython clears a call's frame,
+   a frame object that outlives it taking it, and freed */
+static void
+thread_frame_end(le_frame_t *f)
+{
+    PyCodeObject *co = LE_FRAME_CODE(f);
+    le_frame_clear(f);
+    Py_DECREF(co);
+    PyMem_Free(f);
+}
+#endif
+#endif
+
 DEFINEFN
 PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 {
     PyFrameObject *f = st->f, *cur;
-    le_frame_t *frame = le_frame_of(f);
+    le_frame_t *frame;
     PyThreadState *ts = PyThreadState_GET();
     int nlocals = st->nvalues - nstack;
     int i, marked;
@@ -5863,12 +5983,33 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     hook_t trace = {ts->c_tracefunc, ts->c_traceobj};
     hook_t profile = {ts->c_profilefunc, ts->c_profileobj};
     struct hidden_s hidden = {st->slot, hidden_frames};
-    FrameRuntime *fr = st->root != NULL ? st->root
-                       : st->slot == NULL
-                           ? psyco_frame_start_get(le_frame_of(f))
-                           : NULL;
-    extra_assert(nlocals == le_code_nlocalsplus(le_pyframe_code(f)));
-    extra_assert(nstack <= le_pyframe_code(f)->co_stacksize);
+    FrameRuntime *fr;
+#if LE_HAS_INTERPRETER_FRAME
+    if (f == NULL) {
+        frame = thread_frame_new(ts, st);
+        if (frame == NULL) {
+            for (i = 0; i < nlocals; i++) Py_XDECREF(st->values[i]);
+            for (i = 0; i < nstack; i++) {
+                PyObject *v = st->values[nlocals + i];
+#if LE_HAS_TAGGED_LASTI
+                if (((uintptr_t)v & Py_INT_TAG) == Py_INT_TAG)
+                    continue;
+#endif
+                Py_XDECREF(v);
+            }
+            Py_XDECREF(st->catcher);
+            PyMem_Free(st);
+            return NULL;
+        }
+    }
+    else
+#endif
+        frame = le_frame_of(f);
+    fr = st->root != NULL   ? st->root
+         : st->slot == NULL ? psyco_frame_start_get(frame)
+                            : NULL;
+    extra_assert(nlocals == le_code_nlocalsplus(le_frame_code(frame)));
+    extra_assert(nstack <= le_frame_code(frame)->co_stacksize);
 
     resume_locals(st, frame, nlocals);
     for (i = 0; i < nstack; i++) {
@@ -5880,11 +6021,15 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 #endif
             le_frame_word_put(frame, nlocals + i, v);
     }
+#if LE_HAS_INTERPRETER_FRAME
+    le_gen_frame_set_depth(frame, (int)nstack);
+#else
     le_frame_set_stack_depth(f, (int)nstack);
-    le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+#endif
+    le_frame_set_lasti(frame, le_lasti_of((int)lasti));
 #if LE_HAS_FRAME_INSTR_PTR
     /* ceval goes on from the instruction at the place, not after it */
-    LE_FRAME_PLACE(le_frame_of(f))++;
+    LE_FRAME_PLACE(frame)++;
 #endif
 #if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
@@ -5913,10 +6058,11 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     }
     /* ceval puts tstate->frame back to f_back: a kept frame's, an emulated
        frame, is given back after; frame_get_back finds it meanwhile */
-    kept_back = f->f_back;
-    cur = le_frame_current(ts) == NULL ? NULL
-                                       : le_frame_object(le_frame_current(ts));
-    if ((st->slot != NULL || st->root != NULL) && !st->gen &&
+    kept_back = f == NULL ? NULL : f->f_back;
+    cur = f == NULL || le_frame_current(ts) == NULL
+              ? NULL
+              : le_frame_object(le_frame_current(ts));
+    if (f != NULL && (st->slot != NULL || st->root != NULL) && !st->gen &&
         kept_back != cur) {
         Py_XINCREF(cur);
         f->f_back = cur;
@@ -5927,18 +6073,31 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     (void)marked;
     /* the events of a frame that runs past RESUME, if the code gives
        none yet; without them it still runs */
-    if (le_code_instrument(le_frame_of(f)) < 0)
+    if (le_code_instrument(frame) < 0)
         PyErr_Clear();
-    result = le_pyframe_run_to_end(ts, f);
+    /* ceval clears and pops a frame of the thread's */
+    result = f == NULL ? _PyEval_EvalFrameDefault(ts, frame, 0)
+                       : le_pyframe_run_to_end(ts, f);
     /* the real frame is gone: LeCode_Run returns the result as it is */
     if (fr != NULL && fr->frame != NULL) {
         run_unhash(fr);
         fr->frame = NULL;
         fr->popped = 1;
     }
+#elif LE_HAS_INTERPRETER_FRAME
+    if (f == NULL) {
+        (void)marked;
+        result = le_eval_frame_default(frame);
+        thread_frame_end(frame);
+    }
+    else {
+        marked = le_pyframe_eval_begin(ts, f);
+        result = le_eval_frame_default(frame);
+        le_pyframe_eval_end(f, marked);
+    }
 #else
     marked = le_pyframe_eval_begin(ts, f);
-    result = le_eval_frame_default(le_frame_of(f));
+    result = le_eval_frame_default(frame);
     le_pyframe_eval_end(f, marked);
 #endif
     if (kept_back != NULL) {
@@ -5967,7 +6126,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         if (a != NULL)
             drop_activation(a);
     }
-    Py_DECREF(f);
+    Py_XDECREF(f);
     PyMem_Free(st);
     return result;
 }
