@@ -3,7 +3,8 @@
 # frame (eval_hook.c:le_frameless_vectorcall), keywords named by equal
 # strings, and the calls that must go on as CPython's: argument errors,
 # keywords named by a str subclass, other globals or builtins, tracing,
-# generators, defaults replaced while the call runs.
+# generators, defaults replaced while the call runs, an __exit__ that
+# frees the traceback it was lent.
 import functools, sys, types
 
 
@@ -126,6 +127,35 @@ def star_arguments(n):
              for i in range(n)])
 
 
+class DropsTraceback:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, value, tb):
+        value.with_traceback(None)
+        # what tb's memory would be taken by if it were freed now
+        junk = [(i, i, i, i, i) for i in range(1000)]
+        return type(tb) is types.TracebackType and tb.tb_lineno > 0 and len(
+            junk) and kind is ValueError
+
+
+# a with statement outside a function runs in ceval, which calls
+# __exit__ from C with the traceback lent
+WITH_IN_CEVAL = compile('with cm:\n    raise ValueError(i)\nout.append(i)',
+                        '<with>', 'exec')
+
+
+def with_in_ceval(i, out):
+    exec(WITH_IN_CEVAL, {'cm': DropsTraceback(), 'i': i, 'out': out})
+
+
+def exit_drops_traceback(n):
+    out = []
+    for i in range(n):
+        with_in_ceval(i, out)
+    return out
+
+
 def who():
     return sys._getframe(1).f_code.co_name
 
@@ -144,5 +174,6 @@ CASES = [
     ('traced', [(3,)], {}),
     ('generators', [(3,)], {}),
     ('star_arguments', [(3,)], {}),
+    ('exit_drops_traceback', [(3,)], {}),
     ('caller_frames', [(3,)], {}),
 ]
