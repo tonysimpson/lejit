@@ -95,7 +95,7 @@ le_gen_record_new(PyObject *func, long start)
         return PyErr_NoMemory();
     memset(mem, 0, GC_HEAD_SIZE);
     r = (le_gen_record_t *)(mem + GC_HEAD_SIZE);
-    PyObject_Init((PyObject *)r, &le_gen_record_type);
+    PyObject_InitVar((PyVarObject *)r, &le_gen_record_type, n);
     LE_STAT(le_stat_gen_records[0]++);
     r->gi_exc_state.exc_value = NULL;
     r->gi_exc_state.previous_item = NULL;
@@ -463,12 +463,18 @@ le_gen_record_send_status(PyThreadState *ts, PyObject *rec, PyObject *result,
 
 /* Dropped: as CPython drops a generator in the same state. Not started,
    its close only marks it ended, so its frame is cleared here; paused, it
-   escapes and the generator is dropped, which closes it. */
+   escapes and the generator is dropped, which closes it. Compiled code
+   that knew the record's type calls this even after it has escaped, so an
+   escaped one goes to its generator's dealloc. */
 static void
 record_dealloc(PyObject *self)
 {
     le_gen_record_t *r = (le_gen_record_t *)self;
     PyObject *code;
+    if (record_escaped(r)) {
+        Py_TYPE(self)->tp_dealloc(self);
+        return;
+    }
     if (r->gi_frame_state == FRAME_CREATED) {
         r->gi_frame_state = FRAME_CLEARED;
         frame_clear(le_record_frame(r));
