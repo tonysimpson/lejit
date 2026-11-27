@@ -6,32 +6,50 @@ on:
   # a draft runs nothing: its jobs are all skipped until it is marked ready
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  # by hand, on any branch: the pull request set, or with full every job, as
-  # main runs
+  # by hand, on any branch: the jobs and versions chosen
   workflow_dispatch:
     inputs:
-      full:
-        description: Run every job, as on main
-        type: boolean
-        default: false
+      jobs:
+        description: >-
+          Jobs, separated by spaces or commas: check (make check, with
+          tests/cpython), encoder, release, build, install, detectors, wheels,
+          format, lint, or all. Empty runs format and lint, as a pull request
+          does
+        type: string
+        default: ""
+      versions:
+        description: >-
+          Versions for the jobs that run on several, e.g. "3.7 3.15". Empty
+          runs each job's usual set
+        type: string
+        default: ""
 
-# a newer push to a pull request cancels its older run; every other run has
-# a group of its own, since a group's waiting run is cancelled when another
-# joins, whatever cancel-in-progress says
+# each pull request has a group, and pushes to main share one: a newer run
+# cancels the older, running or waiting, so only the latest survives. A run
+# started by hand has a group of its own, since a group's waiting run is
+# cancelled when another joins, whatever cancel-in-progress says
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
-  # what this run tests: main and full runs get every job; a pull request
-  # gets format, and lint unless it changes only docs and tests
+  # what this run tests: main gets every job on every version; a pull
+  # request gets format, and lint unless it changes only docs and tests; a
+  # run by hand gets the jobs and versions chosen. `jobs` lists the jobs to
+  # run, and each job that runs on several versions has its versions here,
+  # empty when it doesn't run
   changes:
     name: changes
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     outputs:
-      full: ${{ steps.what.outputs.full }}
+      jobs: ${{ steps.what.outputs.jobs }}
+      check: ${{ steps.what.outputs.check }}
+      release: ${{ steps.what.outputs.release }}
       build: ${{ steps.what.outputs.build }}
+      install-newer: ${{ steps.what.outputs.install-newer }}
+      install-uv: ${{ steps.what.outputs.install-uv }}
+      detectors-newer: ${{ steps.what.outputs.detectors-newer }}
     steps:
       # a pull request's checkout is its merge into the base: the first
       # parent is the base
@@ -40,22 +58,72 @@ jobs:
           fetch-depth: 2
       - id: what
         env:
-          FULL: ${{ (github.event_name == 'push' || inputs.full) && 'true' || 'false' }}
           EVENT: ${{ github.event_name }}
+          JOBS: ${{ inputs.jobs }}
+          VERSIONS: ${{ inputs.versions }}
         run: |
-          echo "full=$FULL" >> "$GITHUB_OUTPUT"
           changed=$(git diff --name-only HEAD^1 HEAD)
           if [ "$EVENT" != pull_request ] ||
              grep -qvE '^(docs/|tests/|[^/]*\.md$)' <<< "$changed"; then
-            echo build=true >> "$GITHUB_OUTPUT"
-          else
-            echo build=false >> "$GITHUB_OUTPUT"
+            export LINT=true
           fi
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, os, re, sys
+
+          every = ["check", "encoder", "release", "build", "install",
+                   "detectors", "wheels", "format", "lint"]
+          # each job that runs on several versions: the name chosen by, and
+          # its versions
+          matrices = {
+              "check": ("check", ["3.7.17", "3.8.20", "3.9.21", "3.10.16",
+                                  "3.11.11", "3.12.9", "3.13.2", "3.14.10"]),
+              "release": ("release", ["3.10.16", "3.11.11", "3.12.9"]),
+              "build": ("build", ["3.7.17", "3.8.20", "3.9.21", "3.10.16",
+                                  "3.11.11", "3.12.9", "3.13.2", "3.14.10",
+                                  "3.15.2"]),
+              "install-newer": ("install", ["3.11.11", "3.12.9", "3.13.2",
+                                            "3.14.10", "3.15.2"]),
+              "install-uv": ("install", ["3.8", "3.9", "3.10", "3.11", "3.12",
+                                         "3.13", "3.14", "3.15"]),
+              "detectors-newer": ("detectors", ["3.15.2"]),
+          }
+
+          event = os.environ["EVENT"]
+          asked = re.split(r"[\s,]+", os.environ["JOBS"].strip())
+          if event == "push" or asked == ["all"]:
+              jobs = every
+          elif event == "pull_request" or asked == [""]:
+              jobs = ["format", "lint"]
+          else:
+              unknown = set(asked) - set(every)
+              if unknown:
+                  sys.exit("::error::no such job: " + " ".join(sorted(unknown)))
+              jobs = [job for job in every if job in asked]
+          if not os.environ.get("LINT"):
+              jobs = [job for job in jobs if job != "lint"]
+          print("jobs=" + json.dumps(jobs))
+
+          # "3.7" chooses 3.7.17, and "3.1" chooses nothing
+          chosen = re.split(r"[\s,]+", os.environ["VERSIONS"].strip())
+          if event != "workflow_dispatch" or chosen == [""]:
+              chosen = None
+          def picked(version):
+              parts = version.split(".")
+              return chosen is None or any(
+                  parts[:len(c.split("."))] == c.split(".") for c in chosen)
+          used = False
+          for job, (name, versions) in matrices.items():
+              run = [v for v in versions if name in jobs and picked(v)]
+              used = used or bool(run)
+              print(job + "=" + json.dumps(run))
+          if chosen and not used:
+              sys.exit("::error::no job chosen runs on those versions")
+          EOF
 
   check:
     name: make check (${{ matrix.python }})
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.check != '[]'
     runs-on: ubuntu-24.04
     # the official images give exact CPython releases, built as shared
     # libraries with their headers
@@ -63,8 +131,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9",
-                 "3.13.2", "3.14.10"]
+        python: ${{ fromJSON(needs.changes.outputs.check) }}
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi, libunwind, setuptools and cffi
@@ -100,7 +167,7 @@ jobs:
   encoder:
     name: make encoder-test
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'encoder')
     runs-on: ubuntu-24.04
     container: python:3.10.16-bookworm
     steps:
@@ -117,13 +184,13 @@ jobs:
   release:
     name: release build (${{ matrix.python }})
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.release != '[]'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10.16", "3.11.11", "3.12.9"]
+        python: ${{ fromJSON(needs.changes.outputs.release) }}
     defaults:
       run:
         shell: bash
@@ -144,19 +211,18 @@ jobs:
       - name: tests/jit
         run: python tests/jit/run.py --release
 
-  # every supported version, on full runs: the checked and release builds
-  # must compile and load
+  # every supported version: the checked and release builds must compile
+  # and load
   build:
     name: build (${{ matrix.python }})
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.build != '[]'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9",
-                 "3.13.2", "3.14.10", "3.15.2"]
+        python: ${{ fromJSON(needs.changes.outputs.build) }}
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi, libunwind and setuptools
@@ -174,13 +240,13 @@ jobs:
   install-newer:
     name: install (${{ matrix.python }})
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.install-newer != '[]'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11.11", "3.12.9", "3.13.2", "3.14.10", "3.15.2"]
+        python: ${{ fromJSON(needs.changes.outputs.install-newer) }}
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi and libunwind
@@ -207,12 +273,12 @@ jobs:
   install-uv:
     name: install (uv ${{ matrix.python }})
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.install-uv != '[]'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+        python: ${{ fromJSON(needs.changes.outputs.install-uv) }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v10.3.3
@@ -247,7 +313,7 @@ jobs:
   install-main:
     name: install only (CPython main)
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'install')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -281,13 +347,13 @@ jobs:
   detectors-newer:
     name: detectors (${{ matrix.python }})
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: needs.changes.outputs.detectors-newer != '[]'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.15.2"]
+        python: ${{ fromJSON(needs.changes.outputs.detectors-newer) }}
     steps:
       - uses: actions/checkout@v4
       - name: Detectors agree with the source
@@ -298,6 +364,7 @@ jobs:
   format:
     name: make format-check
     needs: changes
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'format')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -316,7 +383,7 @@ jobs:
   lint:
     name: make lint (3.10.16)
     needs: changes
-    if: needs.changes.outputs.build == 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'lint')
     runs-on: ubuntu-24.04
     container: python:3.10.16-bookworm
     continue-on-error: true
@@ -333,7 +400,7 @@ jobs:
   wheels:
     name: wheels (built, not released)
     needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: contains(fromJSON(needs.changes.outputs.jobs), 'wheels')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
