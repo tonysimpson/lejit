@@ -42,6 +42,8 @@ typedef struct {
     /* one per code unit: compiled code tests eval_breaker before that
        instruction. Allocated after the merge points. */
     unsigned char *breaker_checks;
+    /* psyco_inline_merge_points, or NULL */
+    PyObject *inline_view;
     /*
     NULL terminated.
     on allocation we extend this array to count(mergepoints) + 1.
@@ -54,6 +56,7 @@ static void
 report_free(co_report_t *report)
 {
     Py_ssize_t i;
+    Py_XDECREF(report->inline_view);
     for (i = 0; i < report->mergepoint_count; i++) {
         psyco_ge_changed(&report->mergepoints[i].entries);
         Py_XDECREF(report->mergepoints[i].entries.fatlist);
@@ -518,6 +521,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
         flags |= MP_FLAGS_INLINABLE;
     report->flags = flags;
     report->fuse_stopped = 0;
+    report->inline_view = NULL;
     report->mergepoint_count = mergepoint_count;
     report->unit_count = entry_count_len - 1;
     report->joins = NULL;
@@ -619,6 +623,11 @@ compiled_intrinsic_2(int arg)
 #endif
 }
 
+static int
+fusable_yield(PyCodeObject *co);
+static int
+inlinable_generator(PyCodeObject *co, le_code_t c, int yield);
+
 static PyObject *
 _build_merge_points(PyCodeObject *co)
 {
@@ -698,6 +707,11 @@ _build_merge_points(PyCodeObject *co)
         return NULL;
     if (resumable)
         report->flags |= MP_FLAGS_RESUMABLE;
+    if (co->co_flags & CO_GENERATOR) {
+        int yield = fusable_yield(co);
+        if (yield >= 0 && inlinable_generator(co, c, yield))
+            report->flags |= MP_FLAGS_GEN_INLINABLE;
+    }
     {
         PyObject *capsule = PyCapsule_New(report, NULL, report_destructor);
         if (capsule == NULL)
@@ -756,18 +770,19 @@ yield_has_handler(PyCodeObject *co, le_code_t c, int yield)
    (psyfunc.c:psyco_call_genexpr), as a generator expression's: a plain
    generator with one yield (3.7 also allows a yield expression inside a
    generator expression), no yield from, and no handler around its yield,
-   so that a consumer stopping early can drop it with no code run */
-DEFINEFN int
-psyco_is_fusable_generator(PyCodeObject *co)
+   so that a consumer stopping early can drop it with no code run. Where
+   its yield is, or -1. */
+static int
+fusable_yield(PyCodeObject *co)
 {
     le_code_t c;
     int pos, yields = 0, yield = -1;
     if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
                          CO_ITERABLE_COROUTINE)) != CO_GENERATOR)
-        return 0;
+        return -1;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: made as a plain generator */
-        return 0;
+        return -1;
     }
     c = le_code(co);
     for (pos = 0; pos < c.size;) {
@@ -779,9 +794,132 @@ psyco_is_fusable_generator(PyCodeObject *co)
             yield = at;
         }
         else if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
-            return 0;
+            return -1;
     }
-    return yields == 1 && !yield_has_handler(co, c, yield);
+    return yields == 1 && !yield_has_handler(co, c, yield) ? yield : -1;
+}
+
+DEFINEFN int
+psyco_is_fusable_generator(PyCodeObject *co)
+{
+    return fusable_yield(co) >= 0;
+}
+
+/* whether the code 'co' has no exception handler but the one around a
+   generator's whole body that applies PEP 479 */
+DEFINEFN int
+psyco_handlers_only_pep479(PyCodeObject *co)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    Py_ssize_t at = 0;
+    le_handler_t h;
+    while (le_handler_next(co, &at, &h)) {
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+        le_instr_t in = le_instr(le_code(co), h.handler);
+        if (in.op == CALL_INTRINSIC_1 &&
+            in.arg == INTRINSIC_STOPITERATION_ERROR)
+            continue;
+#endif
+        return 0;
+    }
+#else
+    le_code_t c = le_code(co);
+    int pos;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        switch (in.op) {
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+            case SETUP_ASYNC_WITH:
+                return 0;
+        }
+    }
+#endif
+    return 1;
+}
+
+/* the successors of the instruction at 'unit' for inlinable_generator's
+   walk, in units; the yield's way on is none */
+static int
+walk_successors(le_code_t c, int unit, int next[2])
+{
+    le_instr_t in = le_instr(c, unit * LE_UNIT);
+    int f = le_op_flags(in.op), n = 0;
+    if (in.op == YIELD_VALUE || (f & LE_OPF_STOPS))
+        return 0;
+    if (f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
+        next[n++] = in.target / LE_UNIT;
+    if (!(f & LE_OPF_JUMPS) && in.next < c.size)
+        next[n++] = in.next / LE_UNIT;
+    return n;
+}
+
+/* whether a for loop can compile the generator of code 'co' into its own
+   body (psyfunc.c:psyco_gen_inline_next), each step running the code from
+   where it paused to its one yield: fusable, with no exception handler but
+   PEP 479's around the whole body nor a loop block (an inlined frame's
+   exceptions go straight to its caller), no cycle that misses the yield
+   (an inlined frame has no merge points: psyco_inline_merge_points), and
+   no heavier than a function LeJIT inlines. 'yield' is where the yield
+   is. */
+static int
+inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
+{
+    int units = c.size / LE_UNIT, pos, top, weight = 0, ok = 1, r;
+    int roots[2], *work;
+    unsigned char *state; /* 0 unseen, 1 on the walk's path, 2 done */
+    if (!psyco_handlers_only_pep479(co))
+        return 0;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        if (in.op == BREAK_LOOP || in.op == CONTINUE_LOOP)
+            return 0;
+        if (!IS_LIGHT_INSTR(in.op))
+            weight++;
+    }
+    if (weight > INLINE_MAXIMUM_WEIGHT)
+        return 0;
+    /* depth-first from the start and from after the yield: an edge to an
+       instruction on the walk's path closes a cycle. Each entry of the
+       work list is a unit and how many of its successors are walked. */
+    work = PyMem_Malloc((units + 1) * (2 * sizeof(int) + 1));
+    if (work == NULL)
+        return 0;
+    state = (unsigned char *)(work + 2 * (units + 1));
+    memset(state, 0, units + 1);
+    roots[0] = 0;
+    roots[1] = le_instr(c, yield).next / LE_UNIT;
+    for (r = 0; r < 2 && ok; r++) {
+        if (roots[r] >= units || state[roots[r]] != 0)
+            continue;
+        top = 0;
+        state[roots[r]] = 1;
+        work[0] = roots[r];
+        work[1] = 0;
+        top = 1;
+        while (ok && top > 0) {
+            int next[2], u = work[2 * (top - 1)];
+            int n = walk_successors(c, u, next);
+            int k = work[2 * (top - 1) + 1]++;
+            if (k >= n) {
+                state[u] = 2;
+                top--;
+            }
+            else if (state[next[k]] == 1)
+                ok = 0;
+            else if (state[next[k]] == 0) {
+                state[next[k]] = 1;
+                work[2 * top] = next[k];
+                work[2 * top + 1] = 0;
+                top++;
+            }
+        }
+    }
+    PyMem_Free(work);
+    return ok;
 }
 
 /* whether a YIELD_VALUE can run while an exception handler's block is
@@ -1218,8 +1356,32 @@ psyco_next_merge_point(PyObject *mergepoints, int position)
 DEFINEFN mergepoint_t *
 psyco_first_merge_point(PyObject *mergepoints)
 {
-    return &(((co_report_t *)PyCapsule_GetPointer(mergepoints, NULL))
-                 ->mergepoints[0]);
+    co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
+    if (PyCapsule_GetContext(mergepoints) != NULL)
+        return &report->mergepoints[report->mergepoint_count];
+    return &report->mergepoints[0];
+}
+
+/* The report 'mergepoints' seen with no merge points, only its sentinel:
+   for a generator compiled into its consumer's loop
+   (pycompiler.c:pyc_data_build), whose state no merge point may snapshot,
+   as an inlined frame's never is. Its breaker checks, join points and flags
+   are the report's own. Borrowed: the report keeps it. NULL if out of
+   memory. */
+DEFINEFN PyObject *
+psyco_inline_merge_points(PyObject *mergepoints)
+{
+    co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
+    if (report->inline_view == NULL) {
+        PyObject *view = PyCapsule_New(report, NULL, NULL);
+        if (view == NULL || PyCapsule_SetContext(view, report) < 0) {
+            Py_XDECREF(view);
+            PyErr_Clear();
+            return NULL;
+        }
+        report->inline_view = view;
+    }
+    return report->inline_view;
 }
 
 DEFINEFN mergepoint_t *

@@ -86,6 +86,12 @@
 #define GENEXPR_SUM_FLOAT 10   /* acc a float, the compensation a double */
 #define GENEXPR_SUM_COMPLEX 11 /* acc the complex sum's state */
 #define GENEXPR_SUM_GENERIC 12 /* plain +, for good */
+/* A generator compiled into the for loop that steps it
+   (psyfunc.c:psyco_gen_inline_next), inlined there from where it paused to
+   its yield, which leaves it paused in the loop's virtual generator and
+   gives the loop's FOR_ITER the value; its return ends it. acc is
+   unused. */
+#define GENEXPR_INLINED 13
 #define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)
 /* the code whose body may run compiled on its own frame, with the slots
    above (psyco_generator_mode) */

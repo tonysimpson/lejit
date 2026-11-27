@@ -230,6 +230,57 @@ PsycoGenexpr_Check(vinfo_t *v)
            VirtualTime_Get(v->source) == &psyco_pending_genexpr;
 }
 
+static source_virtual_t psyco_inline_gen;
+
+static bool
+compute_inline_gen(PsycoObject *po, vinfo_t *v)
+{
+    /* psyfunc.c:gen_inlinable keeps it where nothing can */
+    (void)po;
+    (void)v;
+    psyco_fatal_msg("an inlined generator made real");
+    return false;
+}
+
+DEFINEFN void
+PsycoInlineGen_FromPending(PsycoObject *po, vinfo_t *v, vinfo_t *func,
+                           int nwords)
+{
+    vinfo_array_t *old = v->array;
+    int i;
+    v->array = array_new(iINLGEN_WORDS + nwords);
+    v->array->items[iOB_TYPE] = old->items[iOB_TYPE];
+    v->array->items[iINLGEN_CODE] = old->items[iGENEXPR_CODE];
+    v->array->items[iINLGEN_PLACE] = vinfo_new(
+        CompileTime_NewSk(sk_new(INLGEN_RUNNING, SkFlagFixed)));
+    v->array->items[iINLGEN_FUNC] = func;
+    for (i = iGENEXPR_FUNC; i <= iGENEXPR_GLOBALS; i++)
+        vinfo_xdecref(old->items[i], po);
+    array_release(old);
+    v->source = VirtualTime_New(&psyco_inline_gen);
+}
+
+DEFINEFN bool
+PsycoInlineGen_Check(vinfo_t *v)
+{
+    return is_virtualtime(v->source) &&
+           VirtualTime_Get(v->source) == &psyco_inline_gen;
+}
+
+DEFINEFN long
+PsycoInlineGen_Place(vinfo_t *v)
+{
+    return CompileTime_Get(v->array->items[iINLGEN_PLACE]->source)->value;
+}
+
+DEFINEFN void
+PsycoInlineGen_SetPlace(PsycoObject *po, vinfo_t *v, long place)
+{
+    vinfo_decref(v->array->items[iINLGEN_PLACE], po);
+    v->array->items[iINLGEN_PLACE] =
+        vinfo_new(CompileTime_NewSk(sk_new(place, SkFlagFixed)));
+}
+
 #if LE_RESUMES_GENERATORS_DIRECTLY
 static source_virtual_t psyco_virtual_gen;
 
@@ -784,6 +835,9 @@ psy_funcobject_init(void)
     INIT_SVIRTUAL_NOCALL(psyco_computed_function, compute_function, 1);
     /* a generator has an identity: made real before any call */
     INIT_SVIRTUAL_NOCALL(psyco_pending_genexpr, compute_genexpr, 1);
+    /* a weight of nothing: at a merge point the nested weight's limit would
+       make it real */
+    INIT_SVIRTUAL_NOCALL(psyco_inline_gen, compute_inline_gen, 0);
 #if LE_RESUMES_GENERATORS_DIRECTLY
     INIT_SVIRTUAL_NOCALL(psyco_virtual_gen, compute_vgen, 1);
 #endif

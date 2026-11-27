@@ -47,6 +47,15 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *
 psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
                    vinfo_t *comp);
+/* generators compiled into the for loop that steps them (GENEXPR_INLINED):
+   FOR_ITER's step, the yield, and the end of the generator's frame by a
+   return or an exception */
+EXTERNFN int
+psyco_gen_inline_next(PsycoObject *po, vinfo_t *vgen, vinfo_t **out);
+EXTERNFN PsycoObject *
+psyco_gen_inline_yield(PsycoObject *po, vinfo_t *value);
+EXTERNFN void
+psyco_gen_inline_ended(PsycoObject *po);
 #if LE_RESUMES_GENERATORS_DIRECTLY
 /* compiled code's step of the generator 'vgen', as a for loop's */
 EXTERNFN vinfo_t *

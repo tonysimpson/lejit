@@ -1677,35 +1677,26 @@ pending_code(vinfo_t *vgen)
     return (PyCodeObject *)CompileTime_Get(vcode->source)->value;
 }
 
-/* Run a pending generator (PsycoGenexpr_New) for its consumer: its code
-   compiled with 'mode' and 'acc' in the two GENEXPR slots (pycheader.h),
-   called like a function of its arguments, returning the consumer's result
-   as a new reference. */
-DEFINEFN
-vinfo_t *
-psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
-                   vinfo_t *comp)
+/* The frame of the pending generator 'vgen' bound in 'fncall', as a call
+   of its code with its arguments: 'mode', 'acc' and 'comp' in the
+   GENEXPR slots (pycheader.h). 1, or -1 on an error. */
+static int
+genexpr_bind(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
+             vinfo_t *comp, struct fncall_arg_s *fncall)
 {
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
     vinfo_t *vglobals = vgen->array->items[iGENEXPR_GLOBALS];
     PyCodeObject *co = pending_code(vgen);
-    vinfo_t *vbuiltins, *vmode, *result, *vts;
+    vinfo_t *vbuiltins, *vmode;
     vinfo_t *extra[GENEXPR_SLOTS], *freebuf[MAX_CALL_FREES];
     vinfo_t **frees = NULL;
-    CodeBufferObject *codebuf;
-    PsycoObject *mypo;
-    Source *sources;
-    stack_frame_info_t *finfo;
-    int nfrees = PyCode_GetNumFree(co), argcount;
-    int through_c;
-    /* zeroed: gcc can't see that psyco_fatal_msg below doesn't return */
-    struct fncall_arg_s fncall = {0};
+    int nfrees = PyCode_GetNumFree(co), r;
 
     /* each checked by the consumer (psyco_genexpr_fusable) */
     if (nfrees != 0 && load_frees(po, vfunc, nfrees, freebuf, &frees) != 1)
         psyco_fatal_msg("generator closure");
-    if (!psyco_forking(po, args->array) || !fncall_init(&fncall, co, nfrees))
+    if (!psyco_forking(po, args->array) || !fncall_init(fncall, co, nfrees))
         psyco_fatal_msg("generator call");
     /* fixed: the fused code reads it at compile time (pycompiler.c), so a
        snapshot for another consumer must not match by un-promoting it */
@@ -1718,28 +1709,50 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
     else
         comp = psyco_vi_Zero();
     extra[2] = comp;
+#else
+    (void)comp;
 #endif
     if (callee_builtins(po, vfunc, vglobals, &vbuiltins) != 1)
         psyco_fatal_msg("generator builtins");
     /* the defaults are among the arguments (args_with_defaults), and their
        count bound at the call */
-    switch (fncall_bind(&fncall, po, vglobals, vbuiltins,
-                        &PsycoTuple_GET_ITEM(args, 0), PsycoTuple_Load(args),
-                        NULL, NULL, NULL, NULL, 0, NULL, frees, GENEXPR_SLOTS,
-                        extra, true)) {
-        case 1:
-            break;
-        case 0:
-            psyco_fatal_msg("generator arguments");
-            break;
-        default:
-            vinfo_decref(vmode, po);
+    r = fncall_bind(fncall, po, vglobals, vbuiltins,
+                    &PsycoTuple_GET_ITEM(args, 0), PsycoTuple_Load(args), NULL,
+                    NULL, NULL, NULL, 0, NULL, frees, GENEXPR_SLOTS, extra,
+                    true);
+    if (r == 0)
+        psyco_fatal_msg("generator arguments");
+    vinfo_decref(vmode, po);
 #if LE_HAS_SUM_COMPENSATED
-            vinfo_decref(comp, po);
+    vinfo_decref(comp, po);
 #endif
-            vinfo_decref(vbuiltins, po);
-            return NULL;
-    }
+    vinfo_decref(vbuiltins, po);
+    return r;
+}
+
+/* Run a pending generator (PsycoGenexpr_New) for its consumer: its code
+   compiled with 'mode' and 'acc' in the two GENEXPR slots (pycheader.h),
+   called like a function of its arguments, returning the consumer's result
+   as a new reference. */
+DEFINEFN
+vinfo_t *
+psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
+                   vinfo_t *comp)
+{
+    vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
+    PyCodeObject *co = pending_code(vgen);
+    vinfo_t *result, *vts;
+    CodeBufferObject *codebuf;
+    PsycoObject *mypo;
+    Source *sources;
+    stack_frame_info_t *finfo;
+    int argcount;
+    int through_c;
+    /* zeroed: gcc can't see that psyco_fatal_msg doesn't return */
+    struct fncall_arg_s fncall = {0};
+
+    if (genexpr_bind(po, vgen, mode, acc, comp, &fncall) < 0)
+        return NULL;
 
     /* as psyco_call_pyfunc's non-inlining call; CPython runs the body from
        C, its consumer's, but awaits a coroutine with no C between */
@@ -1773,12 +1786,27 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
     else
         array_delete(fncall.inputvinfos, po);
     vinfo_xdecref(vts, po);
-    vinfo_decref(vmode, po);
-#if LE_HAS_SUM_COMPENSATED
-    vinfo_decref(comp, po);
-#endif
-    vinfo_decref(vbuiltins, po);
     return result;
+}
+
+/* whether iter() of an object of type 'tp' can't raise but for memory,
+   nor run Python: so that taking it in a generator expression's
+   consumer, not in the body before RETURN_GENERATOR, can't be seen */
+static bool
+iter_cannot_raise(PyTypeObject *tp)
+{
+    static PyTypeObject *const iterables[] = {
+        &PyList_Type,     &PyTuple_Type,      &PyRange_Type,
+        &PyDict_Type,     &PySet_Type,        &PyFrozenSet_Type,
+        &PyUnicode_Type,  &PyBytes_Type,      &PyByteArray_Type,
+        &PyDictKeys_Type, &PyDictValues_Type, &PyDictItems_Type};
+    size_t i;
+    if (tp->tp_iter == PyObject_SelfIter)
+        return true;
+    for (i = 0; i < sizeof(iterables) / sizeof(iterables[0]); i++)
+        if (tp->tp_iter == iterables[i]->tp_iter)
+            return true;
+    return false;
 }
 
 #if LE_RESUMES_GENERATORS_DIRECTLY
@@ -2052,26 +2080,6 @@ gen_step_tests(PsycoObject *po, const struct gen_layout *L, vinfo_t *vgen,
     vinfo_xdecref(vplace, po);
     vinfo_decref(vt, po);
     return r;
-}
-
-/* whether iter() of an object of type 'tp' can't raise but for memory,
-   nor run Python: so that taking it in a generator expression's
-   consumer, not in the body before RETURN_GENERATOR, can't be seen */
-static bool
-iter_cannot_raise(PyTypeObject *tp)
-{
-    static PyTypeObject *const iterables[] = {
-        &PyList_Type,     &PyTuple_Type,      &PyRange_Type,
-        &PyDict_Type,     &PySet_Type,        &PyFrozenSet_Type,
-        &PyUnicode_Type,  &PyBytes_Type,      &PyByteArray_Type,
-        &PyDictKeys_Type, &PyDictValues_Type, &PyDictItems_Type};
-    size_t i;
-    if (tp->tp_iter == PyObject_SelfIter)
-        return true;
-    for (i = 0; i < sizeof(iterables) / sizeof(iterables[0]); i++)
-        if (tp->tp_iter == iterables[i]->tp_iter)
-            return true;
-    return false;
 }
 
 /* whether the pending generator 'vgen' of code 'co' can become virtual
@@ -2654,6 +2662,278 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
         return 0;
     on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
+}
+
+/***************************************************************/
+/***   Generators compiled into their consumer's loop          ***/
+
+/* where item k of the vlocals of the frame of a generator of code 'co'
+   compiled into its consumer's loop goes among its words (iINLGEN_WORDS),
+   so that releasing them last first, as a virtual object's are, a
+   generator dropped at its yield frees its locals and stack in CPython's
+   order (Python/genrecord.c:record_dealloc). The frame's other slots go
+   first, and are no objects. */
+static int
+inlgen_word(PyCodeObject *co, int k)
+{
+    int nplus = le_code_nlocalsplus(co), nstack = co->co_stacksize;
+    int locals = INDEX_LOC_LOCALS_PLUS, slots = locals + nplus;
+    int stack = slots + GENEXPR_SLOTS, words = locals + GENEXPR_SLOTS;
+    (void)nstack;
+    if (k < locals)
+        return k;
+    if (k >= slots && k < stack)
+        return k - nplus;
+#if LE_HAS_FRAME_CLEARED_LAST_FIRST
+    /* as _PyFrame_ClearLocals: the stack top first, then the locals last
+       first */
+    return k < slots ? words + (k - locals) : words + nplus + (k - stack);
+#elif LE_HAS_GEN_CLOSE_UNRUN
+    /* as _PyFrame_ClearLocals: the locals first to last, then the stack
+       bottom first */
+    return k < slots ? words + nstack + (nplus - 1 - (k - locals))
+                     : words + (nstack - 1 - (k - stack));
+#else
+    /* as close throwing GeneratorExit in: the stack popped top first, then
+       the frame cleared, its locals first to last */
+    return k < slots ? words + (nplus - 1 - (k - locals))
+                     : words + nplus + (k - stack);
+#endif
+}
+
+static PyCodeObject *
+inlgen_code(vinfo_t *vgen)
+{
+    return (PyCodeObject *)CompileTime_Get(
+               vgen->array->items[iINLGEN_CODE]->source)
+        ->value;
+}
+
+/* whether the generator of code 'co' takes the iterator of its argument
+   before RETURN_GENERATOR, at the call, as a 3.15 generator expression
+   does */
+static bool
+takes_iter_at_call(PyCodeObject *co)
+{
+    le_code_t c = le_code(co);
+    int pos;
+    bool iter = false;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        if (in.op == RETURN_GENERATOR)
+            return iter;
+        if (in.op == GET_ITER)
+            iter = true;
+        pos = in.next;
+    }
+    return false;
+}
+
+/* whether the frame being compiled, at a FOR_ITER, can't pause while the
+   loop runs: it is no body run on its own frame, or its loop has no yield
+   or await in it and its code no handler, from which one could be
+   reached, but PEP 479's */
+static bool
+loop_cannot_pause(PsycoObject *po)
+{
+    long mode = psyco_generator_mode(po);
+    le_code_t c = le_code(po->pr.co);
+    le_instr_t in = le_instr(c, po->pr.next_instr);
+    int pos;
+    if (mode != GENEXPR_RESUMABLE && mode != GENEXPR_DIRECT)
+        return true;
+    if (!psyco_handlers_only_pep479(po->pr.co))
+        return false;
+    for (pos = in.next; pos < in.target;) {
+        le_instr_t body = le_instr(c, pos);
+        if (body.op == YIELD_VALUE || body.op == YIELD_FROM)
+            return false;
+        pos = body.next;
+    }
+    return true;
+}
+
+/* whether the FOR_ITER being compiled can compile the pending generator
+   'vgen' into its loop: it steps it first, and is the only thing holding
+   it, which nothing in the loop can reach (an escape would need it made
+   real paused at its yield: compute_inline_gen); the code qualifies
+   (mergepoints.c:inlinable_generator); the iterator a 3.15 generator
+   expression takes at the call can't raise or run Python, so taking it
+   in the loop instead can't be seen; and the frame can't pause in the
+   loop, which would make its stack real (yield_resumable) */
+static bool
+gen_inlinable(PsycoObject *po, vinfo_t *vgen)
+{
+    PyCodeObject *co;
+    PyObject *mps;
+    PyTypeObject *tp;
+    if (po->pr.is_inlining || vgen->refcount != 1 || !inline_into(po) ||
+        !pending_runnable(po, vgen))
+        return false;
+    co = pending_code(vgen);
+    mps = psyco_get_merge_points(co);
+    if (!(co->co_flags & CO_GENERATOR) || mps == Py_None ||
+        !(psyco_mp_flags(mps) & MP_FLAGS_GEN_INLINABLE))
+        return false;
+    if (takes_iter_at_call(co)) {
+        vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
+        if (PsycoTuple_Load(args) < 1)
+            return false;
+        tp = Psyco_KnownType(PsycoTuple_GET_ITEM(args, 0));
+        if (tp == NULL || !iter_cannot_raise(tp))
+            return false;
+    }
+    return loop_cannot_pause(po);
+}
+
+/* The first step of 'vgen' (gen_inlinable): its frame bound as for a
+   fused consumer (psyco_call_genexpr) and entered as an inlined call's
+   (pycompiler.c, EInline), which compiles its code from the start;
+   'vgen' becomes the loop's inlined generator, running. -1 with EInline
+   raised, or with an exception. */
+static int
+gen_inline_start(PsycoObject *po, vinfo_t *vgen)
+{
+    vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
+    PyCodeObject *co = pending_code(vgen);
+    vinfo_t *acc = psyco_vi_Zero(), *func, *v;
+    /* zeroed: gcc can't see that psyco_fatal_msg doesn't return */
+    struct fncall_arg_s fncall = {0};
+    int r = genexpr_bind(po, vgen, GENEXPR_INLINED, acc, NULL, &fncall);
+    vinfo_decref(acc, po);
+    if (r < 0)
+        return -1;
+    func = vinfo_new(
+        CompileTime_NewSk(sk_new(inline_func_item(po, vfunc), SkFlagFixed)));
+    v = vinfo_new(SOURCE_NOT_IMPORTANT);
+    v->array = array_new(TOTAL_LOC_INLINE + fncall.po_size);
+    v->array->items[LOC_INLINE_CO] =
+        vinfo_new(CompileTime_NewSk(sk_new((long)co, SkFlagFixed)));
+    vinfo_incref(func);
+    v->array->items[LOC_INLINE_FUNC] = func;
+    fncall_store_arguments(&fncall, v->array->items + TOTAL_LOC_INLINE);
+    array_release(fncall.inputvinfos);
+    /* blocks compiled in its frame are listed at its join points */
+    psyco_owner_pin((PyObject *)co);
+    PsycoInlineGen_FromPending(po, vgen, func, fncall.po_size);
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EInline)), v);
+    return -1;
+}
+
+/* A step of the inlined generator 'vgen', paused: its frame entered where
+   it paused, as at its start. -1, with EInline raised. */
+static int
+gen_inline_resume(PsycoObject *po, vinfo_t *vgen)
+{
+    PyCodeObject *co = inlgen_code(vgen);
+    int n = vgen->array->count - iINLGEN_WORDS, k;
+    vinfo_t *v = vinfo_new(SOURCE_NOT_IMPORTANT), **words;
+    v->array = array_new(TOTAL_LOC_INLINE + n);
+    v->array->items[LOC_INLINE_CO] =
+        vinfo_new(CompileTime_NewSk(sk_new((long)co, SkFlagFixed)));
+    v->array->items[LOC_INLINE_NEXT_INSTR] = vinfo_new(
+        CompileTime_NewSk(sk_new(PsycoInlineGen_Place(vgen), SkFlagFixed)));
+    v->array->items[LOC_INLINE_FUNC] = vgen->array->items[iINLGEN_FUNC];
+    vinfo_incref(v->array->items[LOC_INLINE_FUNC]);
+    words = vgen->array->items + iINLGEN_WORDS;
+    for (k = 0; k < n; k++) {
+        v->array->items[TOTAL_LOC_INLINE + k] = words[inlgen_word(co, k)];
+        words[inlgen_word(co, k)] = NULL;
+    }
+    PsycoInlineGen_SetPlace(po, vgen, INLGEN_RUNNING);
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EInline)), v);
+    return -1;
+}
+
+/* the generator the FOR_ITER being compiled steps */
+static vinfo_t *
+for_iter_iterator(PsycoObject *po)
+{
+    return po->vlocals.items[po->pr.stack_base + po->pr.stack_level -
+                             (LE_HAS_GET_ITER_INDEX ? 2 : 1)];
+}
+
+/* FOR_ITER's step of the generator 'vgen', compiled into the loop where it
+   can be (gen_inlinable): 1 with the value it yielded in '*out', as the
+   instruction restarts after the yield (psyco_gen_inline_yield); 2 once it
+   has returned; -1 with EInline raised to compile its code from where it
+   is, or with an exception; 0 where it isn't, to step it as usual. Not
+   while tracing or under another eval hook, which would see the
+   generator's frame, nor once a type site in its code has seen too many
+   types (fuse_stopped), as psyco_genexpr_fuse. */
+DEFINEFN int
+psyco_gen_inline_next(PsycoObject *po, vinfo_t *vgen, vinfo_t **out)
+{
+    vinfo_t *vts;
+    int r;
+    if (PsycoInlineGen_Check(vgen)) {
+        long place = PsycoInlineGen_Place(vgen);
+        if (LOC_INLINING != NULL) {
+            *out = LOC_INLINING;
+            LOC_INLINING = NULL;
+            return 1;
+        }
+        if (place == INLGEN_ENDED)
+            return 2;
+        psyco_assert(place >= 0);
+        return gen_inline_resume(po, vgen);
+    }
+    if (!PsycoGenexpr_Check(vgen) || !gen_inlinable(po, vgen))
+        return 0;
+    vts = load_tstate(po);
+    if (vts == NULL)
+        return -1;
+    r = direct_call_refused(po, vts, pending_code(vgen));
+    vinfo_decref(vts, po);
+    if (r)
+        return 0;
+    r = fuse_stopped(po, vgen);
+    if (r != 0)
+        return r < 0 ? -1 : 0;
+    return gen_inline_start(po, vgen);
+}
+
+/* The yield of the generator compiled into its consumer's loop, whose
+   frame is being compiled: the frame goes into the loop's generator,
+   paused after the yield, and the consumer's frame is back, its FOR_ITER
+   to restart with 'value' in LOC_INLINING. Returns the consumer's
+   PsycoObject. */
+DEFINEFN PsycoObject *
+psyco_gen_inline_yield(PsycoObject *po, vinfo_t *value)
+{
+    PyCodeObject *co = po->pr.co;
+    vinfo_t *parent = LOC_INLINING, *vgen;
+    int n = po->vlocals.count, k;
+    long place = le_instr(le_code(co), po->pr.next_instr).next;
+    vinfo_array_t *words = array_new(n);
+    LOC_INLINING = NULL;
+    for (k = 0; k < n; k++) {
+        words->items[k] = po->vlocals.items[k];
+        po->vlocals.items[k] = NULL;
+    }
+    psyco_inline_exit(po);
+    po = psyco_restore_inline_po(po, &parent->array);
+    vinfo_decref(parent, po);
+    vgen = for_iter_iterator(po);
+    psyco_assert(PsycoInlineGen_Check(vgen) &&
+                 vgen->array->count == iINLGEN_WORDS + n);
+    for (k = 0; k < n; k++)
+        vgen->array->items[iINLGEN_WORDS + inlgen_word(co, k)] =
+            words->items[k];
+    array_release(words);
+    PsycoInlineGen_SetPlace(po, vgen, place);
+    LOC_INLINING = value;
+    return po;
+}
+
+/* the generator compiled into the loop of the frame being compiled, whose
+   own frame has just been left by a return or an exception, has ended */
+DEFINEFN void
+psyco_gen_inline_ended(PsycoObject *po)
+{
+    vinfo_t *vgen = for_iter_iterator(po);
+    psyco_assert(PsycoInlineGen_Check(vgen));
+    PsycoInlineGen_SetPlace(po, vgen, INLGEN_ENDED);
 }
 
 /* A coroutine made by an await's call (awaited_at_once) can run its body

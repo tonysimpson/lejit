@@ -46,6 +46,8 @@ psyco_is_fusable_generator(PyCodeObject *co);
 EXTERNFN int
 psyco_is_resumable_generator(PyCodeObject *co);
 EXTERNFN int
+psyco_handlers_only_pep479(PyCodeObject *co);
+EXTERNFN int
 psyco_handler_awaits(PyCodeObject *co, int handler);
 EXTERNFN int
 psyco_is_startable_coroutine(PyCodeObject *co);
@@ -66,6 +68,9 @@ psyco_next_merge_point(PyObject *mergepoints, int position);
 EXTERNFN mergepoint_t *
 psyco_first_merge_point(PyObject *mergepoints);
 
+EXTERNFN PyObject *
+psyco_inline_merge_points(PyObject *mergepoints);
+
 /* Same as psyco_next_merge_point() but returns NULL if bytecode_ptr!=position
  */
 EXTERNFN mergepoint_t *
@@ -81,6 +86,7 @@ psyco_join_point(PyObject *mergepoints, int position);
 #define MP_FLAGS_INLINABLE 4    /* function could be inlined             */
 #define MP_FLAGS_CONTROLFLOW 16 /* can use early deletion of locals      */
 #define MP_FLAGS_RESUMABLE 32   /* psyco_is_resumable_generator          */
+#define MP_FLAGS_GEN_INLINABLE 64 /* mergepoints.c:inlinable_generator   */
 #define MP_FLAGS_EXTRA (-256)
 
 EXTERNFN int
