@@ -255,10 +255,13 @@ def free_lists_down(n, depth):
 # CPython defers. Where the trashcan is emptied by the free that deferred
 # to it, the deepest object is gone when that free returns, except where
 # compiled calls have taken so much C stack that the free itself defers:
-# from some depth down, never above it.
+# from some depth down, never above it. Where the trashcan counts C calls
+# instead (3.13), nothing that shallow is deferred, and the whole free runs
+# in C on what compiled calls leave of the stack, at least half of it: 500
+# lists fit there.
 def frees_at_every_depth():
     def at_every_depth(i):
-        freed = [free_lists_down(2000, depth) for depth in range(6000)]
+        freed = [free_lists_down(500, depth) for depth in range(6000)]
         return freed == sorted(freed, reverse=True)
     sys.setrecursionlimit(10 ** 5)
     return in_threads(at_every_depth, 1)
