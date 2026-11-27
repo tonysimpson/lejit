@@ -7,7 +7,7 @@ it overflows) is skipped.
 
     python3.X tests/jit/deep_stacks.py [-k substring]
 """
-import os, subprocess, sys, threading
+import os, subprocess, sys, threading, weakref
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')
 TIMEOUT = 120
@@ -197,11 +197,79 @@ def caller_locals_across_segments():
     return in_threads(run, 1)
 
 
+class Link:
+    def __init__(self, next):
+        self.next = next
+
+
+# objects nested n deep, each kind freed by compiled code: through a
+# variable of a type known when compiling ('top') and of one that isn't
+# ('x'). CPython frees each level from the one above it, deferring the
+# deepest to the trashcan, so the C stack never runs out.
+def free_nested(n):
+    out = []
+    for make in (lambda x: [x], lambda x: (x,), lambda x: {'k': x}, Link,
+                 lambda x: [(x, {'k': Link(x)})]):
+        x = None
+        for i in range(n):
+            x = make(x)
+        top = [x]
+        x = None
+        top = None
+        for i in range(n):
+            x = make(x)
+        x = None
+        out.append(top is None)
+    return out
+
+
+def deep_frees():
+    return [free_nested(10 ** 6), free_nested(10 ** 5)]
+
+
+def free_nested_down(n, depth):
+    return free_nested_down(n, depth - 1) if depth else free_nested(n)
+
+
+# where the C stack is small or already deep
+def deep_frees_short_of_stack():
+    sys.setrecursionlimit(10 ** 5)
+    return (in_threads(lambda i: free_nested(10 ** 5), 2) +
+            [free_nested_down(10 ** 5, 20000)])
+
+
+def free_lists_down(n, depth):
+    if depth:
+        return free_lists_down(n, depth - 1)
+    x = Link(None)
+    deepest = weakref.ref(x)
+    for i in range(n):
+        x = [x]
+    top = [x]
+    x = None
+    top = None
+    return deepest() is None
+
+
+# from every depth of a small stack, so that some free is just above where
+# CPython defers. Where the trashcan is emptied by the free that deferred
+# to it, the deepest object is gone when that free returns, except where
+# compiled calls have taken so much C stack that the free itself defers:
+# from some depth down, never above it.
+def frees_at_every_depth():
+    def at_every_depth(i):
+        freed = [free_lists_down(2000, depth) for depth in range(6000)]
+        return freed == sorted(freed, reverse=True)
+    sys.setrecursionlimit(10 ** 5)
+    return in_threads(at_every_depth, 1)
+
+
 CASES = [deep_returns, deep_keyword_calls, deep_calls_through_cpython,
          through_c_still_limited, limit_raised_then_reached, generator_for_loops,
          stepped_generators,
          small_thread_stacks, traceback_from_deep,
-         caller_locals_across_segments]
+         caller_locals_across_segments, deep_frees, deep_frees_short_of_stack,
+         frees_at_every_depth]
 
 
 def child(name, lejit_mode):

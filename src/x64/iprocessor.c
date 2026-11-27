@@ -10,6 +10,7 @@
 #include "../dispatcher.h"
 #include "../processor.h"
 #include "iencoding.h"
+#include "ipyencoding.h"
 
 typedef PyObject *(*glue_run_code_fn)(code_t *code_target, long *stack_end,
                                       long *initial_stack,
@@ -175,10 +176,6 @@ extern void *
 le_ref_tracer_word(void);
 #endif
 
-_Static_assert(Py_TPFLAGS_HAVE_GC >> 8 < 256 &&
-                   (Py_TPFLAGS_HAVE_GC & 255) == 0,
-               "the GC flag is tested in tp_flags' second byte");
-
 /* Out-of-line slow paths that compiled code calls with its arguments
    already in the SysV registers and the stack at any alignment (the
    inline attribute store's miss and dealloc paths). Each is a matched
@@ -200,28 +197,11 @@ write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax, bool keep_xmm)
 #if defined(Py_TRACE_REFS)
         CALL_I(_Py_Dealloc);
 #elif LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
-        /* _Py_Dealloc for a type the GC tracks (it may defer the free to
-           the trashcan) or while a ref tracer is set */
         void *tracer = le_ref_tracer_word();
         if (tracer == NULL)
             CALL_I(_Py_Dealloc);
-        else {
-            MOV_R_O8(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
-            TEST_I8_BO(REG_X64_RAX, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
-                       Py_TPFLAGS_HAVE_GC >> 8);
-            BEGIN_SHORT_COND_JUMP(1, CC_NE);
-            MOV_R_I(REG_X64_R11, (long)tracer);
-            CMP_I8_A(0, REG_X64_R11);
-            BEGIN_SHORT_COND_JUMP(2, CC_NE);
-            MOV_R_O8(REG_X64_RAX, REG_X64_RAX,
-                     CPY_OFFSET(PyTypeObject, tp_dealloc));
-            BEGIN_SHORT_JUMP(3);
-            END_SHORT_JUMP(1);
-            END_SHORT_JUMP(2);
-            MOV_R_I(REG_X64_RAX, (long)_Py_Dealloc);
-            END_SHORT_JUMP(3);
-            CALL_R(REG_X64_RAX);
-        }
+        else
+            code = dealloc_testing_margin(code, po, NULL, tracer);
 #elif LE_HAS_DEALLOC_HOOKS
         /* _Py_Dealloc while a ref tracer is set */
         void *tracer = le_ref_tracer_word();

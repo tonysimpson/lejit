@@ -978,6 +978,80 @@ le_c_stack_limits_put_back(PyThreadState *ts, const uintptr_t saved[3])
 }
 #endif
 
+#if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+/* _Py_Dealloc's trashcan test, which compiled code makes itself before it
+   frees an object of a type the GC tracks
+   (x64/ipyencoding.c:dealloc_testing_margin). The thread's margin is the C
+   stack left above its soft limit, in units of 1 << _PyOS_STACK_MARGIN_SHIFT
+   bytes: below 2 _Py_Dealloc puts the object on the thread's delete_later
+   chain instead of freeing it, and after a free at 4 or more it empties a
+   chain left. Compiled code calls _Py_Dealloc below 4, else tp_dealloc,
+   then empties a chain left. That is checked once, on first use at
+   start-up, against _Py_Dealloc itself: empty lists are freed
+   with the soft limit moved to give margins of 1 to 4 (half a unit more,
+   as _Py_Dealloc's frame is a little below this one's), then put back.
+   Where it doesn't match, or the thread state isn't one move from the
+   thread pointer, compiled code calls _Py_Dealloc. */
+#if LE_HAS_THREAD_LOCAL_TSTATE && LE_HAS_C_STACK_SOFT_LIMIT
+static bool
+trashcan_margin_matches(void)
+{
+    PyThreadState *ts = PyThreadState_Get();
+    uintptr_t *soft = (uintptr_t *)((char *)ts + le_c_stack_soft_limit_at);
+    uintptr_t saved = *soft, here = (uintptr_t)__builtin_frame_address(0);
+    uintptr_t unit = (uintptr_t)1 << _PyOS_STACK_MARGIN_SHIFT;
+    PyObject *first = NULL, *list;
+    bool ok = ts->delete_later == NULL;
+    int margin;
+    for (margin = 1; ok && margin <= 4; margin++) {
+        list = PyList_New(0);
+        if (list == NULL) {
+            PyErr_Clear();
+            ok = false;
+            break;
+        }
+        if (first == NULL)
+            first = list;
+        *soft = here - margin * unit - unit / 2;
+        Py_DECREF(list);
+        *soft = saved;
+        /* the first list stays on the chain until the free at 4 */
+        ok = ts->delete_later == (margin < 4 ? first : NULL);
+    }
+    if (ts->delete_later != NULL && first != NULL)
+        _PyTrash_thread_destroy_chain(ts);
+    return ok;
+}
+#endif
+
+/* whether compiled code makes the test, and the words it reads: the thread
+   state's offset from the thread pointer, its soft limit's and its
+   delete_later chain's offsets in it, and the stack above the soft limit
+   that is a margin of 4 */
+bool
+le_trashcan_words(long *tstate_at, long *soft_at, long *chain_at, long *room)
+{
+#if LE_HAS_THREAD_LOCAL_TSTATE && LE_HAS_C_STACK_SOFT_LIMIT
+    static int found = 0; /* 1 matches, -1 not */
+    if (found == 0)
+        found = le_tstate_thread_offset(tstate_at) && trashcan_margin_matches()
+                    ? 1
+                    : -1;
+    if (found > 0 && le_tstate_thread_offset(tstate_at)) {
+        *soft_at = le_c_stack_soft_limit_at;
+        *chain_at = offsetof(PyThreadState, delete_later);
+        *room = 4L << _PyOS_STACK_MARGIN_SHIFT;
+        return true;
+    }
+#endif
+    (void)tstate_at;
+    (void)soft_at;
+    (void)chain_at;
+    (void)room;
+    return false;
+}
+#endif
+
 /* le_gil_release, le_gil_take: what Py_BEGIN_ALLOW_THREADS and
    Py_END_ALLOW_THREADS do (PyEval_SaveThread, PyEval_RestoreThread), for
    compiled code, which has the running thread's state already
