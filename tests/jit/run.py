@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Runs each case in tests/jit/cases/ (or DIR) plain and with LeJIT, in fresh
 processes. Results must match, the function must have been compiled, it
-mustn't leak, and LeJIT's run must write nothing to stderr that the plain
-run doesn't.
+mustn't leak, LeJIT's run must write nothing to stderr that the plain
+run doesn't, and it must make no more objects than the plain run: no more
+allocations in the leak check's 100 rounds (50 allowed, for one made
+once), and no more objects of any type the gc tracks left alive after
+them. That isn't compared for a case that calls lejit._core's test
+functions in its rounds, which the plain run doesn't. A case known to make
+more on a Python is listed for it in the cases directory's
+more_objects.txt, with the reason: that check is then expected to fail,
+and passing it fails the case.
 
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
@@ -15,20 +22,26 @@ again),
 'expected': [result, ...] (LeJIT's results must be these, one per call, not
 plain CPython's: for a language rule some CPython gets wrong),
 'compiles_each_call': reason (the function makes and compiles new code on
-every call, so the leak check's rounds always compile and aren't repeated).
+every call, so the leak check's rounds always compile and aren't repeated),
+'objects': reason (no objects check: what the case does in its rounds
+depends on timing).
 
 --release tests a release build, which can't say what it compiled: results
-and leaks are checked, but not whether each function compiled, an 'xfail'
-case that passes isn't an XPASS, and 'checked' cases are skipped.
+and leaks are checked, but not whether each function compiled or how many
+objects it made, an 'xfail' case that passes isn't an XPASS, and 'checked'
+cases are skipped.
 
     python3.X tests/jit/run.py [DIR] [-k substring] [-v] [--release]
 """
-import glob, os, random, signal, subprocess, sys, warnings
+import ast, glob, os, random, signal, subprocess, sys, warnings
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
 TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
+# allocations in the 100 rounds: one made once, such as a cache filled on
+# first use, is not made every round
+ALLOCS_SLACK = 50
 # each child runs with address-space randomisation off: what the leak check
 # counts can depend on where objects land (a table keyed by id() is sized
 # by them), so a plain run and a LeJIT run of the same case could differ
@@ -77,6 +90,47 @@ def run_child(modname, fname, calls, lejit_mode, warmup=9, env=None,
     return out.decode().splitlines(), err.decode(errors='replace').splitlines()
 
 
+def objects_compared(ref_line, got_line):
+    """'fewer', 'equal' or 'more' objects made with LeJIT than without, and
+    what there were more of; 'asks' if the case called lejit._core's test
+    functions in its rounds, which a run without LeJIT doesn't; None if
+    either run couldn't count."""
+    ref_allocs, _, ref_alive = ref_line.split(' ', 3)[1:]
+    allocs, asked, alive = got_line.split(' ', 3)[1:]
+    ref_allocs, allocs = int(ref_allocs), int(allocs)
+    if ref_allocs < 0 or allocs < 0:
+        return None, None
+    if int(asked):
+        return 'asks', None
+    # a count can fall: a collection stops tracking tuples and dicts that
+    # can't be in a cycle
+    ref_alive = dict(ast.literal_eval(ref_alive))
+    more = ['%s %d (%d)' % (name, n, ref_alive.get(name, 0))
+            for name, n in ast.literal_eval(alive) if n > max(ref_alive.get(name, 0), 0)]
+    counts = '%d allocations in 100 rounds (%d without LeJIT)' % (allocs, ref_allocs)
+    if more:
+        counts += '; more left alive, by type (without LeJIT): ' + ', '.join(more)
+    if allocs - ref_allocs >= ALLOCS_SLACK or more:
+        return 'more', counts
+    return ('fewer' if allocs < ref_allocs else 'equal'), counts
+
+
+def more_objects_known():
+    """{case: reason} from more_objects.txt, for this Python."""
+    known = {}
+    version = '%d.%d' % sys.version_info[:2]
+    try:
+        lines = open(os.path.join(CASES, 'more_objects.txt')).read().splitlines()
+    except FileNotFoundError:
+        return known
+    for line in lines:
+        if line.strip() and not line.startswith('#'):
+            name, versions, reason = line.split(None, 2)
+            if version in versions.split(','):
+                known[name] = reason
+    return known
+
+
 def load_cases(filt):
     sys.path.insert(0, CASES)
     for path in sorted(glob.glob(os.path.join(CASES, '*.py'))):
@@ -105,6 +159,8 @@ def main():
         print('address-space randomisation stays on: setarch -R is refused here')
         ASLR_OFF[:] = []
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
+    objects = {'fewer': 0, 'equal': 0, 'more': 0, 'asks': 0}
+    more_known = more_objects_known()
     if release:
         counts['skip'] = 0
     for name, modname, fname, calls, opts in load_cases(filt):
@@ -129,10 +185,12 @@ def main():
                              warmup, env, clear, fresh)
         problem = None
         repeated = ''
+        made = object_counts = None
         if got is None:
             problem = err
         else:
             extra = [l for l in err if l not in ref_err]
+            made, object_counts = objects_compared(expected.pop(), got.pop())
             leak_ref = int(expected.pop().split()[1])
             leak_lejit, repeats = map(int, got.pop().split()[1:])
             if repeats:
@@ -154,6 +212,12 @@ def main():
                     problem += '; ' + repeated
             elif extra:
                 problem = 'stderr the plain run lacks: %s' % ' | '.join(extra[:3])
+            if 'objects' in opts:
+                made = None
+            if made == 'more' and not problem and name not in more_known:
+                problem = 'more objects: ' + object_counts
+        if made:
+            objects[made] += 1
         xfail = opts.get('xfail')
         if problem and xfail:
             status = 'xfail'
@@ -161,6 +225,13 @@ def main():
             status = 'FAIL'
         elif xfail:
             status = 'xfail' if release else 'XPASS'
+        elif made in ('fewer', 'equal', 'more') and name in more_known:
+            xfail = more_known[name]
+            if made == 'more':
+                status = 'xfail'
+                problem = 'more objects: ' + object_counts
+            else:
+                status = 'XPASS'
         else:
             status = 'pass'
         counts[status] += 1
@@ -172,7 +243,15 @@ def main():
                 line += '  [xfail: %s]' % xfail
             if repeated and not problem:
                 line += '  [%s]' % repeated
+            if verbose and made == 'asks':
+                line += '  [objects not compared: the case asks lejit._core in its rounds]'
+            elif verbose and object_counts and not problem:
+                line += '  [%s objects: %s]' % (made, object_counts)
             print(line)
+    if any(objects.values()):
+        print('objects made with LeJIT against without: fewer=%(fewer)d equal=%(equal)d '
+              'more=%(more)d; not compared, as the case asks lejit._core in its '
+              'rounds: %(asks)d' % objects)
     print(' '.join('%s=%d' % kv for kv in counts.items()))
     return 1 if counts['FAIL'] or counts['XPASS'] else 0
 

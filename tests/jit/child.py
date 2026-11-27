@@ -7,6 +7,23 @@ mod = importlib.import_module(sys.argv[3])
 fn = getattr(mod, sys.argv[4])
 # list of argument tuples: a Python expression evaluated in the case module
 calls = eval(sys.argv[5], dict(vars(mod), nan=float('nan'), inf=float('inf')))
+# The objects check counts, in the same rounds as the leak check, the
+# object allocator's allocations (testing.c:le_allocs_begin, through ctypes
+# so the plain run needn't import lejit; a release build has no counter)
+# and, by type, the objects the gc tracks that are alive after them against
+# those alive before them, and whether the case called lejit._core's test
+# functions meanwhile. Both start after the warm-up, so what compiling
+# makes and keeps isn't counted.
+import ctypes, gc, importlib.machinery, os
+core = os.path.join(sys.argv[1], 'lejit',
+                    '_core' + importlib.machinery.EXTENSION_SUFFIXES[0])
+try:
+    core = ctypes.PyDLL(core)
+    allocs_begin, allocs_end = core.le_allocs_begin, core.le_allocs_end
+    allocs_asked = core.le_allocs_asked
+    allocs_end.restype = allocs_asked.restype = ctypes.c_long
+except (OSError, AttributeError):
+    allocs_begin = allocs_end = allocs_asked = None
 # '0' plain, '1' a checked build of LeJIT, 'release' a release build, which
 # can't say whether it compiled the function
 use_lejit = sys.argv[6] != '0'
@@ -16,6 +33,15 @@ if use_lejit:
     if checked and not hasattr(lejit._core, '_stats'):
         sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
     lejit.start()
+# run at module level, so it is never compiled
+COUNT_ALIVE = compile('''
+alive = {}
+for o in gc.get_objects():
+    t = type(o)
+    name = t.__qualname__ if t.__module__ == 'builtins' else '%s.%s' % (t.__module__, t.__qualname__)
+    alive[name] = alive.get(name, 0) + 1
+del o, t, name
+''', 'count_alive', 'exec')
 out = []
 for args in calls:
     try:
@@ -44,7 +70,6 @@ if checked:
 # Where emptying it also drops the types' version tags (before 3.11),
 # compiled code that checks a tag compiles again on its next run, so the
 # calls run once more after the cache is emptied, before the count starts.
-import gc
 clear_type_cache = sys._clear_type_cache if sys.argv[8] == '1' else (lambda: None)
 for _ in range(int(sys.argv[7])):
     for args in calls:
@@ -71,14 +96,20 @@ while True:
                 pass
         gc.collect()
     buffers = lejit._core._stats()['code_buffers'] if checked else 0
+    exec(COUNT_ALIVE)
+    alive_before = alive
     before = sys.getallocatedblocks()
     gc.disable()
+    if allocs_begin:
+        allocs_begin()
     for _ in range(100):
         for args in calls:
             try:
                 fn(*args)
             except Exception:
                 pass
+    allocs = allocs_end() if allocs_end else -1
+    asked = allocs_asked() if allocs_asked else 0
     gc.enable()
     clear_type_cache()
     gc.collect()
@@ -87,5 +118,10 @@ while True:
         break
     repeats += 1
 out.append('leak: %d %d' % (leak, repeats))
+exec(COUNT_ALIVE)
+left = sorted((name, alive.get(name, 0) - alive_before.get(name, 0))
+              for name in set(alive) | set(alive_before)
+              if alive.get(name, 0) != alive_before.get(name, 0))
+out.append('objects: %d %d %r' % (allocs, asked, left))
 for line in out:
     print(line)
