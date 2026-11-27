@@ -169,7 +169,7 @@ le_frame_start(le_frame_t *f)
 /* CPython's own PyEval_GetFrame, which LeJIT replaces (frames.c) */
 extern PyFrameObject *(*le_cpython_eval_getframe)(void);
 #if ALL_CHECKS
-/* frame objects LeJIT has made (pyruntime.c) */
+/* frame objects LeJIT has made (Python/frames.c) */
 extern long le_stat_frame_objects;
 #endif
 /* the frame object Python sees (borrowed), made if it has none:
@@ -233,20 +233,29 @@ le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
 }
-/* the frame borrows its builtins from its function, which holds them;
-   the frames given others are PyFrame_New's, whose function is their own,
-   so the function's are replaced */
+/* the function the frame runs a call of (borrowed), NULL for none */
+static inline PyFunctionObject *
+le_frame_function(le_frame_t *f)
+{
+#if LE_HAS_FRAME_FUNCOBJ
+    PyObject *func = LE_FRAME_FUNCOBJ(f);
+#else
+    PyObject *func = (PyObject *)f->f_func;
+#endif
+    return func != NULL && PyFunction_Check(func) ? (PyFunctionObject *)func
+                                                  : NULL;
+}
+/* the frame borrows its builtins from its function, which holds them. A
+   real function's are the ones compiled code runs its call with; the
+   frames given others are made with a function of their own
+   (frames.c:le_pyframe_new, the function not known), whose builtins
+   are replaced */
 static inline void
 le_frame_set_builtins(le_frame_t *f, PyObject *b)
 {
-    PyFunctionObject *func;
+    PyFunctionObject *func = le_frame_function(f);
     if (f->f_builtins == b)
         return;
-#if LE_HAS_FRAME_FUNCOBJ
-    func = (PyFunctionObject *)LE_FRAME_FUNCOBJ(f);
-#else
-    func = f->f_func;
-#endif
     Py_INCREF(b);
     Py_SETREF(func->func_builtins, b);
     f->f_builtins = b;
@@ -694,18 +703,17 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
     f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
 #endif
 }
-/* A frame for the generator function 'func' as RETURN_GENERATOR leaves a
-   new generator's: its function and code (references it holds), globals
-   and builtins (its function's), no locals mapping, no frame object and
-   no caller, every word NULL, the stack empty, its place the
-   RETURN_GENERATOR at 'start' (code units from the first) or the
-   instruction after it, where the place is the one to go on with. Its
-   other fields are 0, as _PyFrame_Initialize leaves them. Owned by
-   'owner'. */
+/* A frame of the code 'co' for the function 'func', as CPython starts a
+   call's: its function and code (references it holds), globals and
+   builtins (its function's), no locals mapping, no frame object and no
+   caller, every word NULL, the stack empty, its place the instruction at
+   'start' (code units from the first) or the one after it, where the
+   place is the one to go on with. Its other fields are 0, as
+   _PyFrame_Initialize leaves them. Owned by 'owner'. */
 static inline void
-le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
+le_frame_init(le_frame_t *f, PyCodeObject *co, PyFunctionObject *func,
+              int start, char owner)
 {
-    PyCodeObject *co = (PyCodeObject *)func->func_code;
     int k;
     memset(f, 0, offsetof(le_frame_t, localsplus));
 #if LE_HAS_FRAME_STACKREFS
@@ -727,6 +735,13 @@ le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
     le_gen_frame_set_depth(f, 0);
     LE_FRAME_PLACE(f) = _PyCode_CODE(co) + start + LE_HAS_FRAME_INSTR_PTR;
     f->owner = owner;
+}
+/* A frame for the generator function 'func' as RETURN_GENERATOR leaves a
+   new generator's, at the RETURN_GENERATOR at 'start' (le_frame_init) */
+static inline void
+le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
+{
+    le_frame_init(f, (PyCodeObject *)func->func_code, func, start, owner);
 }
 /* the generator's frame runs, its stack held by compiled code (and its
    locals, but where LE_RESUMES_ON_FRAME those the code hasn't taken):
@@ -906,6 +921,13 @@ static inline PyObject *
 le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
+}
+/* a frame object holds no function */
+static inline PyFunctionObject *
+le_frame_function(le_frame_t *f)
+{
+    (void)f;
+    return NULL;
 }
 /* the frame holds a reference to its builtins: the old one goes */
 static inline void

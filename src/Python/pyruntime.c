@@ -347,20 +347,14 @@ function_without_code(PyFrameObject *f)
 }
 #endif
 
-/* PyFrame_New, unseen by function watchers: it makes a function for the
-   frame object, which CPython's own frames don't, and a watcher called
-   here would run Python code while compiled code's exception is set */
-#if ALL_CHECKS
-long le_stat_frame_objects = 0;
-#endif
-
+/* no function watcher is told of the function PyFrame_New makes, as a
+   watcher called here would run Python code while compiled code's
+   exception is set */
 PyFrameObject *
-le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
+le_pyframe_new_by_cpython(PyThreadState *ts, PyCodeObject *co,
+                          PyObject *globals)
 {
     PyFrameObject *f;
-#if ALL_CHECKS
-    le_stat_frame_objects++;
-#endif
 #ifdef PY_FOREACH_FUNC_EVENT
     uint8_t watchers = ts->interp->active_func_watchers;
     ts->interp->active_func_watchers = 0;
