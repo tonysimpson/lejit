@@ -188,12 +188,8 @@ frame_clear_locals(le_frame_t *f)
     Py_CLEAR(f->f_locals);
 }
 
-/* the record's frame cleared, as CPython clears a generator's frame: a
-   frame object that outlives it takes it; else its locals go, then its
-   function. Its code stays for the record's life, as a generator keeps its
-   own. */
-static void
-frame_clear(le_frame_t *f)
+DEFINEFN void
+le_frame_clear(le_frame_t *f)
 {
     PyFrameObject *fo = f->frame_obj;
     PyObject *o;
@@ -490,12 +486,12 @@ record_end(PyThreadState *ts, le_gen_record_t *r, PyObject *result, int form,
     r->state = FRAME_CLEARED;
 #if LE_HAS_EVAL_FRAME_POPS
     /* ceval's clear_gen_frame */
-    frame_clear(&r->frame);
+    le_frame_clear(&r->frame);
     Py_CLEAR(r->exc_state.exc_value);
 #else
     /* gen_send_ex2's */
     Py_CLEAR(r->exc_state.exc_value);
-    frame_clear(&r->frame);
+    le_frame_clear(&r->frame);
 #endif
     r->frame.previous = NULL;
     return result;
@@ -552,7 +548,7 @@ record_dealloc(PyObject *self)
     if (r->escaped == NULL && r->state != FRAME_CLEARED) {
         if (r->state == FRAME_CREATED) {
             r->state = FRAME_CLEARED;
-            frame_clear(&r->frame);
+            le_frame_clear(&r->frame);
         }
 #if LE_HAS_GEN_CLOSE_UNRUN
         else if (record_closes_unrun(r)) {
@@ -561,7 +557,7 @@ record_dealloc(PyObject *self)
             if (LE_HAS_GEN_CLOSE_LOCALS_ONLY)
                 frame_clear_locals(&r->frame);
             r->state = FRAME_CLEARED;
-            frame_clear(&r->frame);
+            le_frame_clear(&r->frame);
             Py_CLEAR(r->exc_state.exc_value);
         }
 #endif
