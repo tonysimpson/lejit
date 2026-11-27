@@ -2057,6 +2057,13 @@ owners_pending(void *arg)
     return 0;
 }
 
+/* whether func is one of LeJIT's own pending calls */
+DEFINEFN bool
+le_pending_is_own(int (*func)(void *))
+{
+    return func == sweep_pending || func == owners_pending;
+}
+
 static bool
 scan_listed_last(void)
 {

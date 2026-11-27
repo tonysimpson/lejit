@@ -420,6 +420,35 @@ def signal_in_recursion_from_handler():
 # on how fast they run
 TIMED = {'objects': 'runs until a timer or another thread stops it'}
 
+
+# a signal handler is given the frame the signal landed in, the compiled
+# loop's own, linked to its callers, as CPython gives it
+def _spin_until_seen(box):
+    while box.seen is None:
+        box.n += 1
+    return box.n > 0
+
+
+def _note_frame(box):
+    def handler(signum, frame):
+        box.seen = [frame.f_code.co_name, frame.f_back.f_code.co_name]
+    return handler
+
+
+def handler_frame():
+    box = Box()
+    box.seen = None
+    box.n = 0
+    old = signal.signal(signal.SIGALRM, _note_frame(box))
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.001)
+        spun = _spin_until_seen(box)
+        return box.seen, spun
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
 CASES = [
     ('thread_sets_attribute', [()], TIMED),
     ('thread_sets_global', [()], TIMED),
@@ -436,6 +465,7 @@ CASES = [
     ('async_exc_from_thread', [()], TIMED),
     ('async_exc_on_self', [()], {}),
     ('switch_interval', [()], TIMED),
+    ('handler_frame', [()], TIMED),
     ('pending_call_reads_lines_at_entry', [()], {}),
     ('signal_in_direct_recursion', [()], TIMED),
     ('signal_in_recursion_from_handler', [()],
