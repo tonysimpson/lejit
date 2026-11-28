@@ -480,12 +480,17 @@ le_reloc_forget(long mark, code_t *start, code_t *end);
 /* where code that the compile just ended wrote at 'p' is now */
 EXTERNFN code_t *
 psyco_code_moved(code_t *p);
+/* stops unless the 'size' bytes at 'at', about to be patched, are code
+   and not an old copy of moved code (x64/iencoding.h:le_patch_rel32) */
+EXTERNFN void
+le_patch_check(void *at, size_t size);
 #else
 #define le_reloc_note(at, kind, end) ((void)0)
 #define le_reloc_jump(end, value) (value)
 #define le_reloc_mark() 0L
 #define le_reloc_forget(mark, start, end) ((void)(mark))
 #define psyco_code_moved(p) (p)
+#define le_patch_check(at, size) ((void)0)
 #endif
 #define LE_RELOC_SLOT(p) le_reloc_note((void *)(p), LE_RELOC_WORD, 0)
 #define LE_RELOC_SLOT_END(p) le_reloc_note((void *)(p), LE_RELOC_WORD, 1)
@@ -749,7 +754,9 @@ le_trace_jump_reg(code_t *location, int reg_target);
 EXTERNFN void
 le_trace_jump_cond(code_t *location, code_t *not_taken, code_t *taken);
 EXTERNFN void
-le_trace_jump_cond_update(code_t *location, code_t *not_taken, code_t *taken);
+le_trace_patch_rel32(code_t *end, code_t *target);
+EXTERNFN void
+le_trace_patch_word(void *at, long value);
 EXTERNFN void
 le_trace_call(code_t *location, code_t *call_target);
 EXTERNFN void
@@ -780,8 +787,11 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match);
 #define le_trace_jump_cond(location, not_taken, taken) \
     do {                                               \
     } while (0)
-#define le_trace_jump_cond_update(location, not_taken, taken) \
-    do {                                                      \
+#define le_trace_patch_rel32(end, target) \
+    do {                                  \
+    } while (0)
+#define le_trace_patch_word(at, value) \
+    do {                               \
     } while (0)
 #define le_trace_call(location, call_target) \
     do {                                     \

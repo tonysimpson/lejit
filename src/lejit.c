@@ -78,7 +78,13 @@ le_trace_jump_cond(code_t *location, code_t *not_taken, code_t *taken)
 
 DEFINEFN
 void
-le_trace_jump_cond_update(code_t *location, code_t *not_taken, code_t *taken)
+le_trace_patch_rel32(code_t *end, code_t *target)
+{
+}
+
+DEFINEFN
+void
+le_trace_patch_word(void *at, long value)
 {
 }
 
