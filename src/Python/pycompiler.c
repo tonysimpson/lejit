@@ -1630,26 +1630,24 @@ gen_frame_place(PsycoObject *po, int place)
 #endif
 }
 
-/* the frame left as ceval's YIELD_VALUE at 'lasti' leaves it, with
+/* the frame left as ceval's YIELD_VALUE at 'at' leaves it, with
    'nstack' items under the value and, where frames have them, the
    compile's blocks (mechanisms/frames.h:le_gen_frame_pause), its words
    stored after */
 #if LE_HAS_INTERPRETER_FRAME
 static bool
-gen_frame_pause(PsycoObject *po, int lasti, int nstack)
+gen_frame_pause(PsycoObject *po, int at, int nstack)
 {
     PyCodeObject *co = po->pr.co;
-    _Py_CODEUNIT *yield = _PyCode_CODE(co) + lasti;
     vinfo_t *frame = psyco_frame_words_frame(po), *v;
     int state;
     bool ok;
 #ifdef FRAME_STATE_SUSPENDED
-    state = FRAME_SUSPENDED + (yield->op.arg != 0);
+    state = FRAME_SUSPENDED + (le_instr(le_code(co), at).arg != 0);
 #else
-    (void)yield;
     state = FRAME_SUSPENDED;
 #endif
-    if (!gen_frame_place(po, lasti + LE_HAS_FRAME_INSTR_PTR))
+    if (!gen_frame_place(po, le_lasti_of(at) + LE_HAS_FRAME_INSTR_PTR))
         return false;
 #if LE_HAS_FRAME_STACKREFS
     v = integer_add_i(
@@ -1670,11 +1668,11 @@ gen_frame_pause(PsycoObject *po, int lasti, int nstack)
 }
 #else
 static bool
-gen_frame_pause(PsycoObject *po, int lasti, int nstack)
+gen_frame_pause(PsycoObject *po, int at, int nstack)
 {
     vinfo_t *frame = psyco_frame_words_frame(po);
     int i, k;
-    if (!gen_frame_place(po, lasti))
+    if (!gen_frame_place(po, le_lasti_of(at)))
         return false;
 #if LE_HAS_FRAME_STATE
     if (!put_nth_i(po, frame, FRAME_stackdepth, 0, nstack))
@@ -1989,45 +1987,35 @@ static bool
 handler_drops_exception(PyCodeObject *co, int handler)
 {
     le_code_t c = le_code(co);
-    int p = handler, q, i;
-#define OP_AT(pos) ((pos) < c.size ? le_instr(c, (pos)).op : -1)
-#define NEXT(pos) (le_instr(c, (pos)).next)
+    int p = handler, q;
 #define LOADS_E(op)                              \
     ((op) == LOAD_GLOBAL || (op) == LOAD_NAME || \
      (le_op_flags(op) & LE_OPF_LOAD))
 #if LE_HAS_EXCEPTION_TABLE
-    if (OP_AT(p) != PUSH_EXC_INFO)
+    if (le_next(c, &p).op != PUSH_EXC_INFO)
         return false;
-    p = NEXT(p);
-    i = OP_AT(p);
-    if (LOADS_E(i)) {
-        q = NEXT(p);
-        if (OP_AT(q) == CHECK_EXC_MATCH && OP_AT(NEXT(q)) == POP_JUMP_IF_FALSE)
-            p = NEXT(NEXT(q));
-    }
-    return OP_AT(p) == POP_TOP && OP_AT(NEXT(p)) == POP_EXCEPT;
+    q = p;
+    if (LOADS_E(le_next(c, &q).op) && le_next(c, &q).op == CHECK_EXC_MATCH &&
+        le_next(c, &q).op == POP_JUMP_IF_FALSE)
+        p = q;
+    return le_next(c, &p).op == POP_TOP && le_next(c, &p).op == POP_EXCEPT;
 #else
-    if (OP_AT(p) == DUP_TOP) {
-        q = NEXT(p);
-        i = OP_AT(q);
-        if (LOADS_E(i)) {
-            q = NEXT(q);
-            if (OP_AT(q) == COMPARE_OP &&
-                le_instr(c, q).arg == PyCmp_EXC_MATCH &&
-                OP_AT(NEXT(q)) == POP_JUMP_IF_FALSE)
-                p = NEXT(NEXT(q));
-            else if (OP_AT(q) == JUMP_IF_NOT_EXC_MATCH)
-                p = NEXT(q);
-        }
+    le_instr_t in;
+    int i;
+    q = p;
+    if (le_next(c, &q).op == DUP_TOP && LOADS_E(le_next(c, &q).op)) {
+        in = le_next(c, &q);
+        if ((in.op == COMPARE_OP && in.arg == PyCmp_EXC_MATCH &&
+             le_next(c, &q).op == POP_JUMP_IF_FALSE) ||
+            in.op == JUMP_IF_NOT_EXC_MATCH)
+            p = q;
     }
-    for (i = 0; i < 3; i++, p = NEXT(p))
-        if (OP_AT(p) != POP_TOP)
+    for (i = 0; i < 3; i++)
+        if (le_next(c, &p).op != POP_TOP)
             return false;
-    return OP_AT(p) == POP_EXCEPT;
+    return le_next(c, &p).op == POP_EXCEPT;
 #endif
 #undef LOADS_E
-#undef NEXT
-#undef OP_AT
 }
 
 /* Whether an exception raised now puts the frame's locals in its entry's
@@ -2955,9 +2943,9 @@ psyco_module_attr_cached(PsycoObject *po, PyObject *module, PyObject *name,
 static int
 call_kwnames_start(le_code_t c, int pos)
 {
-    if (LE_HAS_OPCODE_PRECALL && pos > 0)
-        pos = le_prev(c, pos);
-    if (pos <= 0 || le_instr(c, pos = le_prev(c, pos)).op != KW_NAMES)
+    if (LE_HAS_OPCODE_PRECALL)
+        le_prev(c, &pos);
+    if (le_prev(c, &pos).op != KW_NAMES)
         return -1;
     return pos;
 }
@@ -5705,33 +5693,6 @@ breaker_after_call(PsycoObject *po, int next_instr)
     return psyco_check_eval_breaker(po);
 }
 
-/* the LeJIT instruction at *p, and *p moved past it; op -1 at the end */
-static le_instr_t
-fusion_next(le_code_t c, int *p)
-{
-    le_instr_t in = {-1, 0, -1, -1, c.size};
-    if (*p < c.size) {
-        in = le_instr(c, *p);
-        *p = in.next;
-    }
-    return in;
-}
-
-/* the LeJIT instruction before *p, and *p moved to its start; op -1 at
-   the start */
-static le_instr_t
-fusion_prev(le_code_t c, int *p)
-{
-    le_instr_t in = {-1, 0, -1, -1, c.size};
-    if (*p > 0) {
-        int after = *p;
-        *p = le_prev(c, after);
-        in = le_instr(c, *p);
-        extra_assert(in.next == after);
-    }
-    return in;
-}
-
 /* A subscript by a slice whose bounds are all constants is a constant
    slice object where the compiler folds them; for a container whose
    slicing compiled code does itself, the subscript becomes a virtual slice
@@ -5781,31 +5742,31 @@ fused_store(PsycoObject *po, int i, int *dlocal)
     int first, s, p = i;
     mergepoint_t *mp;
 #define FUSION_LOAD(in) (le_op_flags((in).op) & LE_OPF_LOAD)
-    get = fusion_next(c, &p);
-    load = fusion_next(c, &p);
-    op = fusion_next(c, &p);
+    get = le_next(c, &p);
+    load = le_next(c, &p);
+    op = le_next(c, &p);
     if (!FUSION_LOAD(load) || !(le_op_flags(op.op) & LE_OPF_OPERATOR))
         return -1;
     p = i;
-    in = fusion_prev(c, &p);
+    in = le_prev(c, &p);
     if (get.op == BINARY_SUBSCR &&
         (in.op == DUP_TOP_TWO || (in.op == COPY && in.arg == 2))) {
         if (in.op == COPY) {
-            in = fusion_prev(c, &p);
+            in = le_prev(c, &p);
             if (in.op != COPY || in.arg != 2)
                 return -1;
         }
         p = op.next;
-        in = fusion_next(c, &p);
+        in = le_next(c, &p);
         if (in.op == SWAP && in.arg == 3) {
-            in = fusion_next(c, &p);
+            in = le_next(c, &p);
             if (in.op != SWAP || in.arg != 2)
                 return -1;
         }
         else if (in.op != ROT_THREE)
             return -1;
         s = p;
-        if (fusion_next(c, &p).op != STORE_SUBSCR)
+        if (le_next(c, &p).op != STORE_SUBSCR)
             return -1;
         first = i;
     }
@@ -5824,14 +5785,14 @@ fused_store(PsycoObject *po, int i, int *dlocal)
         else if ((get.op == CALL_METHOD || get.op == CALL) &&
                  (get.arg == 1 || get.arg == 2)) {
             if (in.op == PRECALL)
-                in = fusion_prev(c, &p);
+                in = le_prev(c, &p);
             if (get.arg == 2) {
                 if (!FUSION_LOAD(in))
                     return -1;
-                in = fusion_prev(c, &p);
+                in = le_prev(c, &p);
             }
             kload = in;
-            method = fusion_prev(c, &p);
+            method = le_prev(c, &p);
             if (method.op != LOAD_METHOD ||
                 PyUnicode_CompareWithASCIIString(
                     PyTuple_GET_ITEM(co->co_names, method.arg), "get") != 0)
@@ -5840,12 +5801,12 @@ fused_store(PsycoObject *po, int i, int *dlocal)
         else
             return -1;
         first = p;
-        dload = fusion_prev(c, &p);
+        dload = le_prev(c, &p);
     loaded:
         if (dload.op != LOAD_FAST || kload.op != LOAD_FAST)
             return -1;
         p = op.next;
-        in = fusion_next(c, &p);
+        in = le_next(c, &p);
         if (in.op == LOAD_FAST_LOAD_FAST) {
             if (in.arg >> 4 != dload.arg || (in.arg & 15) != kload.arg)
                 return -1;
@@ -5853,12 +5814,12 @@ fused_store(PsycoObject *po, int i, int *dlocal)
         else {
             if (in.op != LOAD_FAST || in.arg != dload.arg)
                 return -1;
-            in = fusion_next(c, &p);
+            in = le_next(c, &p);
             if (in.op != LOAD_FAST || in.arg != kload.arg)
                 return -1;
         }
         s = p;
-        if (fusion_next(c, &p).op != STORE_SUBSCR)
+        if (le_next(c, &p).op != STORE_SUBSCR)
             return -1;
         if (dlocal != NULL)
             *dlocal = dload.arg;
@@ -5889,9 +5850,11 @@ dict_str_fusion(PsycoObject *po, int next_instr)
     vinfo_t *d, *k, *res;
     if (op == STORE_SUBSCR) {
         /* the get, four or five instructions back */
-        for (p = i, j = 0; j < 4 && p > 0; j++) p = le_prev(c, p);
-        if (j < 4 || (fused_store(po, p, NULL) != i &&
-                      (p == 0 || fused_store(po, le_prev(c, p), NULL) != i)))
+        for (p = i, j = 0; j < 4; j++)
+            if (le_prev(c, &p).op < 0)
+                return 0;
+        if (fused_store(po, p, NULL) != i &&
+            (le_prev(c, &p).op < 0 || fused_store(po, p, NULL) != i))
             return 0;
         d = NTOP(2);
         k = NTOP(1);
@@ -7249,12 +7212,11 @@ forwards_local_dict(PyCodeObject *co, int next_instr)
 {
     le_code_t c = le_code(co);
     le_instr_t in;
-    if (next_instr >= c.size ||
-        (in = le_instr(c, next_instr)).op != LOAD_FAST || in.next >= c.size ||
-        (in = le_instr(c, in.next)).op != DICT_MERGE || in.arg != 1 ||
-        in.next >= c.size)
+    if (le_next(c, &next_instr).op != LOAD_FAST)
         return false;
-    return le_instr(c, in.next).op == CALL_FUNCTION_EX;
+    in = le_next(c, &next_instr);
+    return in.op == DICT_MERGE && in.arg == 1 &&
+           le_next(c, &next_instr).op == CALL_FUNCTION_EX;
 }
 #endif
 
@@ -8609,9 +8571,11 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
                LOAD_SPECIAL (__enter__'s, __aenter__'s), so an interrupt
                landing there is raised inside the with block, whose
                __exit__ runs */
-            if (po->pr.next_instr > 0 &&
-                le_instr(c, le_prev(c, po->pr.next_instr)).op == LOAD_SPECIAL)
-                goto fine;
+            {
+                int call = po->pr.next_instr;
+                if (le_prev(c, &call).op == LOAD_SPECIAL)
+                    goto fine;
+            }
 #endif
             if (!breaker_after_call(po, next_instr))
                 break;
@@ -8709,7 +8673,7 @@ awaitable_kind(le_code_t c, int at, int oparg)
     (void)at;
     return oparg;
 #else
-    int prev = at >= LE_UNIT ? le_op(c, at - LE_UNIT) : -1;
+    int prev = le_prev(c, &at).op;
     (void)oparg;
     if (prev == BEFORE_ASYNC_WITH)
         return 1;
@@ -8717,8 +8681,7 @@ awaitable_kind(le_code_t c, int at, int oparg)
     return prev == WITH_CLEANUP_START ? 2 : 0;
 #else
     if (prev == WITH_EXCEPT_START ||
-        (prev == CALL_FUNCTION && at >= 2 * LE_UNIT &&
-         le_op(c, at - 2 * LE_UNIT) == DUP_TOP))
+        (prev == CALL_FUNCTION && le_prev(c, &at).op == DUP_TOP))
         return 2;
     return 0;
 #endif
@@ -8927,7 +8890,7 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
             !psyco_knowntobe(v, 0) && !compute_vinfo(v, po))
             return;
     }
-    if (!gen_take_written(po) || !gen_frame_pause(po, le_lasti_of(at), nstack))
+    if (!gen_take_written(po) || !gen_frame_pause(po, at, nstack))
         return;
     for (i = 0; i < nlocals + nstack; i++) {
         vinfo_t **slot =
