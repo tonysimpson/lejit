@@ -308,18 +308,34 @@ le_instr(le_code_t c, int pos)
     return in;
 }
 
-/* the start of the instruction before the one at pos (at its first
-   prefix). The caches PyCode_GetCode gives are zero, and no opcode is,
-   so zero units are the caches of the instruction before them. */
-static inline int
-le_prev(le_code_t c, int pos)
+/* The instructions in order, for the passes that match a few of them:
+   le_next gives the one at *pos and moves *pos past it, le_prev the one
+   before *pos and moves *pos to its start (its first prefix). Past either
+   end each gives op -1 and leaves *pos. */
+static inline le_instr_t
+le_next(le_code_t c, int *pos)
 {
-    pos -= LE_UNIT;
-    while (pos > 0 && le_op(c, pos) == 0 && le_arg(c, pos) == 0)
-        pos -= LE_UNIT;
-    while (pos >= LE_UNIT && le_op(c, pos - LE_UNIT) == EXTENDED_ARG)
-        pos -= LE_UNIT;
-    return pos;
+    le_instr_t in = {-1, 0, -1, -1, c.size};
+    if (*pos >= 0 && *pos < c.size) {
+        in = le_instr(c, *pos);
+        *pos = in.next;
+    }
+    return in;
+}
+
+/* The caches PyCode_GetCode gives are zero, and no opcode is, so zero
+   units are the caches of the instruction before them. */
+static inline le_instr_t
+le_prev(le_code_t c, int *pos)
+{
+    le_instr_t in = {-1, 0, -1, -1, c.size};
+    int p = *pos - LE_UNIT;
+    if (*pos <= 0 || *pos > c.size)
+        return in;
+    while (p > 0 && le_op(c, p) == 0 && le_arg(c, p) == 0) p -= LE_UNIT;
+    while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
+    *pos = p;
+    return le_instr(c, p);
 }
 
 /* What a LeJIT opcode does, for the passes over the bytecode: one bit
