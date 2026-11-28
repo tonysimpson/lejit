@@ -3031,14 +3031,17 @@ loop_cannot_pause(PsycoObject *po)
    real paused at its yield: compute_inline_gen); the code qualifies
    (mergepoints.c:inlinable_generator); the iterator a 3.15 generator
    expression takes at the call can't raise or run Python, so taking it
-   in the loop instead can't be seen; and the frame can't pause in the
-   loop, which would make its stack real (yield_resumable) */
+   in the loop instead can't be seen; the frame can't pause in the
+   loop, which would make its stack real (yield_resumable); and where a
+   step can come back round without yielding (psyco_inline_loop_head),
+   the FOR_ITER is a merge point, where the loop it then restarts closes */
 static bool
 gen_inlinable(PsycoObject *po, vinfo_t *vgen)
 {
     PyCodeObject *co;
     PyObject *mps;
     PyTypeObject *tp;
+    int pause;
     if (po->pr.is_inlining || vgen->refcount != 1 || !inline_into(po) ||
         !pending_runnable(po, vgen))
         return false;
@@ -3048,6 +3051,10 @@ gen_inlinable(PsycoObject *po, vinfo_t *vgen)
     if (!(co->co_flags & CO_GENERATOR) || mps == Py_None ||
         !(psyco_mp_flags(mps) & MP_FLAGS_GEN_INLINABLE) ||
         !le_gen_record_ready())
+        return false;
+    if (psyco_inline_loop_head(mps, &pause) >= 0 &&
+        psyco_exact_merge_point(po->pr.merge_points, po->pr.next_instr) ==
+            NULL)
         return false;
     if (takes_iter_at_call(co)) {
         vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
@@ -3168,18 +3175,27 @@ psyco_gen_inline_next(PsycoObject *po, vinfo_t *vgen, vinfo_t **out)
 /* The yield of the generator compiled into its consumer's loop, whose
    frame is being compiled: the frame goes into the loop's generator,
    paused after the yield, and the consumer's frame is back, its FOR_ITER
-   to restart with 'value' in LOC_INLINING. Returns the consumer's
-   PsycoObject. */
+   to restart with 'value' in LOC_INLINING. With 'value' NULL, the step
+   has come back round to the loop head its yield's resumption jumps to
+   (mergepoints.c:inlinable_generator) without yielding, the value send()
+   would push already pushed: it is paused at its yield all the same,
+   which, resumed, goes on to the same loop head with the same stack, and
+   the FOR_ITER restarts with no value, to step it again. Returns the
+   consumer's PsycoObject. */
 DEFINEFN PsycoObject *
 psyco_gen_inline_yield(PsycoObject *po, vinfo_t *value)
 {
     PyCodeObject *co = po->pr.co;
     vinfo_t *parent = LOC_INLINING, *vgen;
-    int n = po->vlocals.count, k;
+    int n = po->vlocals.count, k, pause;
     long place = le_instr(le_code(co), po->pr.next_instr).next;
     /* under the value sent, which the instruction after the yield pops */
     long depth = po->pr.stack_level - 1;
-    vinfo_array_t *words = array_new(n);
+    vinfo_array_t *words;
+    if (value == NULL &&
+        psyco_inline_loop_head(po->pr.merge_points, &pause) >= 0)
+        place = pause;
+    words = array_new(n);
     LOC_INLINING = NULL;
     for (k = 0; k < n; k++) {
         words->items[k] = po->vlocals.items[k];

@@ -10126,6 +10126,35 @@ compile_opcode(PsycoObject *po, int opcode, int oparg, int target,
     return OPCODE_ELSEWHERE;
 }
 
+/* A generator compiled into its consumer's loop (GENEXPR_INLINED), about
+   to compile the loop head its yield's resumption jumps back to
+   (mergepoints.c:inlinable_generator): the first time in a step it goes
+   on; come round to it again without yielding (a filter's way back), the
+   step ends there as at its yield, with the value send() would push
+   pushed (psyfunc.c:psyco_gen_inline_yield), and the consumer's FOR_ITER
+   is compiled again from its merge point, where the loop closes. True
+   with EYield raised. */
+static bool
+inline_gen_round(PsycoObject *po)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    int pause;
+    if (!po->pr.is_inlining ||
+        psyco_generator_mode(po) != GENEXPR_INLINED ||
+        po->pr.next_instr !=
+            psyco_inline_loop_head(po->pr.merge_points, &pause))
+        return false;
+    if (po->pr.inlgen_fresh) {
+        po->pr.inlgen_fresh = 0;
+        return false;
+    }
+    PUSH(psyco_vi_None());
+    po->pr.inlgen_round = 1;
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EYield)),
+                       psyco_vi_None());
+    return true;
+}
+
 /* psyco_pycompiler_mainloop() compiles the function,
    writing function entry and exit points if needed, and destroys 'po' when
    it is done */
@@ -10232,6 +10261,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 if (!resume_in_ceval(po, next_instr, &unwound))
                     break;
             }
+            if (inline_gen_round(po))
+                break;
 
 #if LE_CODESTATS
             codestats_begin(po, next_instr, le_op(bytecode, next_instr));
@@ -10449,6 +10480,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             LOC_INLINING = v;
             po->pr.is_inlining = true;
             po->pr.inline_ran_python = 0;
+            po->pr.inlgen_fresh = 1;
             /* mark this point as an inline frame entry */
             psyco_inline_enter(po);
             Psyco_ForgetClasses(po); /* the arguments' types */
@@ -10482,18 +10514,32 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                    and FOR_ITER restarts with the value, as an inlined
                    call's instruction does with its result below */
                 vinfo_t *value = po->pr.val;
+                bool round = po->pr.inlgen_round;
+                po->pr.inlgen_round = 0;
                 po->pr.val = NULL;
                 clear_pseudo_exception(po);
                 if (po->pr.python_call)
                     po->pr.inline_ran_python = 1;
+                if (round) {
+                    vinfo_decref(value, po);
+                    value = NULL;
+                }
                 po = psyco_gen_inline_yield(po, value);
                 stack_a = po->vlocals.items + po->pr.stack_base;
                 po->pr.is_inlining = false;
+                po->pr.inlgen_fresh = 0;
                 if (po->pr.inline_ran_python) {
                     po->pr.resume_pending = 1;
                     po->pr.inline_left = INLINE_LEFT_PAUSED;
                 }
                 po->pr.inline_ran_python = 0;
+                if (round) {
+                    /* FOR_ITER again, from its merge point */
+                    po->pr.python_call = 0;
+                    po->pr.proxy_write = 0;
+                    at_jump_target = 1;
+                    continue;
+                }
                 need_reference(po, LOC_INLINING);
                 continue;
             }
@@ -10509,6 +10555,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             stack_a = po->vlocals.items + po->pr.stack_base;
             vinfo_decref(v, po);
             po->pr.is_inlining = false;
+            po->pr.inlgen_fresh = 0;
             if (gen)
                 psyco_gen_inline_ended(po);
             if (!returned)

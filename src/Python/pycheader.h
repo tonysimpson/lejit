@@ -151,6 +151,11 @@ typedef struct {
     char ex_method;         /* the call being compiled is an f(*a, **kw)
                                of a bound method, which CPython runs from C
                                (PyObject_Call) */
+    char inlgen_fresh;      /* a generator compiled into its consumer's
+                               loop (GENEXPR_INLINED) has not reached the
+                               loop head its yield's resumption jumps to in
+                               this step: coming to it again ends the step
+                               (pycompiler.c:inline_gen_round) */
     int call_site; /* 1 + the CALL_* instruction being compiled, or 0 */
     struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                          which gives it its return address */
@@ -173,6 +178,7 @@ typedef struct {
                                 pobject.c:generic_getattr) */
     char pieces;             /* a pieces list may be live (plistobject.c:
                                 PsycoList_ForcePieces); set when unsure */
+    char inlgen_round;       /* the EYield raised is inline_gen_round's */
 } pyc_data_t;
 
 #define AUTO_RECURSION_MAX 200

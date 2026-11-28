@@ -92,6 +92,13 @@ psyco_first_merge_point(PyObject *mergepoints);
 
 EXTERNFN PyObject *
 psyco_inline_merge_points(PyObject *mergepoints);
+/* A generator compiled into its consumer's loop: the position of the loop
+   head its yield's resumption jumps back to, where a step that comes back
+   round without yielding ends, as a pause at the yield (mergepoints.c:
+   inlinable_generator), or -1; the place after its yield, where it then
+   pauses, in '*pause'. From the report or its inline view. */
+EXTERNFN int
+psyco_inline_loop_head(PyObject *mergepoints, int *pause);
 
 /* Same as psyco_next_merge_point() but returns NULL if bytecode_ptr!=position
  */
