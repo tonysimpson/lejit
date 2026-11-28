@@ -146,26 +146,17 @@ PsycoArray_Seen(PyTypeObject *tp)
 }
 
 /* whether v's type is tp, a static type: 1 or 0, -1 on error or
-   promotion. Only a static type is promoted, so a site that meets objects
-   of many classes doesn't compile for each. */
+   promotion */
 static int
 is_exactly(PsycoObject *po, vinfo_t *v, PyTypeObject *tp)
 {
-    PyObject *vtp_value;
-    vinfo_t *vtp;
+    PyTypeObject *vtp;
     int r;
     PyTypeObject *known = Psyco_KnownType(v);
     if (known != NULL)
         return known == tp;
-    vtp = psyco_get_const(po, v, OB_type);
-    if (vtp == NULL)
-        return -1;
-    r = psyco_atcompiletime_static_type(po, vtp, &vtp_value);
-    if (r == 0 && is_runtime(v->source))
-        /* flagged megamorphic: forgotten, so that a later use of v's type
-           loads it again */
-        psyco_forget_field(po, v, OB_type);
-    return r == 1 ? vtp_value == (PyObject *)tp : r;
+    r = Psyco_NeedStaticType(po, v, &vtp);
+    return r == 1 ? vtp == tp : r;
 }
 
 /* a[key] of an exact array indexed by an exact int, as array_subscr and
@@ -355,11 +346,7 @@ item_word(PsycoObject *po, const item_kind_t *k, vinfo_t *v, vinfo_t **pw)
         cc = integer_cmp_i(po, w, -1, Py_EQ);
     }
     else {
-        if (PsycoLong_IsVirtual(v)) {
-            w = v->array->items[iLONG_VALUE];
-            vinfo_incref(w);
-        }
-        else if ((r = PsycoLong_MediumValue(po, v, &w)) != 1)
+        if ((r = PsycoLong_Word(po, v, &w)) != 1)
             return r;
         if (k->size == 8 && k->is_signed) {
             *pw = w;

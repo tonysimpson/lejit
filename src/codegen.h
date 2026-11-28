@@ -272,6 +272,11 @@ EXTERNFN /* signed */
 EXTERNFN /* unsigned */
     vinfo_t *
     integer_urshift_i(PsycoObject *po, vinfo_t *v1, long counter);
+/* the low 'size' bytes of word v, sign- or zero-extended, as libffi passes
+   and returns them */
+EXTERNFN
+vinfo_t *
+integer_extend(PsycoObject *po, vinfo_t *v, int size, bool is_signed);
 EXTERNFN
 vinfo_t *
 integer_neg(PsycoObject *po, vinfo_t *v1, bool ovf);

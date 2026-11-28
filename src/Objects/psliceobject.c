@@ -172,11 +172,6 @@ slice_index(PsycoObject *po, vinfo_t *v, Py_ssize_t dflt, vinfo_t **pw)
         *pw = vinfo_new(CompileTime_New(PyNumber_AsSsize_t(o, NULL)));
         return 1;
     }
-    if (PsycoLong_IsVirtual(v)) {
-        *pw = v->array->items[iLONG_VALUE];
-        vinfo_incref(*pw);
-        return 1;
-    }
     tp = Psyco_NeedType(po, v);
     if (tp == NULL)
         return -1;
@@ -186,7 +181,7 @@ slice_index(PsycoObject *po, vinfo_t *v, Py_ssize_t dflt, vinfo_t **pw)
     }
     if (!PyType_TypeCheck(tp, &PyLong_Type))
         return 0;
-    switch (PsycoLong_MediumValue(po, v, pw)) {
+    switch (PsycoLong_Word(po, v, pw)) {
         case 1:
             return 1;
         case -1:

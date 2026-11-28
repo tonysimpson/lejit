@@ -354,25 +354,6 @@ load_word(PsycoObject *po, vinfo_t *v, long offset)
     return psyco_get_field_offset(po, v, FMUT(DEF_ARRAY(long, 0)), offset);
 }
 
-/* the low 'size' bytes of word v, sign- or zero-extended */
-static vinfo_t *
-extend(PsycoObject *po, vinfo_t *v, int size, bool is_signed)
-{
-    vinfo_t *t, *r;
-    int shift = 64 - 8 * size;
-    if (size == 8) {
-        vinfo_incref(v);
-        return v;
-    }
-    t = integer_lshift_i(po, v, shift);
-    if (t == NULL)
-        return NULL;
-    r = is_signed ? integer_rshift_i(po, t, shift)
-                  : integer_urshift_i(po, t, shift);
-    vinfo_decref(t, po);
-    return r;
-}
-
 /* an exact int or bool v for integer type t: 1 with a new reference to
    its word in *pw, 0 to take cffi's call (on the path where it is out of
    t's range, which cffi reports), -1 to stop */
@@ -383,17 +364,13 @@ int_arg(PsycoObject *po, vinfo_t *v, const ctype_t *t, vinfo_t **pw)
     long wlo, whi, lo, hi;
     vinfo_t *w, *shifted;
     condition_code_t cc;
-    if (PsycoLong_IsVirtual(v)) {
-        w = v->array->items[iLONG_VALUE];
-        vinfo_incref(w);
+    int r;
+    if (PsycoLong_IsVirtual(v))
         wlo = LONG_MIN, whi = LONG_MAX;
-    }
-    else {
-        int r = PsycoLong_MediumValue(po, v, &w);
-        if (r != 1)
-            return r;
+    else
         wlo = -(long)PyLong_MASK, whi = (long)PyLong_MASK;
-    }
+    if ((r = PsycoLong_Word(po, v, &w)) != 1)
+        return r;
     if (t->kind == K_BOOL)
         lo = 0, hi = 1;
     else if (t->size == 8)
@@ -490,7 +467,7 @@ box_result(PsycoObject *po, const ctype_t *t, vinfo_t *r)
             vinfo_decref(r, po);
             return x;
         case K_BOOL:
-            x = extend(po, r, 1, false);
+            x = integer_extend(po, r, 1, false);
             vinfo_decref(r, po);
             if (x == NULL)
                 return NULL;
@@ -498,7 +475,7 @@ box_result(PsycoObject *po, const ctype_t *t, vinfo_t *r)
             vinfo_decref(x, po);
             return r;
         default:
-            x = extend(po, r, t->size, t->is_signed);
+            x = integer_extend(po, r, t->size, t->is_signed);
             vinfo_decref(r, po);
             if (x == NULL)
                 return NULL;

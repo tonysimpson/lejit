@@ -417,6 +417,27 @@ Psyco_NeedTypeMega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp)
     return psyco_pyobj_atcompiletime_mega(po, vtp, (PyObject **)tp);
 }
 
+DEFINEFN int
+Psyco_NeedStaticType(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp)
+{
+    vinfo_t *vtp;
+    int r;
+    if (is_compiletime(obj->source) && !Psyco_ConstantClassMutable(obj)) {
+        *tp = Py_TYPE((PyObject *)CompileTime_Get(obj->source)->value);
+        return 1;
+    }
+    vtp = psyco_get_const(po, obj, OB_type);
+    if (vtp == NULL)
+        return -1;
+    r = psyco_atcompiletime_static_type(po, vtp, (PyObject **)tp);
+    /* not a static type: the load is flagged megamorphic, which would keep
+       the object's attributes from promoting its type; forgotten, their
+       next use loads it again */
+    if (r == 0 && is_runtime(obj->source))
+        psyco_forget_field(po, obj, OB_type);
+    return r;
+}
+
 /* exported by every CPython; internal, so undeclared here, from 3.13 */
 PyAPI_FUNC(int)
     _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method);
