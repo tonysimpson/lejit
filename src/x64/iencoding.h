@@ -1416,8 +1416,13 @@ bfunction_result(PsycoObject *po, bool ref);
         else                                                        \
             MOV_O_R(REG_X64_RSP, STACK_POS_OFFSET(stack_pos), src); \
     } while (0)
-#define XCHG_REG_AND_EBP_BASE(src, stack_pos) \
-    XCHG_R_O(src, REG_X64_RSP, STACK_POS_OFFSET(stack_pos))
+/* through REG_TRANSIENT_1, as xchg with memory is locked: tens of cycles */
+#define XCHG_REG_AND_EBP_BASE(src, stack_pos)                               \
+    do {                                                                    \
+        MOV_R_O(REG_TRANSIENT_1, REG_X64_RSP, STACK_POS_OFFSET(stack_pos)); \
+        MOV_O_R(REG_X64_RSP, STACK_POS_OFFSET(stack_pos), src);             \
+        MOV_R_R(src, REG_TRANSIENT_1);                                      \
+    } while (0)
 #define SAVE_IMMED_TO_EBP_BASE(immed, stack_pos)                          \
     do {                                                                  \
         long _sv_i = (long)(immed);                                       \
