@@ -274,7 +274,9 @@ CASES = [
     ('nonlocals', [(1,), (7,)], {}),
     ('counter', [(10,), (0,)], {}),
     ('from_imports', [(1,), (2,)], {}),
-    ('from_import_errors', [(0,)], {}),
+    ('from_import_errors', [(0,)],
+     {'clear_type_cache': "setuptools' distutils hack looks each failing "
+                          "import's 'spec_for_' name up, made afresh"}),
     ('imports', [(1,)], {}),
     ('map_unpacks', [({'a': 1}, {'b': 2}), ({'a': 1}, {'a': 3, 'w': 9}), ({}, {})], {}),
     ('map_unpack_errors', "[(1,), (NotMapping(),), (Keys(),), ([('a', 1)],)]", {}),
