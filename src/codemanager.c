@@ -1114,6 +1114,8 @@ made_forget(le_owner_t *o, const le_owner_t *dead);
 #endif
 EXTERNFN void
 psyco_owner_release_records(le_owner_t *o); /* dispatcher.c */
+EXTERNFN void
+psyco_const_forget(le_owner_t *o); /* dispatcher.c: its slots die */
 EXTERNFN bool
 psyco_ge_in_report(PyObject *mergepoints,
                    global_entries_t *ge); /* mergepoints.c */
@@ -1188,6 +1190,7 @@ owner_free(le_owner_t *o, PyObject *mergepoints, PyObject *entry_point)
     }
     /* what the records, buffers and snapshots release comes back here */
     psyco_owner_release_records(o);
+    psyco_const_forget(o);
     Py_XDECREF(entry_point);
     Py_XDECREF(mergepoints);
     for (i = 0; i < o->nbufs; i++) Py_DECREF(o->bufs[i]);

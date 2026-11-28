@@ -176,7 +176,9 @@ def build_emitted(case_list, workdir):
         src.append('}')
         sources.append(src)
     nfun = (len(case_list) + CHUNK - 1) // CHUNK
-    src = HEAD + ['code_t buf[%d];' % (len(case_list) * 24 + 64), 'code_t *code = buf;']
+    # buf is not executable memory: no constant gets a slot
+    src = HEAD + ['code_t buf[%d];' % (len(case_list) * 24 + 64), 'code_t *code = buf;',
+                  'code_t *psyco_const_slot(code_t *at, long value) { return NULL; }']
     src += ['void f%d(void);' % k for k in range(nfun)]
     src += ['int main(void) {', '  FILE *f;']
     src += ['  f%d();' % k for k in range(nfun)]

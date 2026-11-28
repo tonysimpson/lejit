@@ -2,8 +2,8 @@
  * Code patching used by the dispatcher. conditional_jump_to emits a rel32 jump
  * and returns a tag; change_cond_jump_target later repoints it once the target
  * has been compiled (coding pauses, respawn). A promotion site starts with a
- * patchable 'MOV R10, imm64; CMP reg, R10; JE target' holding the first
- * value seen, and a chain of more out of line (below): a polymorphic inline
+ * patchable 'CMP reg, [RIP+slot]; JE target' holding the first value seen
+ * in its slot, and a chain of more out of line (below): a polymorphic inline
  * cache in front of the C dispatcher. All jumps are rel32; one whose target
  * is out of reach goes through a far jump (codemanager.c:psyco_code_far_jump).
  */
@@ -40,22 +40,32 @@ fz_find_runtimes(vinfo_array_t *aa, FrozenPsycoObject *fpo,
 #define PROMOTION_FAST_COMMON_CASE 1
 
 /* A site's inline cache holds the first value seen. The next
-   PROMOTION_CHAIN_MAX values go in a chain of the same compare/je entries,
-   out of line in the stub pool, which the site's miss path is repointed to
-   (the 'jmp chain' overwrites the start of the site's own stub). The chain
-   ends with its own copy of the miss stub, or, once a site can compile no
-   more values, a jump to its megamorphic version. Most chains hold one
-   entry, so a chain starts with room for one and is copied to a chain with
-   room for all when it needs more; the old one is left unused. With the
-   chain full, a new value replaces an entry that goes to the megamorphic
-   version, or else the last one; at the cut-off the cache is refilled with
-   the site's values (dispatcher.c:promotion_cache_add,
+   PROMOTION_CHAIN_MAX values go in a chain of compare/je entries (the
+   movabs form, PROMOTION_ENTRY_SIZE), out of line in the stub pool, which the
+   site's miss path is repointed to (the 'jmp chain' overwrites the start of
+   the site's own stub). The chain ends with its own copy of the miss stub, or,
+   once a site can compile no more values, a jump to its megamorphic version.
+   Most chains hold one entry, so a chain starts with room for one and is
+   copied to a chain with room for all when it needs more; the old one is left
+   unused. With the chain full, a new value replaces an entry that goes to the
+   megamorphic version, or else the last one; at the cut-off the cache is
+   refilled with the site's values (dispatcher.c:promotion_cache_add,
    promotion_cache_fallback). Code is only patched from
    the C dispatcher, which the trampoline entered from this site's miss path
    (or its chain's); it returns through 'jmp rax' to a target, never back
    into the bytes it changed. */
 #define PROMOTION_CHAIN_MAX 4   /* MEGAMORPHIC_MAX - 1 */
 #define PROMOTION_ENTRY_SIZE 19 /* mov r10, imm64; cmp; je rel32 */
+/* the site's own entry: 'cmp reg, [rip+slot]; je rel32' with the value in
+   a slot of its own (dispatcher.c:psyco_promotion_slot), or a chain's
+   entry where no slot is in reach */
+#define PROMOTION_SLOT_ENTRY_SIZE 13
+EXTERNFN code_t *
+psyco_promotion_slot(code_t *at);
+#define IS_SLOT_ENTRY(code) ((code)[1] == 0x3B) /* after its REX */
+#define ENTRY_SIZE(code) \
+    (IS_SLOT_ENTRY(code) ? PROMOTION_SLOT_ENTRY_SIZE : PROMOTION_ENTRY_SIZE)
+#define SLOT_OF_ENTRY(code) ((long *)((code) + 7 + *(int32_t *)((code) + 3)))
 #define PROMOTION_MISS_SIZE_MAX (3 + STUB_SIZE_MAX) /* mov rsi, reg; stub */
 #define PROMOTION_CHAIN_SIZE(n) \
     ((n) * PROMOTION_ENTRY_SIZE + PROMOTION_MISS_SIZE_MAX)
@@ -108,12 +118,13 @@ ipromotion_write_jump(code_t *code, code_t *target)
 PSY_INLINE void
 ipromotion_read_entry(code_t *code, long *value, code_t **target)
 {
-    code_t *t = code + PROMOTION_ENTRY_SIZE +
-                *(dword_t *)(code + PROMOTION_ENTRY_SIZE - 4); /* je rel32 */
+    code_t *t = code + ENTRY_SIZE(code) +
+                *(dword_t *)(code + ENTRY_SIZE(code) - 4); /* je rel32 */
     /* jmp [rip], as x64/iprocessor.c:psyco_write_far_jump writes it */
     while (t[0] == 0xFF && t[1] == 0x25 && *(dword_t *)(t + 2) == 0)
         t = *(code_t **)(t + 6);
-    *value = *(long *)(code + 2); /* REX, B8+r, imm64 */
+    /* the slot, or REX, B8+r, imm64 */
+    *value = IS_SLOT_ENTRY(code) ? *SLOT_OF_ENTRY(code) : *(long *)(code + 2);
     *target = t;
 }
 
@@ -121,6 +132,13 @@ ipromotion_read_entry(code_t *code, long *value, code_t **target)
 PSY_INLINE void
 ipromotion_update_entry(code_t *code, long value, code_t *target)
 {
+    if (IS_SLOT_ENTRY(code)) {
+        *SLOT_OF_ENTRY(code) = value;
+        code += 9; /* je's rel32 */
+        UPDATABLE_WRITE_32BIT(REL32(code + 4, target));
+        le_trace_jump_cond(code - 6, code, target);
+        return;
+    }
 #undef ONLY_UPDATING
 #define ONLY_UPDATING 1
     UPDATABLE_JUMP_IF_EQUALS(0, value, target);
@@ -178,25 +196,31 @@ ipromotion_write_miss(code_t *code, int rg, void *record)
 
 /* A promotion site: the inline cache, then on a miss
    'mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline', which calls
-   do_promotion(fs, value) (37 bytes in all). The value is always in a
-   register here; the trampoline leaves RSI alone. The record holds the
-   rt_promotion_t, whose head is ipromotion_s, and lives as long as its
-   owner: the site is entered again for every value the cache doesn't
-   hold. */
+   do_promotion(fs, value) (31 bytes in all, 37 with no slot in reach).
+   The value is always in a register here; the trampoline leaves RSI
+   alone. The record holds the rt_promotion_t, whose head is ipromotion_s,
+   and lives as long as its owner: the site is entered again for every
+   value the cache doesn't hold. */
 PSY_INLINE void *
 ipromotion_finish(PsycoObject *po, vinfo_t *fix, void *do_promotion,
                   size_t block_size)
 {
     struct ipromotion_s *fs;
 #if PROMOTION_FAST_COMMON_CASE
-    code_t *start_jump, *end_jump;
+    code_t *start_jump, *end_jump, *slot;
 #endif
     BEGIN_CODE
     NEED_CC();
     RTVINFO_IN_REG(fix);
 #if PROMOTION_FAST_COMMON_CASE
     start_jump = code;
-    UPDATABLE_JUMP_IF_EQUALS(getreg(fix->source), 0, code);
+    if (po->respawn_cnt >= 0 && (slot = psyco_promotion_slot(code)) != NULL) {
+        CMP_R_RIP(getreg(fix->source), (long)slot - ((long)code + 7));
+        JMP_CC_UI32(CC_E, code);
+    }
+    else {
+        UPDATABLE_JUMP_IF_EQUALS(getreg(fix->source), 0, code);
+    }
     end_jump = code;
     ipromotion_update_entry(start_jump, 0, end_jump); /* jump to end of jump */
 #endif

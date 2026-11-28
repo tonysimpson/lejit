@@ -1,6 +1,7 @@
 #!/bin/sh
-# Build and run mov_mem.c against the objects of an in-place LeJIT build
-# (LEJIT_DEV_TRACE=1 PYTHON setup.py build_ext --inplace) for PYTHON:
+# Build and run mov_mem.c and consts.c against the objects of an in-place
+# LeJIT build (LEJIT_DEV_TRACE=1 PYTHON setup.py build_ext --inplace) for
+# PYTHON:
 #     sh tests/encoder/mov_mem.sh PYTHON [ARGS...]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -13,11 +14,13 @@ LDVERSION=$($PY -c "import sysconfig;print(sysconfig.get_config_var('LDVERSION')
 TEMP=$($PY "$ROOT/tests/common.py")
 OBJS=$(find "$TEMP" -name '*.o' | grep -v '/src/lejit.o$')
 OUT=${TMPDIR:-/tmp}/mov_mem.$$
-gcc -w -O0 -g -DNI_TRACE=1 -DALL_CHECKS=1 \
-    -I"$INC" -I"$ROOT/src" -I"$ROOT/src/x64" -I"$TEMP/gen" "$HERE/mov_mem.c" \
-    $OBJS $(find "$TEMP" -name 'lejit.o') \
-    -L"$LIBDIR" -Wl,-rpath,"$LIBDIR" -lpython"$LDVERSION" -lffi -lunwind -lm -o "$OUT"
-"$OUT" "$@"
-status=$?
-rm -f "$OUT"
+status=0
+for test in mov_mem consts; do
+    gcc -w -O0 -g -DNI_TRACE=1 -DALL_CHECKS=1 \
+        -I"$INC" -I"$ROOT/src" -I"$ROOT/src/x64" -I"$TEMP/gen" "$HERE/$test.c" \
+        $OBJS $(find "$TEMP" -name 'lejit.o') \
+        -L"$LIBDIR" -Wl,-rpath,"$LIBDIR" -lpython"$LDVERSION" -lffi -lunwind -lm -o "$OUT"
+    "$OUT" "$@" || status=1
+    rm -f "$OUT"
+done
 exit $status

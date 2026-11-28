@@ -302,7 +302,7 @@ write_return_barrier(PsycoObject *po)
 DEFINEFN code_t *
 psyco_write_stub(code_t *code, void *record)
 {
-    MOV_R_I(REG_X64_R11, (long)record);
+    MOV_R_IABS(REG_X64_R11, (long)record);
     JUMP_TO(psyco_stub_trampoline);
     return code;
 }
