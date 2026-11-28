@@ -425,21 +425,16 @@ psyco_inline_enter(PsycoObject *po)
 DEFINEVAR struct locals_map_s **psyco_locals_maps = NULL;
 DEFINEVAR long le_notes_made = 0, le_notes_free = 0;
 static int *free_notes = NULL;
-static long free_notes_cap = 0;
+static int free_notes_cap = 0;
 
 static long
 note_index(void)
 {
     long i;
     le_owner_t *o = psyco_owner;
-    if (o != NULL && o->nnotes == o->notescap) {
-        int cap = o->notescap ? 2 * o->notescap : 8;
-        void *p = PyMem_Realloc(o->notes, cap * sizeof(int));
-        if (p == NULL)
-            OUT_OF_MEMORY();
-        o->notes = p;
-        o->notescap = cap;
-    }
+    if (o != NULL && le_grow(&o->notes, &o->notescap, o->nnotes + 1, 8,
+                             sizeof *o->notes) < 0)
+        OUT_OF_MEMORY();
     if (le_notes_free > 0)
         i = free_notes[--le_notes_free];
     else {
@@ -463,14 +458,9 @@ void
 psyco_release_notes(int *notes, int n)
 {
     int k;
-    if (le_notes_free + n > free_notes_cap) {
-        long cap = 2 * (le_notes_free + n);
-        void *p = PyMem_Realloc(free_notes, cap * sizeof(int));
-        if (p == NULL)
-            return; /* those indices are not reused */
-        free_notes = p;
-        free_notes_cap = cap;
-    }
+    if (le_grow(&free_notes, &free_notes_cap, le_notes_free + n, 64,
+                sizeof *free_notes) < 0)
+        return; /* those indices are not reused */
     for (k = 0; k < n; k++) {
         psyco_locals_maps[notes[k]] = NULL;
         free_notes[le_notes_free++] = notes[k];
@@ -524,14 +514,8 @@ struct lm_build {
 static void
 lm_add(struct lm_build *b, long kind, long value, long n)
 {
-    if (b->count + 3 > b->size) {
-        long *items =
-            PyMem_Realloc(b->items, (b->size * 2 + 48) * sizeof(long));
-        if (items == NULL)
-            OUT_OF_MEMORY();
-        b->items = items;
-        b->size = b->size * 2 + 48;
-    }
+    if (le_grow(&b->items, &b->size, b->count + 3, 48, sizeof *b->items) < 0)
+        OUT_OF_MEMORY();
     b->items[b->count++] = kind;
     b->items[b->count++] = value;
     b->items[b->count++] = n;

@@ -87,14 +87,8 @@ free_insert(code_t *start, code_t *end)
     }
     if (LE_FAIL(LE_FAIL_FREELIST))
         return false;
-    if (nfree == freecap) {
-        int cap = freecap ? 2 * freecap : 64;
-        extent_t *n = PyMem_Realloc(free_ext, cap * sizeof(extent_t));
-        if (n == NULL)
-            return false;
-        free_ext = n;
-        freecap = cap;
-    }
+    if (le_grow(&free_ext, &freecap, nfree + 1, 64, sizeof *free_ext) < 0)
+        return false;
     memmove(free_ext + lo + 1, free_ext + lo, (nfree - lo) * sizeof(extent_t));
     free_ext[lo].start = start;
     free_ext[lo].end = end;
@@ -346,15 +340,10 @@ owner_add_extent(le_owner_t *o, code_t *start, code_t *end)
         made_add(o, start, end);
         return;
     }
-    if (o->nextents == o->extentscap) {
-        int cap = o->extentscap ? 2 * o->extentscap : o->parent ? 1 : 4;
-        void *n = PyMem_Realloc(o->extents, cap * sizeof(extent_t));
-        if (n == NULL)
-            return; /* out of memory: kept for good, as an abandoned
-                       compile must not run out again */
-        o->extents = n;
-        o->extentscap = cap;
-    }
+    if (le_grow(&o->extents, &o->extentscap, o->nextents + 1,
+                o->parent ? 1 : 4, sizeof *o->extents) < 0)
+        return; /* out of memory: kept for good, as an abandoned
+                   compile must not run out again */
     o->extents[o->nextents].start = start;
     o->extents[o->nextents].end = end;
     o->nextents++;
@@ -377,15 +366,8 @@ open_extent(code_t **limit)
         free_insert(start + EXTENT_MAX, end);
         end = start + EXTENT_MAX;
     }
-    if (nopen == opencap) {
-        int cap = opencap ? 2 * opencap : 16;
-        open_extent_t *n =
-            PyMem_Realloc(open_ext, cap * sizeof(open_extent_t));
-        if (n == NULL)
-            OUT_OF_MEMORY();
-        open_ext = n;
-        opencap = cap;
-    }
+    if (le_grow(&open_ext, &opencap, nopen + 1, 16, sizeof *open_ext) < 0)
+        OUT_OF_MEMORY();
     open_ext[nopen].start = start;
     open_ext[nopen].end = end;
     open_ext[nopen].owner = psyco_owner;
@@ -489,7 +471,8 @@ typedef struct {
     long seq;
 } note_t;
 static note_t *notes = NULL;
-static long nnotes = 0, notescap = 0;
+static long nnotes = 0;
+static int notescap = 0;
 
 struct le_reloc_s {
     code_t *at;
@@ -501,14 +484,8 @@ made_add(le_owner_t *o, code_t *start, code_t *end)
 {
     if (le_compile_depth == 0 || start == end)
         return;
-    if (nmade == madecap) {
-        int cap = madecap ? 2 * madecap : 16;
-        made_t *n = PyMem_Realloc(made, cap * sizeof(made_t));
-        if (n == NULL)
-            return; /* stays where it is */
-        made = n;
-        madecap = cap;
-    }
+    if (le_grow(&made, &madecap, nmade + 1, 16, sizeof *made) < 0)
+        return; /* stays where it is */
     made[nmade].owner = o;
     made[nmade].start = start;
     made[nmade].end = end;
@@ -554,14 +531,8 @@ le_reloc_note(void *at, int kind, int end)
     note_t *n;
     if (le_compile_depth == 0)
         return;
-    if (nnotes == notescap) {
-        long cap = notescap ? 2 * notescap : 1024;
-        note_t *p = PyMem_Realloc(notes, cap * sizeof(note_t));
-        if (p == NULL)
-            OUT_OF_MEMORY();
-        notes = p;
-        notescap = cap;
-    }
+    if (le_grow(&notes, &notescap, nnotes + 1, 1024, sizeof *notes) < 0)
+        OUT_OF_MEMORY();
     n = &notes[nnotes];
     n->at = (code_t *)at;
     n->kind = kind;
@@ -717,15 +688,9 @@ static int nold = 0, oldcap = 0, nold_freed = 0;
 static void
 old_add(code_t *start, code_t *end)
 {
-    if (nold == oldcap) {
-        int cap = oldcap ? 2 * oldcap : 64;
-        extent_t *n = PyMem_Realloc(old, cap * sizeof(extent_t));
-        if (n == NULL) {
-            free_insert(start, end);
-            return;
-        }
-        old = n;
-        oldcap = cap;
+    if (le_grow(&old, &oldcap, nold + 1, 64, sizeof *old) < 0) {
+        free_insert(start, end);
+        return;
     }
     old[nold].start = start;
     old[nold].end = end;
@@ -835,15 +800,9 @@ owner_extent_moved(le_owner_t *o, code_t *start, code_t *end, code_t *to,
 static void
 owner_add_reloc(le_owner_t *o, code_t *at, int kind, int end)
 {
-    if (o->nrelocs == o->relocscap) {
-        int cap = o->relocscap ? 2 * o->relocscap : 16;
-        struct le_reloc_s *n =
-            PyMem_Realloc(o->relocs, cap * sizeof(struct le_reloc_s));
-        if (n == NULL)
-            return;
-        o->relocs = n;
-        o->relocscap = cap;
-    }
+    if (le_grow(&o->relocs, &o->relocscap, o->nrelocs + 1, 16,
+                sizeof *o->relocs) < 0)
+        return;
     o->relocs[o->nrelocs].at = at;
     o->relocs[o->nrelocs].kind = (signed char)kind;
     o->relocs[o->nrelocs].end = (signed char)end;
@@ -947,16 +906,9 @@ psyco_code_move_made(void)
         for (l = 0; l < nmade; l++)
             if (made[l].owner == o && made[l].to != made[l].start)
                 need += 2;
-        if (need > o->extentscap) {
-            int cap = need + (need >> 1);
-            void *p = PyMem_Realloc(o->extents, cap * sizeof(extent_t));
-            if (p == NULL) {
-                piece_stay(m);
-                continue;
-            }
-            o->extents = p;
-            o->extentscap = cap;
-        }
+        if (le_grow(&o->extents, &o->extentscap, need, need,
+                    sizeof *o->extents) < 0)
+            piece_stay(m);
     }
     ncopies = 0;
     for (k = 0; k < nmade; k++)
@@ -1486,10 +1438,12 @@ typedef struct {
 
 static struct {
     node_t *nodes;
-    size_t n, cap;
+    size_t n;
+    int cap;
     le_addrmap_t index; /* object -> node number + 1 */
     size_t *stack;
-    size_t nstack, stackcap;
+    size_t nstack;
+    int stackcap;
     le_addrmap_t running; /* code objects a frame runs somewhere: -> 1 */
     le_addrmap_t placed;  /* groups a frame runs in: -> 1 */
     bool failed, unknown; /* unknown: which frames run is not known */
@@ -1527,17 +1481,10 @@ scan_node(PyObject *o, char kind)
         else
             return -1;
     }
-    if (scan.n == scan.cap) {
-        size_t cap = scan.cap ? 2 * scan.cap : 1024;
-        node_t *n = cap > SCAN_MAX_NODES
-                        ? NULL
-                        : PyMem_Realloc(scan.nodes, cap * sizeof(node_t));
-        if (n == NULL) {
-            scan.failed = true;
-            return -1;
-        }
-        scan.nodes = n;
-        scan.cap = cap;
+    if (scan.n >= SCAN_MAX_NODES || le_grow(&scan.nodes, &scan.cap, scan.n + 1,
+                                            1024, sizeof *scan.nodes) < 0) {
+        scan.failed = true;
+        return -1;
     }
     if (amap_reserve(&scan.index) < 0) {
         scan.failed = true;
@@ -1584,15 +1531,10 @@ push_alive(size_t i)
     if (scan.nodes[i].alive)
         return;
     scan.nodes[i].alive = true;
-    if (scan.nstack == scan.stackcap) {
-        size_t cap = scan.stackcap ? 2 * scan.stackcap : 1024;
-        size_t *s = PyMem_Realloc(scan.stack, cap * sizeof(size_t));
-        if (s == NULL) {
-            scan.failed = true;
-            return;
-        }
-        scan.stack = s;
-        scan.stackcap = cap;
+    if (le_grow(&scan.stack, &scan.stackcap, scan.nstack + 1, 1024,
+                sizeof *scan.stack) < 0) {
+        scan.failed = true;
+        return;
     }
     scan.stack[scan.nstack++] = i;
 }
@@ -2395,14 +2337,9 @@ psyco_owner_depend(CodeBufferObject *b)
     for (i = 0; i < from->ndeps; i++)
         if (from->deps[i] == g)
             return;
-    if (from->ndeps == from->depscap) {
-        int cap = from->depscap ? 2 * from->depscap : 2;
-        void *n = PyMem_Realloc(from->deps, cap * sizeof(le_group_t *));
-        if (n == NULL)
-            OUT_OF_MEMORY();
-        from->deps = n;
-        from->depscap = cap;
-    }
+    if (le_grow(&from->deps, &from->depscap, from->ndeps + 1, 2,
+                sizeof *from->deps) < 0)
+        OUT_OF_MEMORY();
     from->deps[from->ndeps++] = g;
 }
 
@@ -2658,14 +2595,8 @@ journal_add(CodeBufferObject *b)
 {
     if (psyco_compile_guard == NULL)
         return;
-    if (njournal == journalcap) {
-        int cap = journalcap ? 2 * journalcap : 64;
-        void *n = PyMem_Realloc(journal, cap * sizeof(CodeBufferObject *));
-        if (n == NULL)
-            OUT_OF_MEMORY();
-        journal = n;
-        journalcap = cap;
-    }
+    if (le_grow(&journal, &journalcap, njournal + 1, 64, sizeof *journal) < 0)
+        OUT_OF_MEMORY();
     journal[njournal++] = b;
 }
 
@@ -2762,14 +2693,9 @@ owner_add_buffer(le_owner_t *o, CodeBufferObject *b)
 {
     if (o == NULL)
         return; /* kept for good */
-    if (o->nbufs == o->bufscap) {
-        int cap = o->bufscap ? 2 * o->bufscap : o->parent ? 2 : 8;
-        void *n = PyMem_Realloc(o->bufs, cap * sizeof(CodeBufferObject *));
-        if (n == NULL)
-            OUT_OF_MEMORY();
-        o->bufs = n;
-        o->bufscap = cap;
-    }
+    if (le_grow(&o->bufs, &o->bufscap, o->nbufs + 1, o->parent ? 2 : 8,
+                sizeof *o->bufs) < 0)
+        OUT_OF_MEMORY();
     o->bufs[o->nbufs++] = b;
     if (o->parent != NULL) {
         if (amap_reserve(&group_blocks) < 0)

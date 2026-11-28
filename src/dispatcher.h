@@ -228,14 +228,9 @@ ge_blocks(global_entries_t *ge)
 PSY_INLINE int
 ge_add(global_entries_t *ge, CodeBufferObject *b)
 {
-    if (ge->nblocks == ge->blockscap) {
-        int cap = ge->blockscap ? 2 * ge->blockscap : 2;
-        void *n = PyMem_Realloc(ge->blocks, cap * sizeof(CodeBufferObject *));
-        if (n == NULL)
-            return -1;
-        ge->blocks = n;
-        ge->blockscap = cap;
-    }
+    if (le_grow(&ge->blocks, &ge->blockscap, ge->nblocks + 1, 2,
+                sizeof *ge->blocks) < 0)
+        return -1;
     Py_INCREF(b);
     ge->blocks[ge->nblocks++] = b;
     return 0;
