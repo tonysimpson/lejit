@@ -166,6 +166,39 @@ def caller_frames(n):
         w() for w in [who] * n]
 
 
+def _chain(f):
+    out = []
+    while f is not None:
+        out.append(f.f_code.co_name)
+        f = f.f_back
+    return out
+
+
+def _callers(s):
+    for c in s:
+        # no frame object is kept from one step to the next
+        yield c, _chain(sys._getframe().f_back)
+
+
+def _steps(out, n):
+    for _ in range(n):
+        out.append([x for x in _callers('abc')])
+
+
+def thread_generator_frames(n):
+    # each thread's target is called from C with no frame before it, and
+    # the generator's caller is compiled: the generator's running frame
+    # has no f_back of its own, and must keep none, since the evaluator
+    # makes it the thread's current frame when the step ends
+    import threading
+    out = []
+    for _ in range(n):
+        t = threading.Thread(target=_steps, args=(out, 3))
+        t.start()
+        t.join()
+    return out
+
+
 GETATTR = '''
 def __getattr__(name):
     if name == 'gone':
@@ -205,4 +238,5 @@ CASES = [
     ('exit_drops_traceback', [(3,)], {}),
     ('caller_frames', [(3,)], {}),
     ('getattr_deletes_itself', [(3,)], {}),
+    ('thread_generator_frames', [(4,)], {}),
 ]

@@ -74,6 +74,7 @@ frame_size.big_namedtuple                          3.7,3.8,3.9,3.10,3.11,3.12,3.
 frameless_entries.getattr_deletes_itself           3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 frameless_entries.names_not_identical              3.7,3.8,3.9,3.10,3.11,3.12         not looked at yet
 frameless_entries.other_globals                    3.13,3.14                          not looked at yet
+frameless_entries.thread_generator_frames          3.14,3.15                          not looked at yet
 frames.current_frames                              3.11,3.12,3.13,3.14,3.15           not looked at yet
 frames.make_namedtuple                             3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 frames_seen_from_c.back_names_kept_and_dropped     3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 sys._getframe emulates the compiled callee out of the frame it gives (frames.c:visit_link_frame), where CPython makes no frame object for it
