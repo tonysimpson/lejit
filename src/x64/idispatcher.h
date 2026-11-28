@@ -85,19 +85,13 @@ struct ipromotion_s {
         JMP_CC_UI32(CC_E, (long)(target));          \
     } while (0)
 
-/* write one chain entry at 'code'; returns its end */
-PSY_INLINE code_t *
-ipromotion_write_entry(code_t *code, int rg, long value, code_t *target)
-{
-    UPDATABLE_JUMP_IF_EQUALS(rg, value, target);
-    return code;
-}
-
+/* write 'jmp target' at 'code', over code already there */
 PSY_INLINE code_t *
 ipromotion_write_jump(code_t *code, code_t *target)
 {
-    JUMP_TO(target);
-    return code;
+    le_patch_word(code, 0xE9);
+    le_patch_rel32(code + SIZE_OF_FAR_JUMP, target);
+    return code + SIZE_OF_FAR_JUMP;
 }
 
 /* read back an entry written by ipromotion_write_entry. The target is
@@ -122,18 +116,21 @@ ipromotion_read_entry(code_t *code, long *value, code_t **target)
 PSY_INLINE void
 ipromotion_update_entry(code_t *code, long value, code_t *target)
 {
-    if (IS_SLOT_ENTRY(code)) {
-        *SLOT_OF_ENTRY(code) = value;
-        code += 9; /* je's rel32 */
-        UPDATABLE_WRITE_32BIT(REL32(code + 4, target));
-        le_trace_jump_cond(code - 6, code, target);
-        return;
-    }
-#undef ONLY_UPDATING
-#define ONLY_UPDATING 1
-    UPDATABLE_JUMP_IF_EQUALS(0, value, target);
-#undef ONLY_UPDATING
-#define ONLY_UPDATING 0
+    if (IS_SLOT_ENTRY(code))
+        le_patch_word(SLOT_OF_ENTRY(code), value);
+    else
+        le_patch_word((long *)(code + 2), value); /* REX, B8+r, imm64 */
+    le_patch_rel32(code + ENTRY_SIZE(code), target);
+}
+
+/* write one chain entry at 'code', in the chain's room; returns its end */
+PSY_INLINE code_t *
+ipromotion_write_entry(code_t *code, int rg, long value, code_t *target)
+{
+    code_t *entry = code;
+    UPDATABLE_JUMP_IF_EQUALS(rg, 0, entry); /* the form, then its fields */
+    ipromotion_update_entry(entry, value, target);
+    return code;
 }
 
 /***************************************************************/
@@ -252,7 +249,7 @@ change_cond_jump_target(void *tag, code_t *newtarget)
     /* safety check: do not write a JMP whose target is itself...
        would make an endless loop */
     psyco_assert(newtarget != code - 5 && newtarget != code - 6);
-    CHANGE_JUMP_TO(newtarget);
+    le_patch_rel32(code, newtarget);
 }
 
 PSY_INLINE code_t *
