@@ -147,7 +147,9 @@ le_binary_op_opcode(int nb)
    BINARY_OP with NB_SUBSCR is BINARY_SUBSCR,
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
-   UNARY_POSITIVE (and INTRINSIC_IMPORT_STAR is IMPORT_STAR), FORMAT_SIMPLE
+   UNARY_POSITIVE (and INTRINSIC_IMPORT_STAR is IMPORT_STAR; an intrinsic
+   no opcode had is LeJIT's own, INTRINSIC_BUILD_FROZENSET BUILD_FROZENSET),
+   COMPARE_OP with PyCmp_IS_NOT is IS_OP 1, FORMAT_SIMPLE
    is FORMAT_VALUE 0, LOAD_FAST_BORROW is
    LOAD_FAST, GET_ITER with an argument is GET_YIELD_FROM_ITER); 'arg'
    with its EXTENDED_ARG prefixes folded in, and no longer holding what 'op'
@@ -230,6 +232,43 @@ le_instr(le_code_t c, int pos)
                 in.op = ASYNC_GEN_WRAP;
             else if (in.arg == INTRINSIC_IMPORT_STAR)
                 in.op = IMPORT_STAR;
+            else if (in.arg == INTRINSIC_PRINT)
+                in.op = PRINT_EXPR;
+            else if (in.arg == INTRINSIC_STOPITERATION_ERROR)
+                in.op = STOPITERATION_ERROR;
+#ifdef INTRINSIC_BUILD_FROZENSET
+            else if (in.arg == INTRINSIC_BUILD_FROZENSET)
+                in.op = BUILD_FROZENSET;
+#endif
+            if (in.op != in.raw)
+                in.arg = 0;
+            break;
+#endif
+#if LE_HAS_OPCODE_CALL_INTRINSIC_2
+        case CALL_INTRINSIC_2:
+#ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
+            if (in.arg == INTRINSIC_MATCH_CLASS_ISINSTANCE)
+                in.op = MATCH_CLASS_ISINSTANCE;
+#endif
+#ifdef INTRINSIC_ADD_CONDITIONAL_ANNOTATION
+            if (in.arg == INTRINSIC_ADD_CONDITIONAL_ANNOTATION)
+                in.op = ADD_CONDITIONAL_ANNOTATION;
+#endif
+            if (in.op != in.raw)
+                in.arg = 0;
+            break;
+#endif
+#if LE_HAS_CMP_OUTCOME
+        /* is and in, which have opcodes of their own from 3.9 */
+        case COMPARE_OP:
+            if (in.arg == PyCmp_IS || in.arg == PyCmp_IS_NOT) {
+                in.op = IS_OP;
+                in.arg = in.arg == PyCmp_IS_NOT;
+            }
+            else if (in.arg == PyCmp_IN || in.arg == PyCmp_NOT_IN) {
+                in.op = CONTAINS_OP;
+                in.arg = in.arg == PyCmp_NOT_IN;
+            }
             break;
 #endif
         /* LeJIT holds its own reference to what a borrowed load loads */
@@ -299,6 +338,11 @@ le_prev(le_code_t c, int pos)
 #define LE_OPF_JUMPS 32
 /* to its target, or to the next instruction */
 #define LE_OPF_BRANCHES 64
+/* pushes one value, a constant's, a local's or a cell's, and runs no
+   Python code */
+#define LE_OPF_LOAD 128
+/* a binary operator, in place or not */
+#define LE_OPF_OPERATOR 256
 
 /* compiled only where handlers are in blocks, not an exception table */
 #define LE_OPF_COMPILED_IN_BLOCKS \
@@ -312,9 +356,6 @@ le_op_flags(int op)
         case NOP:
         case EXTENDED_ARG:
         case RESUME:
-        case LOAD_FAST:
-        case LOAD_FAST_CHECK:
-        case LOAD_CONST:
         case STORE_FAST:
         case DELETE_FAST:
         case POP_TOP:
@@ -329,9 +370,13 @@ le_op_flags(int op)
         case LOAD_FAST_LOAD_FAST:
         case STORE_FAST_LOAD_FAST:
         case STORE_FAST_STORE_FAST:
+            return LE_OPF_COMPILED | LE_OPF_LIGHT;
+        case LOAD_FAST:
+        case LOAD_FAST_CHECK:
+        case LOAD_CONST:
         case LOAD_SMALL_INT:
         case LOAD_COMMON_CONSTANT:
-            return LE_OPF_COMPILED | LE_OPF_LIGHT;
+            return LE_OPF_COMPILED | LE_OPF_LIGHT | LE_OPF_LOAD;
         case LOAD_FAST_AND_CLEAR:
 #if LE_HAS_OPCODE_ROT_FOUR
         case ROT_FOUR:
@@ -349,6 +394,10 @@ le_op_flags(int op)
         case UNARY_NEGATIVE:
         case UNARY_NOT:
         case UNARY_INVERT:
+        case COMPARE_OP:
+        case IS_OP:
+        case CONTAINS_OP:
+            return LE_OPF_COMPILED;
         case BINARY_POWER:
         case BINARY_MULTIPLY:
         case BINARY_MATRIX_MULTIPLY:
@@ -375,14 +424,7 @@ le_op_flags(int op)
         case INPLACE_AND:
         case INPLACE_XOR:
         case INPLACE_OR:
-        case COMPARE_OP:
-#if LE_HAS_OPCODE_IS_OP
-        case IS_OP:
-#endif
-#if LE_HAS_OPCODE_CONTAINS_OP
-        case CONTAINS_OP:
-#endif
-            return LE_OPF_COMPILED;
+            return LE_OPF_COMPILED | LE_OPF_OPERATOR;
         /* exceptions (except* stays interpreted where it has opcodes of its
            own) */
         case RAISE_VARARGS:
@@ -456,8 +498,10 @@ le_op_flags(int op)
         case FORMAT_VALUE:
         case CONVERT_VALUE:
         case PRINT_EXPR:
-        case CALL_INTRINSIC_1: /* mergepoints.c:compiled_intrinsic's */
-        case CALL_INTRINSIC_2: /* mergepoints.c:compiled_intrinsic's */
+        case STOPITERATION_ERROR:
+        case BUILD_FROZENSET:
+        case MATCH_CLASS_ISINSTANCE:
+        case ADD_CONDITIONAL_ANNOTATION:
         case LOAD_BUILD_CLASS:
 #if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
         case LOAD_ASSERTION_ERROR:
@@ -535,8 +579,9 @@ le_op_flags(int op)
         case MAKE_CELL:
         case COPY_FREE_VARS:
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
-        case LOAD_CLOSURE:
         case LOAD_DEREF:
+            return LE_OPF_COMPILED | LE_OPF_LOAD;
+        case LOAD_CLOSURE:
         case STORE_DEREF:
         case DELETE_DEREF:
         /* generators fused with their consumer (psyco_is_fusable_generator);

@@ -695,41 +695,6 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
     return 0;
 }
 
-/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles, besides those
-   bytecode.h:le_instr folds to the opcodes they replaced: a generator's
-   PEP 479 handler, frozenset() of a new set, and the REPL's print */
-static int
-compiled_intrinsic(int arg)
-{
-#ifdef INTRINSIC_BUILD_FROZENSET
-    if (arg == INTRINSIC_BUILD_FROZENSET)
-        return 1;
-#endif
-#if LE_HAS_OPCODE_CALL_INTRINSIC_1
-    return arg == INTRINSIC_PRINT || arg == INTRINSIC_STOPITERATION_ERROR;
-#else
-    return 0;
-#endif
-}
-
-/* the CALL_INTRINSIC_2 arguments pycompiler.c compiles: a class pattern
-   with no arguments (`case C():`), where CPython has one for it, and
-   module code's record of an annotation it reaches */
-static int
-compiled_intrinsic_2(int arg)
-{
-#ifdef INTRINSIC_ADD_CONDITIONAL_ANNOTATION
-    if (arg == INTRINSIC_ADD_CONDITIONAL_ANNOTATION)
-        return 1;
-#endif
-#ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
-    return arg == INTRINSIC_MATCH_CLASS_ISINSTANCE;
-#else
-    (void)arg;
-    return 0;
-#endif
-}
-
 static int
 fusable_yield(PyCodeObject *co);
 static int
@@ -776,10 +741,6 @@ _build_merge_points(PyCodeObject *co)
             goto not_ok;
         /* pycompiler.c:call_kwnames finds a CALL's KW_NAMES before this */
         if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)
-            goto not_ok;
-        if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
-            goto not_ok;
-        if (opcode == CALL_INTRINSIC_2 && !compiled_intrinsic_2(oparg))
             goto not_ok;
         /* cimpl_import_name imports eagerly */
         if (opcode == IMPORT_NAME && LE_IMPORT_LAZY(oparg))
@@ -851,18 +812,9 @@ yield_has_handler(PyCodeObject *co, le_code_t c, int yield)
 {
 #if LE_HAS_EXCEPTION_TABLE
     le_handler_t h;
-    (void)c;
     if (!le_handler_find(co, yield, &h))
         return 0;
-#if LE_HAS_OPCODE_CALL_INTRINSIC_1
-    {
-        le_instr_t in = le_instr(c, h.handler);
-        if (in.op == CALL_INTRINSIC_1 &&
-            in.arg == INTRINSIC_STOPITERATION_ERROR)
-            return 0;
-    }
-#endif
-    return 1;
+    return le_instr(c, h.handler).op != STOPITERATION_ERROR;
 #else
     int pos;
     (void)co;
@@ -931,13 +883,8 @@ psyco_handlers_only_pep479(PyCodeObject *co)
     Py_ssize_t at = 0;
     le_handler_t h;
     while (le_handler_next(co, &at, &h)) {
-#if LE_HAS_OPCODE_CALL_INTRINSIC_1
-        le_instr_t in = le_instr(le_code(co), h.handler);
-        if (in.op == CALL_INTRINSIC_1 &&
-            in.arg == INTRINSIC_STOPITERATION_ERROR)
-            continue;
-#endif
-        return 0;
+        if (le_instr(le_code(co), h.handler).op != STOPITERATION_ERROR)
+            return 0;
     }
 #else
     le_code_t c = le_code(co);

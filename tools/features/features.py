@@ -1327,6 +1327,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'ROT_FOUR', 'END_FINALLY', 'WITH_CLEANUP_START',
            'WITH_CLEANUP_FINISH', 'RERAISE', 'WITH_EXCEPT_START',
            'JUMP_IF_NOT_EXC_MATCH', 'GEN_START', 'ROT_N',
+           # new in 3.9: COMPARE_OP's is and in before (bytecode.h:le_instr
+           # folds them)
+           'IS_OP', 'CONTAINS_OP',
            # gone from 3.11: the operators are BINARY_OP's, calls CALL's,
            # the stack shuffles COPY's and SWAP's, and handlers the
            # exception table's
@@ -1379,12 +1382,16 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'DELETE_ATTR', 'DELETE_GLOBAL', 'DELETE_NAME')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
-                'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
-                'CONTAINS_OP', 'GET_LEN', 'MATCH_CLASS', 'MATCH_MAPPING',
+                'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'GET_LEN', 'MATCH_CLASS', 'MATCH_MAPPING',
                 'MATCH_SEQUENCE', 'MATCH_KEYS', 'COPY_DICT_WITHOUT_KEYS',
                 'BUILD_TUPLE_UNPACK_WITH_CALL', 'BUILD_TUPLE_UNPACK',
                 'BUILD_LIST_UNPACK', 'BUILD_SET_UNPACK', 'BUILD_MAP_UNPACK',
                 'BUILD_MAP_UNPACK_WITH_CALL')
+# and LeJIT's own opcodes, which no CPython has: the CALL_INTRINSIC_1 and
+# CALL_INTRINSIC_2 arguments it compiles, named for them
+# (bytecode.h:le_instr folds them), above the OPCODES this source lacks
+LEJIT_OPCODES = ('STOPITERATION_ERROR', 'BUILD_FROZENSET',
+                 'MATCH_CLASS_ISINSTANCE', 'ADD_CONDITIONAL_ANNOTATION')
 
 
 def _constant(node):
@@ -1915,12 +1922,13 @@ def render(found, ops, version, origin):
     values = dict((name, value) for name, value, _, _ in found)
     absent = [op for op in OPCODES
               if not values['LE_HAS_OPCODE_' + op] and op not in ops.pseudo]
-    if absent:
-        lines += ['', '/* opcodes this source lacks: no instruction has these values */']
-        # above every opcode, the compiler's pseudo-instructions too, so
-        # that no case for one of these matches another's
-        base = max(256, ops.highest + 1)
-        lines += ['#define %s %d' % (op, base + OPCODES.index(op)) for op in absent]
+    lines += ['', '/* opcodes this source lacks: no instruction has these values */']
+    # above every opcode, the compiler's pseudo-instructions too, so that no
+    # case for one of these matches another's
+    base = max(256, ops.highest + 1)
+    lines += ['#define %s %d' % (op, base + OPCODES.index(op)) for op in absent]
+    lines += ['#define %s %d' % (op, base + len(OPCODES) + i)
+              for i, op in enumerate(LEJIT_OPCODES)]
     lines +=['', '/* the opcodes whose argument is a jump (Lib/opcode.py hasjrel,'
               ' hasjabs) */']
     for macro, jump_ops in (('LE_IS_JREL', ops.jrel), ('LE_IS_JABS', ops.jabs)):
