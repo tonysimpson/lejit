@@ -221,13 +221,13 @@ _Static_assert(sizeof(((PyBytesObject *)0)->ob_sval[0]) == 1,
                "LeJIT: PyBytesObject.ob_sval: LeJIT reads 1 byte");
 
 #define LE_OFS_PyDictObject__ma_used offsetof(PyDictObject, ma_used)
-#define LE_SIZE2_PyDictObject__ma_used 2
+#define LE_SIZE2_PyDictObject__ma_used 3
 #define LE_UNSIGNED_PyDictObject__ma_used 0
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyDictObject *)0)->ma_used), Py_ssize_t),
                "LeJIT: PyDictObject.ma_used is not Py_ssize_t");
-_Static_assert(sizeof(((PyDictObject *)0)->ma_used) >= 4,
-               "LeJIT: PyDictObject.ma_used: LeJIT reads 4 bytes");
+_Static_assert(sizeof(((PyDictObject *)0)->ma_used) == 8,
+               "LeJIT: PyDictObject.ma_used: LeJIT reads 8 bytes");
 /* a dict's version tag, whose low 8 bits say which watchers watch it where
    LE_HAS_DICT_WATCHER_BITS. A dict with no version tag has the watcher
    bits alone, in _ma_watcher_tag: nothing tells its changes, so no code
