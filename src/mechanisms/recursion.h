@@ -264,8 +264,8 @@ typedef struct {
     int value;
 } int_slot_t;
 #define TSTATE_depth \
-    FMUT(DEF_FIELD(PyThreadState, int, LE_RECURSION_COUNT, NO_PREV_FIELD))
-#define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyThreadState, LE_RECURSION_COUNT, NO_PREV_FIELD))
+#define INT_value FMUT(DEF_FIELD(int_slot_t, value, NO_PREV_FIELD))
 #if LE_HAS_PY_RECURSION_REMAINING
 /* _Py_CheckRecursiveCallPy (3.12 Python/ceval.c), on the count already
    taken, which it gives back when it raises */
@@ -301,7 +301,7 @@ cimpl_check_recursive_call(void)
 }
 #else
 #define TSTATE_overflowed \
-    FMUT(DEF_FIELD(PyThreadState, char, overflowed, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyThreadState, overflowed, NO_PREV_FIELD))
 
 /* Py_LeaveRecursiveCall after the decrement */
 static inline void
@@ -448,7 +448,7 @@ enter_recursive_call(PsycoObject *po, vinfo_t *vts)
 typedef struct {
     long value;
 } long_slot_t;
-#define LONG_value FMUT(DEF_FIELD(long_slot_t, long, value, NO_PREV_FIELD))
+#define LONG_value FMUT(DEF_FIELD(long_slot_t, value, NO_PREV_FIELD))
 
 /* one call counted in thread state 'vts' without the limit's test, as
    CALL_EX_PY counts its frame: false with an exception set in 'po' */
@@ -510,7 +510,7 @@ enter_recursive_call_or_not(PsycoObject *po, vinfo_t *vts)
 #if LE_HAS_C_RECURSION_REMAINING
 #define LE_C_RECURSION_UNITS 2
 #define TSTATE_c_count \
-    FMUT(DEF_FIELD(PyThreadState, int, c_recursion_remaining, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyThreadState, c_recursion_remaining, NO_PREV_FIELD))
 /* gives back what compiled code took for a level run 'through_c' */
 #define LE_C_STEP_GIVE(ts, through_c) \
     ((ts)->c_recursion_remaining += LE_C_RECURSION_UNITS)

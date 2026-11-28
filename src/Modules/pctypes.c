@@ -495,19 +495,19 @@ load_word(PsycoObject *po, vinfo_t *v, long offset, int size, bool is_signed)
     switch (size * 2 + (is_signed ? 1 : 0)) {
         case 2:
             return psyco_get_field_offset(
-                po, v, FMUT(UNSIGNED_ARRAY(unsigned char, 0)), offset);
+                po, v, FMUT(DEF_ARRAY(unsigned char, 0)), offset);
         case 3:
             return psyco_get_field_offset(
                 po, v, FMUT(DEF_ARRAY(signed char, 0)), offset);
         case 4:
             return psyco_get_field_offset(
-                po, v, FMUT(UNSIGNED_ARRAY(unsigned short, 0)), offset);
+                po, v, FMUT(DEF_ARRAY(unsigned short, 0)), offset);
         case 5:
             return psyco_get_field_offset(po, v, FMUT(DEF_ARRAY(short, 0)),
                                           offset);
         case 8:
             return psyco_get_field_offset(
-                po, v, FMUT(UNSIGNED_ARRAY(unsigned int, 0)), offset);
+                po, v, FMUT(DEF_ARRAY(unsigned int, 0)), offset);
         case 9:
             return psyco_get_field_offset(po, v, FMUT(DEF_ARRAY(int, 0)),
                                           offset);

@@ -53,7 +53,7 @@ le_eval_breaker_test_on(PsycoObject *po, vinfo_t *vts)
 {
     condition_code_t cc;
     vinfo_t *vevents =
-        psyco_get_field_offset(po, vts, FMUT(UNSIGNED_ARRAY(unsigned char, 0)),
+        psyco_get_field_offset(po, vts, FMUT(DEF_ARRAY(unsigned char, 0)),
                                offsetof(PyThreadState, eval_breaker));
     if (vevents == NULL)
         return CC_ERROR;
@@ -1105,8 +1105,7 @@ callee_builtins(PsycoObject *po, vinfo_t *vfunc, vinfo_t *vglobals,
         condition_code_t cc;
         vinfo_t *vb = psyco_get_field_offset(
             po, vfunc,
-            FMUT(DEF_FIELD(PyFunctionObject, PyObject *, func_builtins,
-                           NO_PREV_FIELD)),
+            FMUT(DEF_FIELD(PyFunctionObject, func_builtins, NO_PREV_FIELD)),
             0);
         if (vb == NULL)
             return -1;
@@ -1822,77 +1821,72 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
    thread state's that a step changes. The code is the one field known
    once read: the frame never changes it. On 3.14 the word is a
    _PyStackRef, kept here as the object (code_of). */
-#define GEN_code CPY_FIELD(PyGenObject, code, OB_type)
+#define GEN_code \
+    DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, LE_FRAME_CODE_WORD, OB_type)
 #define iGEN_CODE FIELD_INDEX(GEN_code)
 #define GEN_code_word FMUT(GEN_code)
-#define GEN_globals FMUT(CPY_FIELD(PyGenObject, globals, GEN_code))
-#define GEN_builtins FMUT(CPY_FIELD(PyGenObject, builtins, GEN_code))
-#define GEN_locals FMUT(CPY_FIELD(PyGenObject, locals, GEN_code))
-#define GEN_place FMUT(CPY_FIELD(PyGenObject, place, GEN_code))
-#define GEN_previous FMUT(CPY_FIELD(PyGenObject, previous, GEN_code))
-#define GEN_frame_state FMUT(CPY_FIELD(PyGenObject, frame_state, GEN_code))
-#define GEN_exc_previous FMUT(CPY_FIELD(PyGenObject, exc_previous, GEN_code))
+#define GEN_globals \
+    FMUT(DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, f_globals, GEN_code))
+#define GEN_builtins \
+    FMUT(DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, f_builtins, GEN_code))
+#define GEN_locals \
+    FMUT(DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, f_locals, GEN_code))
+#define GEN_place                                                         \
+    FMUT(DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, LE_FRAME_PLACE_FIELD, \
+                      GEN_code))
+#define GEN_previous \
+    FMUT(DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, previous, GEN_code))
+#define GEN_frame_state FMUT(DEF_FIELD(PyGenObject, gi_frame_state, GEN_code))
+#define GEN_exc_previous \
+    FMUT(DEF_FIELD(PyGenObject, gi_exc_state.previous_item, GEN_code))
 #if LE_HAS_FRAME_STACKREFS
-#define GEN_stackpointer FMUT(CPY_FIELD(PyGenObject, stackpointer, GEN_code))
+#define GEN_stackpointer \
+    FMUT(DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, stackpointer, GEN_code))
 #else
-#define GEN_stacktop FMUT(CPY_FIELD(PyGenObject, stacktop, GEN_code))
+#define GEN_stacktop \
+    FMUT(DEF_FIELD_IN(LE_GEN_FRAME_OFS, le_frame_t, stacktop, GEN_code))
 #endif
-#define TSTATE_exc_info FMUT(CPY_FIELD(PyThreadState, exc_info, NO_PREV_FIELD))
+#define TSTATE_exc_info FMUT(DEF_FIELD(PyThreadState, exc_info, NO_PREV_FIELD))
 #if LE_HAS_TSTATE_CURRENT_FRAME
 #define TSTATE_current_frame \
-    FMUT(DEF_FIELD(PyThreadState, le_frame_t *, current_frame, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyThreadState, current_frame, NO_PREV_FIELD))
 #else
 typedef __typeof__(*((PyThreadState *)0)->cframe) le_gen_cframe_t;
-#define TSTATE_gen_cframe \
-    FMUT(DEF_FIELD(PyThreadState, le_gen_cframe_t *, cframe, NO_PREV_FIELD))
-#define CFRAME_current_frame                                     \
-    FMUT(DEF_FIELD(le_gen_cframe_t, le_frame_t *, current_frame, \
-                   NO_PREV_FIELD))
+#define TSTATE_gen_cframe FMUT(DEF_FIELD(PyThreadState, cframe, NO_PREV_FIELD))
+#define CFRAME_current_frame \
+    FMUT(DEF_FIELD(le_gen_cframe_t, current_frame, NO_PREV_FIELD))
 #endif
 #else
 /* A generator's fields and its frame object's (gi_frame), and the thread
    state's that a step changes. The code is the one field known once read:
    the generator never changes it. */
-#define GEN_code DEF_FIELD(PyGenObject, PyObject *, gi_code, OB_type)
+#define GEN_code DEF_FIELD(PyGenObject, gi_code, OB_type)
 #define iGEN_CODE FIELD_INDEX(GEN_code)
 #define GEN_code_word FMUT(GEN_code)
-#define GEN_frame \
-    FMUT(DEF_FIELD(PyGenObject, PyFrameObject *, gi_frame, NO_PREV_FIELD))
-#define GEN_exc_previous                            \
-    FMUT(DEF_FIELD(PyGenObject, _PyErr_StackItem *, \
-                   gi_exc_state.previous_item, NO_PREV_FIELD))
-#define FO_globals \
-    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_globals, NO_PREV_FIELD))
-#define FO_builtins \
-    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_builtins, NO_PREV_FIELD))
-#define FO_locals \
-    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_locals, NO_PREV_FIELD))
-#define FO_back \
-    FMUT(DEF_FIELD(PyFrameObject, PyFrameObject *, f_back, NO_PREV_FIELD))
-#define FO_lasti FMUT(DEF_FIELD(PyFrameObject, int, f_lasti, NO_PREV_FIELD))
+#define GEN_frame FMUT(DEF_FIELD(PyGenObject, gi_frame, NO_PREV_FIELD))
+#define GEN_exc_previous \
+    FMUT(DEF_FIELD(PyGenObject, gi_exc_state.previous_item, NO_PREV_FIELD))
+#define FO_globals FMUT(DEF_FIELD(PyFrameObject, f_globals, NO_PREV_FIELD))
+#define FO_builtins FMUT(DEF_FIELD(PyFrameObject, f_builtins, NO_PREV_FIELD))
+#define FO_locals FMUT(DEF_FIELD(PyFrameObject, f_locals, NO_PREV_FIELD))
+#define FO_back FMUT(DEF_FIELD(PyFrameObject, f_back, NO_PREV_FIELD))
+#define FO_lasti FMUT(DEF_FIELD(PyFrameObject, f_lasti, NO_PREV_FIELD))
 #if LE_HAS_FRAME_STATE
-#define FO_state \
-    FMUT(DEF_FIELD(PyFrameObject, PyFrameState, f_state, NO_PREV_FIELD))
+#define FO_state FMUT(DEF_FIELD(PyFrameObject, f_state, NO_PREV_FIELD))
 #define FO_stackdepth \
-    FMUT(DEF_FIELD(PyFrameObject, int, f_stackdepth, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyFrameObject, f_stackdepth, NO_PREV_FIELD))
 #else
-#define GEN_running \
-    FMUT(DEF_FIELD(PyGenObject, char, gi_running, NO_PREV_FIELD))
-#define FO_executing \
-    FMUT(DEF_FIELD(PyFrameObject, char, f_executing, NO_PREV_FIELD))
-#define FO_stacktop \
-    FMUT(DEF_FIELD(PyFrameObject, PyObject **, f_stacktop, NO_PREV_FIELD))
+#define GEN_running FMUT(DEF_FIELD(PyGenObject, gi_running, NO_PREV_FIELD))
+#define FO_executing FMUT(DEF_FIELD(PyFrameObject, f_executing, NO_PREV_FIELD))
+#define FO_stacktop FMUT(DEF_FIELD(PyFrameObject, f_stacktop, NO_PREV_FIELD))
 #endif
-#define TSTATE_exc_info \
-    FMUT(DEF_FIELD(PyThreadState, _PyErr_StackItem *, exc_info, NO_PREV_FIELD))
-#define TSTATE_frame \
-    FMUT(DEF_FIELD(PyThreadState, PyFrameObject *, frame, NO_PREV_FIELD))
+#define TSTATE_exc_info FMUT(DEF_FIELD(PyThreadState, exc_info, NO_PREV_FIELD))
+#define TSTATE_frame FMUT(DEF_FIELD(PyThreadState, frame, NO_PREV_FIELD))
 #endif
 /* a code's table of direct entries (psyco.h:le_gen_direct_t) */
-#define DIRECT_globals \
-    FMUT(DEF_FIELD(le_gen_direct_t, PyObject *, globals, NO_PREV_FIELD))
+#define DIRECT_globals FMUT(DEF_FIELD(le_gen_direct_t, globals, NO_PREV_FIELD))
 #define DIRECT_builtins \
-    FMUT(DEF_FIELD(le_gen_direct_t, PyObject *, builtins, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(le_gen_direct_t, builtins, NO_PREV_FIELD))
 /* by le_gen_direct_index less one: the place's unit */
 #define DIRECT_entries       \
     FMUT(DEF_ARRAY(code_t *, \
@@ -1958,7 +1952,7 @@ gen_frame_base(PsycoObject *po, vinfo_t *vobj)
 }
 #else
 /* a record's words, its frame object's */
-#define REC_words FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
+#define REC_words FMUT(DEF_ITEMS(PyFrameObject, f_localsplus))
 static void
 gen_layouts_init(void)
 {
@@ -2948,13 +2942,12 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
    types (fuse_stopped): there the coroutine is made and sent into. Emits
    those tests: 1 to run the body, 0 for the usual await, -1 with an
    exception. */
-#define TSTATE_origin_depth                                             \
-    FMUT(DEF_FIELD(PyThreadState, int, coroutine_origin_tracking_depth, \
+#define TSTATE_origin_depth                                        \
+    FMUT(DEF_FIELD(PyThreadState, coroutine_origin_tracking_depth, \
                    NO_PREV_FIELD))
 #if LE_HAS_COROUTINE_WRAPPER
-#define TSTATE_coroutine_wrapper                                 \
-    FMUT(DEF_FIELD(PyThreadState, PyObject *, coroutine_wrapper, \
-                   NO_PREV_FIELD))
+#define TSTATE_coroutine_wrapper \
+    FMUT(DEF_FIELD(PyThreadState, coroutine_wrapper, NO_PREV_FIELD))
 #endif
 DEFINEFN
 int

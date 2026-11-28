@@ -44,8 +44,7 @@ le_tstate_check(void)
 typedef struct {
     PyThreadState *ts;
 } tstate_slot_t;
-#define TSTATE_current \
-    FMUT(DEF_FIELD(tstate_slot_t, PyThreadState *, ts, NO_PREV_FIELD))
+#define TSTATE_current FMUT(DEF_FIELD(tstate_slot_t, ts, NO_PREV_FIELD))
 
 extern void *
 le_tstate_current_address(void);

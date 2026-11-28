@@ -41,9 +41,8 @@ le_traceback_entry(PyObject *tb_next, PyFrameObject *frame)
                                  PyFrame_GetLasti(frame), -1);
 }
 #endif
-#define LE_TSTATE_exc_occurred                                   \
-    FMUT(DEF_FIELD(PyThreadState, PyObject *, current_exception, \
-                   NO_PREV_FIELD))
+#define LE_TSTATE_exc_occurred \
+    FMUT(DEF_FIELD(PyThreadState, current_exception, NO_PREV_FIELD))
 
 static inline void
 le_exc_get_current(PyThreadState *ts, PyObject **type, PyObject **value,
@@ -101,7 +100,7 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyErr_Occurred() is tested on curexc_type, a pointer");
 #define LE_EXC_OCCURRED_OFFSET offsetof(PyThreadState, curexc_type)
 #define LE_TSTATE_exc_occurred \
-    FMUT(DEF_FIELD(PyThreadState, PyObject *, curexc_type, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyThreadState, curexc_type, NO_PREV_FIELD))
 
 static inline void
 le_exc_get_current(PyThreadState *ts, PyObject **type, PyObject **value,

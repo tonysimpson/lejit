@@ -54,22 +54,22 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
     switch (l->type) {
         INT_MEMBER(T_BOOL, FMUT(DEF_ARRAY(char, 0)), PsycoBool_FromLong);
         INT_MEMBER(T_BYTE, FMUT(DEF_ARRAY(char, 0)), PsycoLong_FromLong);
-        INT_MEMBER(T_UBYTE, FMUT(UNSIGNED_ARRAY(unsigned char, 0)),
+        INT_MEMBER(T_UBYTE, FMUT(DEF_ARRAY(unsigned char, 0)),
                    PsycoLong_FromUnsignedLong);
         INT_MEMBER(T_SHORT, FMUT(DEF_ARRAY(short, 0)), PsycoLong_FromLong);
-        INT_MEMBER(T_USHORT, FMUT(UNSIGNED_ARRAY(unsigned short, 0)),
+        INT_MEMBER(T_USHORT, FMUT(DEF_ARRAY(unsigned short, 0)),
                    PsycoLong_FromUnsignedLong);
         INT_MEMBER(T_INT, FMUT(DEF_ARRAY(int, 0)), PsycoLong_FromLong);
-        INT_MEMBER(T_UINT, FMUT(UNSIGNED_ARRAY(unsigned int, 0)),
+        INT_MEMBER(T_UINT, FMUT(DEF_ARRAY(unsigned int, 0)),
                    PsycoLong_FromUnsignedLong);
         INT_MEMBER(T_LONG, FMUT(DEF_ARRAY(long, 0)), PsycoLong_FromLong);
-        INT_MEMBER(T_ULONG, FMUT(UNSIGNED_ARRAY(unsigned long, 0)),
+        INT_MEMBER(T_ULONG, FMUT(DEF_ARRAY(unsigned long, 0)),
                    PsycoLong_FromUnsignedLong);
         INT_MEMBER(T_PYSSIZET, FMUT(DEF_ARRAY(Py_ssize_t, 0)),
                    PsycoLong_FromSsize_t);
         CALL_MEMBER(T_LONGLONG, FMUT(DEF_ARRAY(long long, 0)),
                     PyLong_FromLongLong);
-        CALL_MEMBER(T_ULONGLONG, FMUT(UNSIGNED_ARRAY(unsigned long long, 0)),
+        CALL_MEMBER(T_ULONGLONG, FMUT(DEF_ARRAY(unsigned long long, 0)),
                     PyLong_FromUnsignedLongLong);
         case T_FLOAT:
             return psyco_generic_call(po, PyMember_GetOne,

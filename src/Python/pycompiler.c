@@ -1228,42 +1228,38 @@ cimpl_exc_restore(PyObject **held)
 }
 
 #if LE_HAS_INTERPRETER_FRAME
-#define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
-#define FRAME_frame_obj FMUT(CPY_FIELD(le_frame_t, frame_obj, NO_PREV_FIELD))
-#define FRAME_owner FMUT(DEF_FIELD(le_frame_t, char, owner, NO_PREV_FIELD))
+#define FRAME_localsplus FMUT(DEF_ITEMS(le_frame_t, localsplus))
+/* the frame's object, or NULL: Python can see the frame's words only
+   through it */
+#define FRAME_frame_obj FMUT(DEF_FIELD(le_frame_t, frame_obj, NO_PREV_FIELD))
+#define FRAME_owner FMUT(DEF_FIELD(le_frame_t, owner, NO_PREV_FIELD))
 /* what a pause writes (mechanisms/frames.h:le_gen_frame_pause); the
    state is a byte LE_GEN_STATE_GAP before the frame, a generator's or a
    record's */
-#define FRAME_place                                                  \
-    FMUT(DEF_FIELD(le_frame_t, _Py_CODEUNIT *, LE_FRAME_PLACE_FIELD, \
-                   NO_PREV_FIELD))
+#define FRAME_place \
+    FMUT(DEF_FIELD(le_frame_t, LE_FRAME_PLACE_FIELD, NO_PREV_FIELD))
 #if LE_HAS_FRAME_STACKREFS
-#define FRAME_stack \
-    FMUT(DEF_FIELD(le_frame_t, void *, stackpointer, NO_PREV_FIELD))
+#define FRAME_stack FMUT(DEF_FIELD(le_frame_t, stackpointer, NO_PREV_FIELD))
 #else
-#define FRAME_stack FMUT(DEF_FIELD(le_frame_t, int, stacktop, NO_PREV_FIELD))
+#define FRAME_stack FMUT(DEF_FIELD(le_frame_t, stacktop, NO_PREV_FIELD))
 #endif
 #define FRAME_bytes FMUT(DEF_ARRAY(int8_t, 0))
 #else
-#define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
-#define FRAME_gen \
-    FMUT(DEF_FIELD(PyFrameObject, PyObject *, f_gen, NO_PREV_FIELD))
-#define FRAME_refcnt \
-    FMUT(DEF_FIELD(PyObject, Py_ssize_t, ob_refcnt, NO_PREV_FIELD))
+#define FRAME_localsplus FMUT(DEF_ITEMS(PyFrameObject, f_localsplus))
+#define FRAME_gen FMUT(DEF_FIELD(PyFrameObject, f_gen, NO_PREV_FIELD))
+#define FRAME_refcnt FMUT(DEF_FIELD(PyObject, ob_refcnt, NO_PREV_FIELD))
 /* what a pause writes (mechanisms/frames.h:le_gen_frame_pause) */
-#define FRAME_lasti FMUT(DEF_FIELD(PyFrameObject, int, f_lasti, NO_PREV_FIELD))
-#define FRAME_iblock \
-    FMUT(DEF_FIELD(PyFrameObject, int, f_iblock, NO_PREV_FIELD))
+#define FRAME_lasti FMUT(DEF_FIELD(PyFrameObject, f_lasti, NO_PREV_FIELD))
+#define FRAME_iblock FMUT(DEF_FIELD(PyFrameObject, f_iblock, NO_PREV_FIELD))
 #define FRAME_block_ints \
     FMUT(DEF_ARRAY(int, offsetof(PyFrameObject, f_blockstack)))
 #if LE_HAS_FRAME_STATE
 #define FRAME_stackdepth \
-    FMUT(DEF_FIELD(PyFrameObject, int, f_stackdepth, NO_PREV_FIELD))
-#define FRAME_state \
-    FMUT(DEF_FIELD(PyFrameObject, PyFrameState, f_state, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyFrameObject, f_stackdepth, NO_PREV_FIELD))
+#define FRAME_state FMUT(DEF_FIELD(PyFrameObject, f_state, NO_PREV_FIELD))
 #else
 #define FRAME_stacktop \
-    FMUT(DEF_FIELD(PyFrameObject, PyObject **, f_stacktop, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyFrameObject, f_stacktop, NO_PREV_FIELD))
 #endif
 _Static_assert(sizeof(PyTryBlock) == 3 * sizeof(int),
                "LeJIT: a frame's block is not three ints");
@@ -3038,8 +3034,8 @@ psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, PyObject *kwnames,
    binder made (psyfunc.c:bind_cells); a cell can change under any call
    (nonlocal in a callee), so its content is read each time.
    The translated *_DEREF cases read and store it through this. */
-#define CELL_ob_ref FMUT(CPY_FIELD(PyCellObject, ob_ref, OB_type))
-#define OB_refcnt FMUT(CPY_FIELD(PyObject, ob_refcnt, NO_PREV_FIELD))
+#define CELL_ob_ref FMUT(DEF_FIELD(PyCellObject, ob_ref, OB_type))
+#define OB_refcnt FMUT(DEF_FIELD(PyObject, ob_refcnt, NO_PREV_FIELD))
 
 static PyObject *
 cimpl_unicode_append(PyObject *v, PyObject *w)

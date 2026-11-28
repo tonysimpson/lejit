@@ -8,7 +8,7 @@
 #include "pobject.h"
 #include "pabstract.h"
 
-#define LIST_ob_item FMUT(CPY_FIELD(PyListObject, ob_item, VAR_size))
+#define LIST_ob_item FMUT(DEF_FIELD(PyListObject, ob_item, VAR_size))
 #define LIST_TOTAL FIELDS_TOTAL(LIST_ob_item)
 #define VLIST_ITEMS LIST_TOTAL
 #define LIST_itemsarray FMUT(DEF_ARRAY(PyObject *, 0))

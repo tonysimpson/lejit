@@ -1480,7 +1480,7 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         else if (i < absent->n && v >= 0) {
             MOV_R_O(REG_TRANSIENT_2, REG_TRANSIENT_1, absent->hash_at[i]);
             CMP_I32_DO(absent->hash[i], REG_TRANSIENT_2,
-                       offsetof(PyASCIIObject, hash));
+                       CPY_OFFSET(PyASCIIObject, hash));
             JNE_DONE();
         }
     }

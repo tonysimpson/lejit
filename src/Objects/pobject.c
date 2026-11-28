@@ -251,7 +251,7 @@ Psyco_ConstantType(PsycoObject *po, vinfo_t *vi, PyTypeObject **tp)
 typedef struct {
     void *p;
 } slot_word_t;
-#define SLOT_value FMUT(DEF_FIELD(slot_word_t, void *, p, NO_PREV_FIELD))
+#define SLOT_value FMUT(DEF_FIELD(slot_word_t, p, NO_PREV_FIELD))
 
 /* 'hold': the value is an object (Py_None for NULL in the record), held
    by the record, so that a new object at the same address can't pass the
@@ -712,7 +712,7 @@ class_keys_index(le_dictkeys_t *keys, PyObject *name)
 #endif
 
 #define INSTANCE_dict FMUT(DEF_ARRAY(PyObject *, 0))
-#define DICT_ma_values FMUT(CPY_FIELD(PyDictObject, ma_values, NO_PREV_FIELD))
+#define DICT_ma_values FMUT(DEF_FIELD(PyDictObject, ma_values, NO_PREV_FIELD))
 
 static store_cache_t *
 store_cache(PyTypeObject *tp, PyObject *name);
@@ -1080,7 +1080,7 @@ load_guard_set(attr_guard_t *guard, PyTypeObject *tp)
    which is all that every version does: 3.13 renames a class without a
    new version tag. Each name a guard compares with is kept, so that its
    text is never freed and its address never stands for another name. */
-#define TYPE_tp_name FMUT(CPY_FIELD(PyTypeObject, tp_name, NO_PREV_FIELD))
+#define TYPE_tp_name FMUT(DEF_FIELD(PyTypeObject, tp_name, NO_PREV_FIELD))
 DEFINEFN
 condition_code_t
 Psyco_TypeNameChanged(PsycoObject *po, PyTypeObject *tp)
@@ -1610,7 +1610,7 @@ cimpl_class_load_changed(PyObject *cls, PyObject *name)
 }
 
 #define TYPE_tp_descr_get \
-    FMUT(CPY_FIELD(PyTypeObject, tp_descr_get, NO_PREV_FIELD))
+    FMUT(DEF_FIELD(PyTypeObject, tp_descr_get, NO_PREV_FIELD))
 
 static vinfo_t *
 class_getattr(PsycoObject *po, vinfo_t *vcls, vinfo_t *vname)

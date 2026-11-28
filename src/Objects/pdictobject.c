@@ -6,7 +6,7 @@
 #include "../mechanisms/store_gc.h"
 
 /* ma_used is read as its low 32 bits (psyco.h's layouts) */
-#define DICT_ma_used FMUT(CPY_FIELD(PyDictObject, ma_used, OB_type))
+#define DICT_ma_used FMUT(DEF_FIELD(PyDictObject, ma_used, OB_type))
 #define iDICT_MA_USED FIELD_INDEX(DICT_ma_used)
 
 DEFINEFN

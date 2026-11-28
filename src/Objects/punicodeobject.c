@@ -55,9 +55,11 @@ static unsigned char ascii_whitespace[128];
    compact at the top, as state_at_least's unsigned >= needs). Only
    'interned' changes once a string is ready; the rest of the word is
    padding that CPython never initialises. */
-#define UNICODE_length CPY_NONNEG_FIELD(PyASCIIObject, length, OB_type)
-#define UNICODE_hash CPY_FIELD(PyASCIIObject, hash, UNICODE_length)
-#define UNICODE_state CPY_FIELD(PyASCIIObject, state, UNICODE_hash)
+#define UNICODE_length NONNEG_FIELD(PyASCIIObject, length, OB_type)
+#define UNICODE_hash DEF_FIELD(PyASCIIObject, hash, UNICODE_length)
+/* the low byte alone: the rest of the word may be uninitialised */
+#define UNICODE_state \
+    FREAD_AS(uint8_t, DEF_FIELD(PyASCIIObject, state, UNICODE_hash))
 #define STATE_COMPACT_ASCII               \
     (LE_BIT_PyASCIIObject__state__ready | \
      LE_BIT_PyASCIIObject__state__ascii | \
@@ -407,7 +409,7 @@ struct view_bound {
 };
 static struct view_bound view_bound;
 #define VIEW_BOUND_end \
-    FMUT(NONNEG_FIELD(struct view_bound, Py_ssize_t, end, NO_PREV_FIELD))
+    FMUT(NONNEG_FIELD(struct view_bound, end, NO_PREV_FIELD))
 
 /* the bound the helper just called left */
 static vinfo_t *
@@ -795,9 +797,9 @@ punicode_item(PsycoObject *po, vinfo_t *v, vinfo_t *i)
         release_me = i = idx;
     }
 
-    df = kind == PyUnicode_1BYTE_KIND   ? UNSIGNED_ARRAY(Py_UCS1, data)
-         : kind == PyUnicode_2BYTE_KIND ? UNSIGNED_ARRAY(Py_UCS2, data)
-                                        : UNSIGNED_ARRAY(Py_UCS4, data);
+    df = kind == PyUnicode_1BYTE_KIND   ? DEF_ARRAY(Py_UCS1, data)
+         : kind == PyUnicode_2BYTE_KIND ? DEF_ARRAY(Py_UCS2, data)
+                                        : DEF_ARRAY(Py_UCS4, data);
     ch = psyco_get_field_array(po, root, df, i);
     vinfo_xdecref(release_me, po);
     if (ch == NULL)

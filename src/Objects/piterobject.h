@@ -10,8 +10,8 @@
 
 /* seqiterobject, private to Objects/iterobject.c, is copied from the
    source into psyco.h */
-#define SEQITER_it_index FMUT(CPY_FIELD(seqiterobject, it_index, OB_type))
-#define SEQITER_it_seq CPY_FIELD(seqiterobject, it_seq, SEQITER_it_index)
+#define SEQITER_it_index FMUT(DEF_FIELD(seqiterobject, it_index, OB_type))
+#define SEQITER_it_seq DEF_FIELD(seqiterobject, it_seq, SEQITER_it_index)
 #define iSEQITER_IT_INDEX FIELD_INDEX(SEQITER_it_index)
 #define iSEQITER_IT_SEQ FIELD_INDEX(SEQITER_it_seq)
 #define SEQITER_TOTAL FIELDS_TOTAL(SEQITER_it_seq)

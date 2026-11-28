@@ -8,8 +8,8 @@
 #include "pobject.h"
 #include "pabstract.h"
 
-#define CFUNC_m_ml CPY_FIELD(PyCFunctionObject, m_ml, OB_type)
-#define CFUNC_m_self CPY_FIELD(PyCFunctionObject, m_self, CFUNC_m_ml)
+#define CFUNC_m_ml DEF_FIELD(PyCFunctionObject, m_ml, OB_type)
+#define CFUNC_m_self DEF_FIELD(PyCFunctionObject, m_self, CFUNC_m_ml)
 #define iCFUNC_M_ML FIELD_INDEX(CFUNC_m_ml)
 #define iCFUNC_M_SELF FIELD_INDEX(CFUNC_m_self)
 #define CFUNC_TOTAL FIELDS_TOTAL(CFUNC_m_self)

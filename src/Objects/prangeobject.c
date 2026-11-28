@@ -26,10 +26,10 @@
 
 /* rangeobject and rangeiterobject, private to Objects/rangeobject.c, are
    copied from the source into psyco.h */
-#define RANGE_start CPY_FIELD(rangeobject, start, OB_type)
-#define RANGE_stop CPY_FIELD(rangeobject, stop, RANGE_start)
-#define RANGE_step CPY_FIELD(rangeobject, step, RANGE_stop)
-#define RANGE_length CPY_FIELD(rangeobject, length, RANGE_step)
+#define RANGE_start DEF_FIELD(rangeobject, start, OB_type)
+#define RANGE_stop DEF_FIELD(rangeobject, stop, RANGE_start)
+#define RANGE_step DEF_FIELD(rangeobject, step, RANGE_stop)
+#define RANGE_length DEF_FIELD(rangeobject, length, RANGE_step)
 /* virtual ranges only: words, not C fields */
 #define iVRANGE_START FIELDS_TOTAL(RANGE_length)
 #define iVRANGE_STOP (iVRANGE_START + 1)
@@ -37,15 +37,15 @@
 #define VRANGE_TOTAL (iVRANGE_START + 3)
 
 #if LE_HAS_RANGE_ITER_INDEX
-#define RANGEITER_index FMUT(CPY_FIELD(rangeiterobject, index, OB_type))
-#define RANGEITER_start CPY_FIELD(rangeiterobject, start, RANGEITER_index)
-#define RANGEITER_step CPY_FIELD(rangeiterobject, step, RANGEITER_start)
-#define RANGEITER_len CPY_FIELD(rangeiterobject, len, RANGEITER_step)
+#define RANGEITER_index FMUT(DEF_FIELD(rangeiterobject, index, OB_type))
+#define RANGEITER_start DEF_FIELD(rangeiterobject, start, RANGEITER_index)
+#define RANGEITER_step DEF_FIELD(rangeiterobject, step, RANGEITER_start)
+#define RANGEITER_len DEF_FIELD(rangeiterobject, len, RANGEITER_step)
 #define iRANGEITER_INDEX FIELD_INDEX(RANGEITER_index)
 #else
-#define RANGEITER_start FMUT(CPY_FIELD(rangeiterobject, start, OB_type))
-#define RANGEITER_step CPY_FIELD(rangeiterobject, step, RANGEITER_start)
-#define RANGEITER_len FMUT(CPY_FIELD(rangeiterobject, len, RANGEITER_step))
+#define RANGEITER_start FMUT(DEF_FIELD(rangeiterobject, start, OB_type))
+#define RANGEITER_step DEF_FIELD(rangeiterobject, step, RANGEITER_start)
+#define RANGEITER_len FMUT(DEF_FIELD(rangeiterobject, len, RANGEITER_step))
 #endif
 #define iRANGEITER_START FIELD_INDEX(RANGEITER_start)
 #define iRANGEITER_STEP FIELD_INDEX(RANGEITER_step)

@@ -26,10 +26,8 @@ typedef struct {
     const void *ob_descr;
 } le_arrayobject_t;
 
-#define ARRAY_ob_item \
-    FMUT(DEF_FIELD(le_arrayobject_t, char *, ob_item, VAR_size))
-#define ARRAY_ob_descr \
-    DEF_FIELD(le_arrayobject_t, const void *, ob_descr, ARRAY_ob_item)
+#define ARRAY_ob_item FMUT(DEF_FIELD(le_arrayobject_t, ob_item, VAR_size))
+#define ARRAY_ob_descr DEF_FIELD(le_arrayobject_t, ob_descr, ARRAY_ob_item)
 
 /* what an item of one typecode is */
 typedef struct {
@@ -243,13 +241,13 @@ item_field(const item_kind_t *k)
     switch (k->size) {
         case 1:
             return k->is_signed ? FMUT(DEF_ARRAY(signed char, 0))
-                                : FMUT(UNSIGNED_ARRAY(unsigned char, 0));
+                                : FMUT(DEF_ARRAY(unsigned char, 0));
         case 2:
             return k->is_signed ? FMUT(DEF_ARRAY(short, 0))
-                                : FMUT(UNSIGNED_ARRAY(unsigned short, 0));
+                                : FMUT(DEF_ARRAY(unsigned short, 0));
         case 4:
             return k->is_signed ? FMUT(DEF_ARRAY(int, 0))
-                                : FMUT(UNSIGNED_ARRAY(unsigned int, 0));
+                                : FMUT(DEF_ARRAY(unsigned int, 0));
         default:
             return FMUT(DEF_ARRAY(long, 0));
     }

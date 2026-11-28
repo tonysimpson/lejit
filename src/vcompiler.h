@@ -677,93 +677,95 @@ psyco_internal_putfld(PsycoObject *po, int findex, defield_t df, vinfo_t *vi,
 #define FIELD_OFS_SHIFT 32
 #define NO_PREV_FIELD ((defield_t) - 1)
 #define FIELD_RESERVED_INDEX 0xCC
-#define SIZE2_FROM_CTYPE(ctype)                                          \
-    (sizeof(ctype) == 1    ? 0                                           \
-     : sizeof(ctype) == 2  ? 1                                           \
-     : sizeof(ctype) == 4  ? 2                                           \
-     : sizeof(ctype) == 8  ? 3                                           \
-     : sizeof(ctype) == 16 ? 4                                           \
-                           : (extra_assert(!"field size is not a small " \
-                                            "power of two"),             \
-                              0))
-/*#define FIELD_NTH(df, n)
-        (extra_assert(FIELD_INDEX(df)+(n) == FIELD_INDEX((df)+(n))),
-        ((df) + (n) + (((n) << FIELD_SIZE2(df)) << FIELD_OFS_SHIFT))*/
-#define STRUCT_FIELD_BUILD(cstruct, ctype, cfield, prevf, flags)  \
-    ((defield_t)((offsetof(cstruct, cfield) << FIELD_OFS_SHIFT) | \
-                 (SIZE2_FROM_CTYPE(ctype) << FIELD_SIZE2_SHIFT) | \
-                 field_next_index(prevf, true) | flags))
-#define ARRAY_FIELD_BUILD(ctype, baseofs, flags)                  \
-    ((defield_t)(((long)(baseofs) << FIELD_OFS_SHIFT) |           \
-                 (SIZE2_FROM_CTYPE(ctype) << FIELD_SIZE2_SHIFT) | \
-                 FIELD_RESERVED_INDEX | FIELD_ARRAY | flags))
+/* log2 of a width of 1 to 16 bytes, which must be a power of two */
+#define SIZE2_FROM_SIZE(n)                                            \
+    (0 * sizeof(char[((n) & ((n) - 1)) == 0 && (n) <= 16 ? 1 : -1]) + \
+     ((n) == 1   ? 0                                                  \
+      : (n) == 2 ? 1                                                  \
+      : (n) == 4 ? 2                                                  \
+      : (n) == 8 ? 3                                                  \
+                 : 4))
+/* whether the value 'x' is of an unsigned integer type (a pointer, a
+   struct or a floating value is not) */
+#define IS_UNSIGNED(x)         \
+    _Generic((x),              \
+        _Bool: 1,              \
+        unsigned char: 1,      \
+        unsigned short: 1,     \
+        unsigned int: 1,       \
+        unsigned long: 1,      \
+        unsigned long long: 1, \
+        default: 0)
+/* a field at offset 'ofs' read with the width and sign of the value 'x' */
+#define FIELD_BUILD(ofs, x, index, flags)                                  \
+    ((defield_t)(((long)(ofs) << FIELD_OFS_SHIFT) |                        \
+                 ((long)SIZE2_FROM_SIZE(sizeof(x)) << FIELD_SIZE2_SHIFT) | \
+                 (IS_UNSIGNED(x) ? FIELD_UNSIGNED : 0) | (index) | (flags)))
+#define FIELD_OF(cstruct, cfield) (((cstruct *)0)->cfield)
 
 /*****************************************************************
  * You must describe the fields of each C structure of the interpreter
  * that you want Psyco to work with.  Use the following macros field
  * by field.  Each macro returns a defield_t which contains the
- * definition of the field. */
+ * definition of the field, read with the field's own width and sign. */
 
-/* build the field definition corresponding to:
-    - the C structure whose name is in 'cstruct';
-    - the C type given by 'ctype';
-    - the field name given by 'cfield'.
-   For the field order you must give in 'prevf' the defield_t
-   corresponding to the previous field of the C structure,
-   or NO_PREV_FIELD if you are defining the first field. */
-#define DEF_FIELD(cstruct, ctype, cfield, prevf) \
-    STRUCT_FIELD_BUILD(cstruct, ctype, cfield, prevf, 0)
-
-/* special case: use the following macro instead of DEF_FIELD
-   if 'ctype' is an unsigned numeric type. */
-#define UNSIGNED_FIELD(cstruct, ctype, cfield, prevf) \
-    STRUCT_FIELD_BUILD(cstruct, ctype, cfield, prevf, FIELD_UNSIGNED)
+/* the field 'cfield' of the C structure 'cstruct'. For the field order
+   you must give in 'prevf' the defield_t of the previous field of the
+   structure, or NO_PREV_FIELD if you are defining the first field. */
+#define DEF_FIELD(cstruct, cfield, prevf)                             \
+    FIELD_BUILD(offsetof(cstruct, cfield), FIELD_OF(cstruct, cfield), \
+                field_next_index(prevf, true), 0)
 
 /* signed fields that are known to be non-negative */
-#define NONNEG_FIELD(cstruct, ctype, cfield, prevf) \
-    STRUCT_FIELD_BUILD(cstruct, ctype, cfield, prevf, FIELD_NONNEG)
+#define NONNEG_FIELD(cstruct, cfield, prevf)                          \
+    FIELD_BUILD(offsetof(cstruct, cfield), FIELD_OF(cstruct, cfield), \
+                field_next_index(prevf, true), FIELD_NONNEG)
 
-/* a field of a CPython struct: its offset, the size LeJIT reads and whether
-   unsigned come from psyco.h's LE_OFS_, LE_SIZE2_ and LE_UNSIGNED_
-   macros, checked against the target's headers; a field not listed
-   there doesn't compile. DEF_FIELD and the others above are for
-   LeJIT's own structs. */
-#define CPY_FIELD_BUILD(cstruct, cfield, prevf, flags)                      \
-    ((defield_t)(((long)LE_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |  \
-                 ((long)LE_SIZE2_##cstruct##__##cfield                      \
-                  << FIELD_SIZE2_SHIFT) |                                   \
-                 field_next_index(prevf, true) |                            \
-                 (LE_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0) | \
-                 flags))
-#define CPY_FIELD(cstruct, cfield, prevf) \
-    CPY_FIELD_BUILD(cstruct, cfield, prevf, 0)
-#define CPY_NONNEG_FIELD(cstruct, cfield, prevf) \
-    CPY_FIELD_BUILD(cstruct, cfield, prevf, FIELD_NONNEG)
-/* the items of an array field, as DEF_ARRAY at its offset */
-#define CPY_ARRAY(cstruct, cfield)                                         \
-    ((defield_t)(((long)LE_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) | \
-                 ((long)LE_SIZE2_##cstruct##__##cfield                     \
-                  << FIELD_SIZE2_SHIFT) |                                  \
-                 FIELD_RESERVED_INDEX | FIELD_ARRAY |                      \
-                 (LE_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0)))
-/* the offset alone, for the backend */
+/* the field 'cfield' of a 'cstruct' found at offset 'base' of the
+   object */
+#define DEF_FIELD_IN(base, cstruct, cfield, prevf)  \
+    FIELD_BUILD((base) + offsetof(cstruct, cfield), \
+                FIELD_OF(cstruct, cfield), field_next_index(prevf, true), 0)
+
+/* an array field, read as its first item */
+#define DEF_ARRAY_FIELD(cstruct, cfield, prevf)                          \
+    FIELD_BUILD(offsetof(cstruct, cfield), FIELD_OF(cstruct, cfield)[0], \
+                field_next_index(prevf, true), 0)
+
+/* the items of the array field 'cfield', as DEF_ARRAY at its offset */
+#define DEF_ITEMS(cstruct, cfield)                                       \
+    FIELD_BUILD(offsetof(cstruct, cfield), FIELD_OF(cstruct, cfield)[0], \
+                FIELD_RESERVED_INDEX, FIELD_ARRAY)
+
+/* the offset of a CPython field that hand-written emitted code reads,
+   from psyco.h's LE_OFS_ macros, whose asserts check the width that code
+   relies on; a field not listed there doesn't compile */
 #define CPY_OFFSET(cstruct, cfield) LE_OFS_##cstruct##__##cfield
 
-/* the same, for pure arrays instead of structures */
-#define DEF_ARRAY(ctype, baseofs) ARRAY_FIELD_BUILD(ctype, baseofs, 0)
-#define UNSIGNED_ARRAY(ctype, baseofs) \
-    ARRAY_FIELD_BUILD(ctype, baseofs, FIELD_UNSIGNED)
+/* items of the C type 'ctype' in memory at offset 'baseofs', for memory
+   that is not a field */
+#define DEF_ARRAY(ctype, baseofs) \
+    FIELD_BUILD(baseofs, *(ctype *)0, FIELD_RESERVED_INDEX, FIELD_ARRAY)
 
-/* you can surround DEF_FIELD() by FARRAY(), FMUT(), FPYREF():
+/* you can surround DEF_FIELD() by FARRAY(), FMUT(), FPYREF(), FREAD_AS():
     - FARRAY() means that the field is actually an array in the
       structure, as for example 'ob_items' in PyTupleObject;
     - FMUT() means that the field is mutable;
-    - FPYREF() means that we want to read or store a PyObject* reference */
+    - FPYREF() means that we want to read or store a PyObject* reference;
+    - FREAD_AS() reads the field with the width and sign of 'ctype'
+      instead of its own: each use says why */
 #define FARRAY(df) ((defield_t)((long)(df) | FIELD_ARRAY))
 #define FMUT(df) ((defield_t)((long)(df) | FIELD_MUTABLE))
 #define FPYREF(df)                                             \
     (extra_assert(1 << FIELD_SIZE2(df) == sizeof(PyObject *)), \
      (defield_t)((long)(df) | FIELD_PYOBJ_REF))
+#define FREAD_AS(ctype, df)                                         \
+    ((defield_t)(((long)(df) &                                      \
+                  ~(((long)FIELD_SIZE2_MASK << FIELD_SIZE2_SHIFT) | \
+                    FIELD_UNSIGNED)) |                              \
+                 ((long)SIZE2_FROM_SIZE(sizeof(ctype))              \
+                  << FIELD_SIZE2_SHIFT) |                           \
+                 (IS_UNSIGNED(*(ctype *)0) ? FIELD_UNSIGNED : 0)))
 
 /* inspection of a defield_t:
     - FIELDS_TOTAL(df) returns the number of fields of the structure
