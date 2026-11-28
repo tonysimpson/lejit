@@ -279,17 +279,16 @@ le_dead_locals(PyObject *self, PyObject *co)
         return NULL;
     for (mp = psyco_first_merge_point(mps); mp->bytecode_position >= 0; mp++) {
         PyObject *names = PyList_New(0), *key;
-        Py_ssize_t i;
+        int i, ndead;
+        const int *dead = mp_dead(mp, &ndead);
         if (names == NULL)
             goto fail;
-        for (i = 0; i < PyList_GET_SIZE(mp->entries.fatlist); i++) {
-            PyObject *o = PyList_GET_ITEM(mp->entries.fatlist, i);
+        for (i = 0; i < ndead; i++) {
             bool either;
-            if (!PyLong_Check(o))
-                break;
             if (PyList_Append(names, le_code_local_name(
                                          ((PyCodeObject *)co),
-                                         psyco_dead_local(o, &either))) < 0) {
+                                         psyco_dead_local(dead[i], &either))) <
+                0) {
                 Py_DECREF(names);
                 goto fail;
             }

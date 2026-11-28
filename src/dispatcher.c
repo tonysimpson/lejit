@@ -33,7 +33,7 @@
  *    from stays live for the PARK_LIVE_MAX newest, and is frozen after,
  *    with what a snapshot leaves out kept beside it (psyco_park).
  * psyco_forget_dead_vars puts the dead locals that mergepoints.c lists
- * first in each fatlist in one form, keeping their values;
+ * at each merge point (mp_dead) in one form, keeping their values;
  * psyco_make_dead_virtuals_real makes their virtual values real once a
  * merge point has reached its cap. State
  * is global and non-re-entrant (cmpinternal,
@@ -2032,20 +2032,15 @@ holds_reference(vinfo_array_t *a)
    so it isn't dead. Only loads of constants are emitted. */
 DEFINEFN
 void
-psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
+psyco_forget_dead_vars(PsycoObject *po, mergepoint_t *mp, bool unfix)
 {
     int i, limit;
-    PyObject *plist = ge->fatlist;
-    extra_assert(PyList_Check(plist));
-    limit = PyList_GET_SIZE(plist);
+    const int *dead = mp_dead(mp, &limit);
     for (i = 0; i < limit; i++) {
         vinfo_t *vi, **slot;
         vinfo_array_t *a;
         bool either;
-        PyObject *o1 = PyList_GET_ITEM(plist, i);
-        if (!PyLong_Check(o1))
-            break;
-        slot = &LOC_LOCALS_PLUS[psyco_dead_local(o1, &either)];
+        slot = &LOC_LOCALS_PLUS[psyco_dead_local(dead[i], &either)];
         vi = *slot;
         if (vi == NULL)
             continue;
@@ -2127,17 +2122,12 @@ bool
 psyco_make_dead_virtuals_real(PsycoObject *po, mergepoint_t *mp)
 {
     int i, limit;
-    PyObject *plist = mp->entries.fatlist;
+    const int *dead = mp_dead(mp, &limit);
     if (mp->real_from == 0 || psyco_block_serial(po) + 1 < mp->real_from)
         return true;
-    limit = PyList_GET_SIZE(plist);
     for (i = 0; i < limit; i++) {
-        vinfo_t *vi;
         bool either;
-        PyObject *o1 = PyList_GET_ITEM(plist, i);
-        if (!PyLong_Check(o1))
-            break;
-        vi = LOC_LOCALS_PLUS[psyco_dead_local(o1, &either)];
+        vinfo_t *vi = LOC_LOCALS_PLUS[psyco_dead_local(dead[i], &either)];
         if (made_real_when_dead(vi, mp) && !compute_vinfo(vi, po))
             return false;
     }
@@ -2255,7 +2245,7 @@ canonical_int(PsycoObject *po, int index)
 #define VARIES_KIND 3
 #define VARIES_ZERO 4
 struct varies_s {
-    Py_ssize_t seen; /* items of the fatlist read */
+    int seen; /* blocks read */
     int cap;
     long *value;
     char *state;
@@ -2318,8 +2308,7 @@ varies_read_block(struct varies_s *vc, CodeBufferObject *b)
 static void
 varies_at(global_entries_t *ge, int nlocals, const long *want, char *varies)
 {
-    PyObject *plist = ge->fatlist;
-    Py_ssize_t j, len = PyList_GET_SIZE(plist);
+    int j, len = ge_count(ge);
     struct varies_s *vc = ge->varies;
     int k;
     if (vc == NULL) {
@@ -2332,13 +2321,9 @@ varies_at(global_entries_t *ge, int nlocals, const long *want, char *varies)
         vc->state = NULL;
         ge->varies = vc;
     }
-    /* blocks are appended after the dead locals' numbers (mergepoints.c);
-       a block read again, after running out of memory, changes nothing */
-    for (j = vc->seen; j < len; j++) {
-        PyObject *o1 = PyList_GET_ITEM(plist, j);
-        if (CodeBuffer_Check(o1))
-            varies_read_block(vc, (CodeBufferObject *)o1);
-    }
+    /* blocks are appended; a block read again, after running out of
+       memory, changes nothing */
+    for (j = vc->seen; j < len; j++) varies_read_block(vc, ge_blocks(ge)[j]);
     vc->seen = len;
     for (k = 0; k < nlocals; k++) {
         int index = INDEX_LOC_LOCALS_PLUS + k;
@@ -2703,8 +2688,6 @@ psyco_compatible(PsycoObject *po, global_entries_t *patterns)
     fz_summary_t summary;
     bool summarised = false;
     int i;
-    PyObject *plist = patterns->fatlist;
-    extra_assert(PyList_Check(plist));
     for (i = 0; i < le_code_nlocals(po->pr.co); i++) canonical_int(po, i);
     compatible_drop_unused =
         !compatible_at_join && !psyco_compatible_keep_facts;
@@ -2716,15 +2699,10 @@ psyco_compatible(PsycoObject *po, global_entries_t *patterns)
 #if LE_CODESTATS
     psyco_cs_align_rejects = 0;
 #endif
-    i = PyList_GET_SIZE(plist);
+    i = ge_count(patterns);
     while (i--) /* the most dummy algorithm: step by step in the list, */
-    {           /* checking for a match at each step.                  */
-        CodeBufferObject *codebuf;
-        PyObject *o1 = PyList_GET_ITEM(plist, i);
-        /* the dead locals' numbers come first (mergepoints.c) */
-        if (PyLong_CheckExact(o1))
-            break;
-        codebuf = (CodeBufferObject *)o1;
+    {           /* newest first, checking for a match at each step.    */
+        CodeBufferObject *codebuf = ge_blocks(patterns)[i];
         if (!summarised) {
             summary_of(&summary, &po->vlocals, false);
             summarised = true;

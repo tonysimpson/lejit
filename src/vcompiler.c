@@ -1347,7 +1347,7 @@ PsycoObject_Ready(PsycoObject *po)
     mergepoint_t *mp;
     psyco_assert_coherent(po);
     mp = psyco_first_merge_point(po->pr.merge_points);
-    psyco_forget_dead_vars(po, &mp->entries, false);
+    psyco_forget_dead_vars(po, mp, false);
     return mp;
 }
 

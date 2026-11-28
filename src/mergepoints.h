@@ -28,17 +28,26 @@ struct mergepoint_s {
     int virtual_numbers, virtual_objects;
     /* a backward jump's target */
     int loop_head;
+    /* the locals dead here (mergepoints.c:_find_dead_locals): 'ndead'
+       ints in the report, 'dead_at' ints from this merge point; read each
+       with psyco_dead_local */
+    int dead_at, ndead;
 };
 
-/* a dead local's item at the start of a merge point's fatlist
-   (mergepoints.c): its index, and whether it may be bound on one path to
-   the merge point and unbound on another */
-PSY_INLINE int
-psyco_dead_local(PyObject *item, bool *either)
+PSY_INLINE const int *
+mp_dead(mergepoint_t *mp, int *n)
 {
-    long v = PyLong_AS_LONG(item);
-    *either = v < 0;
-    return v < 0 ? ~v : v;
+    *n = mp->ndead;
+    return (const int *)mp + mp->dead_at;
+}
+
+/* a dead local's entry (mp_dead): its index, and whether it may be bound
+   on one path to the merge point and unbound on another */
+PSY_INLINE int
+psyco_dead_local(int item, bool *either)
+{
+    *either = item < 0;
+    return item < 0 ? ~item : item;
 }
 
 /* 'bytecode_ptr' gives the position of the merge point in the bytecode.

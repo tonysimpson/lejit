@@ -201,71 +201,76 @@ EXTERNVAR int psyco_cs_align_rejects;
 /*****************************************************************/
 /***   "Global Entries"                                        ***/
 
-/* global entry points for the compiler. One global entry point holds a list
-   of already-compiled code buffers corresponding to the various states
-   in which the compiler has already be seen at this point. See
-   psyco_compatible().
-
-   The dispatcher saves all CodeBufferObjects (with their copy of the
-   compiler state) in a list for each 'entry point' of the compiler
-   (the main entry point is spec_main_loop, the start of the main loop).
-   When coming back to this entry point later, the list let us determine
-   whether we already encountered the same state.
-
-   The details of this structure are private.
-   XXX implemented as a list object holding CodeBufferObjects in no
-   XXX particular order. Must be optimized for reasonably fast searches
-   XXX if the lists become large (more than just a few items).
-
-   The list starts with PyLongObjects whose numbers tell which local variables
-   may safely be deleted at that point.
-*/
+/* global entry points for the compiler. One global entry point holds the
+   blocks (CodeBufferObjects, with their copy of the compiler state)
+   already compiled at this point, oldest first, each holding a reference,
+   so that a later state can be compared with theirs: see
+   psyco_compatible(). Zeroed, it is empty. */
 struct global_entries_s {
-    PyObject *fatlist;       /* list of PyLongObjects then CodeBufferObjects */
+    CodeBufferObject **blocks; /* NULL until the first block */
+    int nblocks, blockscap;
     struct varies_s *varies; /* psyco_forget_values's, or NULL */
 };
 
-/* a new, empty fatlist, untracked: it holds only ints and code buffers,
-   which the GC doesn't track, so walking it in each collection would find
-   nothing */
-PSY_INLINE PyObject *
-psyco_fatlist_new(void)
-{
-    PyObject *l = PyList_New(0);
-    if (l != NULL)
-        PyObject_GC_UnTrack(l);
-    return l;
-}
-
-/* initialize a global_entries_t structure */
-PSY_INLINE void
-psyco_ge_init(global_entries_t *ge)
-{
-    ge->varies = NULL;
-    ge->fatlist = psyco_fatlist_new();
-    if (ge->fatlist == NULL)
-        OUT_OF_MEMORY();
-}
-
-/* register the code buffer; it will be found by future calls to
-   psyco_compatible(). */
 PSY_INLINE int
-register_codebuf(global_entries_t *ge, CodeBufferObject *codebuf)
+ge_count(global_entries_t *ge)
 {
-    return PyList_Append(ge->fatlist, (PyObject *)codebuf);
+    return ge->nblocks;
 }
 
-/* for mergepoints.c */
-PSY_INLINE void
-psyco_ge_unused_var(global_entries_t *ge, int num)
+PSY_INLINE CodeBufferObject **
+ge_blocks(global_entries_t *ge)
 {
-    PyObject *o = PyLong_FromLong(num);
-    if (o == NULL || PyList_Append(ge->fatlist, o))
-        OUT_OF_MEMORY();
+    return ge->blocks;
+}
+
+/* register the block 'b' as the newest; -1 if out of memory */
+PSY_INLINE int
+ge_add(global_entries_t *ge, CodeBufferObject *b)
+{
+    if (ge->nblocks == ge->blockscap) {
+        int cap = ge->blockscap ? 2 * ge->blockscap : 2;
+        void *n = PyMem_Realloc(ge->blocks, cap * sizeof(CodeBufferObject *));
+        if (n == NULL)
+            return -1;
+        ge->blocks = n;
+        ge->blockscap = cap;
+    }
+    Py_INCREF(b);
+    ge->blocks[ge->nblocks++] = b;
+    return 0;
+}
+
+/* take 'b' out, keeping the others' order; whether it was there */
+PSY_INLINE bool
+ge_remove(global_entries_t *ge, CodeBufferObject *b)
+{
+    int i;
+    for (i = ge->nblocks; i--;)
+        if (ge->blocks[i] == b) {
+            ge->nblocks--;
+            memmove(ge->blocks + i, ge->blocks + i + 1,
+                    (ge->nblocks - i) * sizeof(CodeBufferObject *));
+            Py_DECREF(b);
+            return true;
+        }
+    return false;
+}
+
+PSY_INLINE void
+ge_free(global_entries_t *ge)
+{
+    while (ge->nblocks > 0) {
+        CodeBufferObject *b = ge->blocks[--ge->nblocks];
+        Py_DECREF(b);
+    }
+    PyMem_Free(ge->blocks);
+    ge->blocks = NULL;
+    ge->blockscap = 0;
 }
 
 EXTERNFN void
-psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix);
+psyco_forget_dead_vars(PsycoObject *po, mergepoint_t *mp, bool unfix);
 EXTERNFN bool
 psyco_make_dead_virtuals_real(PsycoObject *po, mergepoint_t *mp);
 

@@ -14,9 +14,9 @@
  *     the first prefix. Placement only affects how much code is compiled
  *     and shared: any instruction boundary may be a merge point.
  *  3. Liveness of locals (as upstream's FULL_CONTROL_FLOW): at each merge
- *     point, the locals never read again are listed first in its fatlist,
- *     and psyco_forget_dead_vars puts them in one form before the state
- *     is compared, so states differing only in them share code; with each
+ *     point, the locals never read again are listed (mp_dead), and
+ *     psyco_forget_dead_vars puts them in one form before the state is
+ *     compared, so states differing only in them share code; with each
  *     goes whether it may be bound on one path there and unbound on
  *     another, from a forward pass over the same successors. Their values
  *     stay, as CPython's frame keeps them. Successors are
@@ -58,11 +58,10 @@ report_free(co_report_t *report)
     Py_ssize_t i;
     for (i = 0; i < report->mergepoint_count; i++) {
         psyco_ge_changed(&report->mergepoints[i].entries);
-        Py_XDECREF(report->mergepoints[i].entries.fatlist);
+        ge_free(&report->mergepoints[i].entries);
     }
     if (report->joins != NULL) {
-        for (i = 0; i < report->unit_count; i++)
-            Py_XDECREF(report->joins[i].fatlist);
+        for (i = 0; i < report->unit_count; i++) ge_free(&report->joins[i]);
         PyMem_Free(report->joins);
     }
     PyMem_Free(report);
@@ -336,17 +335,17 @@ _bound_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
     return changed;
 }
 
-/* write the dead locals at each merge point into its fatlist (before any
-   code buffer is added), as ~index where the local may be bound on one
-   path there and unbound on another (psyco_dead_local), from the
-   arguments bound at the start. Returns 0 on memory error, with nothing
-   set.
+/* list the dead locals at each merge point, in ints added at the end of
+   the report, which may move: as ~index where the local may be bound on
+   one path there and unbound on another (psyco_dead_local), from the
+   arguments bound at the start. Out of memory, none is dead.
    The first argument of code with a __class__ cell is never dead: a
    zero-argument super() reads it (psuper_noargs). Nor is a local that is
    also a cell, which the *_DEREF instructions read. */
-static int
-_find_dead_locals(PyCodeObject *co, co_report_t *report)
+static void
+_find_dead_locals(PyCodeObject *co, co_report_t **reportp)
 {
+    co_report_t *report = *reportp;
     le_code_t c = le_code(co);
     Py_ssize_t n = c.size / LE_UNIT;
     int nlocals = le_code_nlocals(co), words = LIVE_WORDS(le_code_nlocals(co));
@@ -358,11 +357,12 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     int *break_to, *exit_to, nbreak = 0, nexit = 0;
     uint64_t *live, *tmp, *bound = NULL, *unbound, *tb, *tu;
     unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
-    int ok = 0;
+    size_t at, ndead = 0;
+    int *dead;
     int keep_first = co->co_argcount > 0 && psyco_class_cell(co) >= 0;
 
     if (nlocals == 0)
-        return 1;
+        return;
     /* one block: the sets first, for their alignment */
     live = PyMem_Calloc(1, ((n + 2) * words) * sizeof(uint64_t) +
                                8 * (n + 1) * sizeof(int) + (n + 1));
@@ -460,28 +460,46 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
                        break_to, nbreak, exit_to, nexit, bound, unbound, tb,
                        tu, nlocals, words));
 
+#define DEAD_AT(m, v)                                                         \
+    (!LIVE_TEST(                                                              \
+         live + (report->mergepoints[m].bytecode_position / LE_UNIT) * words, \
+         v) &&                                                                \
+     !le_code_local_is_cell(co, v))
+    for (m = 0; m < report->mergepoint_count; m++) {
+        int v;
+        for (v = keep_first; v < nlocals; v++) ndead += DEAD_AT(m, v);
+    }
+    if (ndead == 0)
+        goto done;
+    /* after the breaker checks, at the end of _find_merge_points' block */
+    at = (sizeof(co_report_t) +
+          sizeof(mergepoint_t) * report->mergepoint_count +
+          report->unit_count + 1 + sizeof(int) - 1) /
+         sizeof(int);
+    report = PyMem_Realloc(report, (at + ndead) * sizeof(int));
+    if (report == NULL)
+        goto done;
+    *reportp = report;
+    report->breaker_checks =
+        (unsigned char *)&report->mergepoints[report->mergepoint_count + 1];
+    dead = (int *)report + at;
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
-        Py_ssize_t at = mp->bytecode_position / LE_UNIT;
-        uint64_t *in = live + at * words;
+        Py_ssize_t u = mp->bytecode_position / LE_UNIT;
         int v;
+        mp->dead_at = (int)(dead - (int *)mp);
         for (v = keep_first; v < nlocals; v++)
-            if (!LIVE_TEST(in, v) && !le_code_local_is_cell(co, v)) {
-                int either = LIVE_TEST(bound + at * words, v) &&
-                             LIVE_TEST(unbound + at * words, v);
-                PyObject *o = PyLong_FromLong(either ? ~v : v);
-                if (o == NULL || PyList_Append(mp->entries.fatlist, o) < 0) {
-                    Py_XDECREF(o);
-                    goto done;
-                }
-                Py_DECREF(o);
+            if (DEAD_AT(m, v)) {
+                int either = LIVE_TEST(bound + u * words, v) &&
+                             LIVE_TEST(unbound + u * words, v);
+                dead[mp->ndead++] = either ? ~v : v;
             }
+        dead += mp->ndead;
     }
-    ok = 1;
+#undef DEAD_AT
 done:
     PyMem_Free(bound);
     PyMem_Free(live);
-    return ok;
 }
 
 /* NULL with *bad set: a jump to no instruction's start, which LeJIT doesn't
@@ -615,9 +633,10 @@ _find_merge_points(PyCodeObject *co, int *bad)
         }
     }
 
-    report = (co_report_t *)PyMem_Malloc(
-        sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count) +
-        entry_count_len);
+    /* zeroed: each merge point has no block yet */
+    report = (co_report_t *)PyMem_Calloc(
+        1, sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count) +
+               entry_count_len);
     if (report == NULL) {
         PyMem_Free(entry_count);
         return NULL;
@@ -641,44 +660,14 @@ _find_merge_points(PyCodeObject *co, int *bad)
         if (entry_count[entry_count_index] > 1) {
             report->mergepoints[mergepoint_index].bytecode_position =
                 entry_count_index * LE_UNIT;
-            report->mergepoints[mergepoint_index].entries.fatlist =
-                psyco_fatlist_new();
-            if (report->mergepoints[mergepoint_index].entries.fatlist ==
-                NULL) {
-                report->mergepoint_count = mergepoint_index;
-                report_free(report);
-                PyMem_Free(entry_count);
-                return NULL;
-            }
-            report->mergepoints[mergepoint_index].blocks = 0;
-            report->mergepoints[mergepoint_index].entries.varies = NULL;
-            report->mergepoints[mergepoint_index].real_from = 0;
-            report->mergepoints[mergepoint_index].virtual_numbers = 0;
-            report->mergepoints[mergepoint_index].virtual_objects = 0;
             report->mergepoints[mergepoint_index].loop_head =
                 is_loop_head[entry_count_index];
             mergepoint_index++;
         }
     }
     report->mergepoints[mergepoint_count].bytecode_position = -1;
-    report->mergepoints[mergepoint_count].entries.fatlist = NULL;
-    report->mergepoints[mergepoint_count].blocks = 0;
-    report->mergepoints[mergepoint_count].entries.varies = NULL;
-    report->mergepoints[mergepoint_count].real_from = 0;
-    report->mergepoints[mergepoint_count].virtual_numbers = 0;
-    report->mergepoints[mergepoint_count].virtual_objects = 0;
-    report->mergepoints[mergepoint_count].loop_head = 0;
     PyMem_Free(entry_count);
-    if (!_find_dead_locals(co, report)) {
-        /* out of memory: keep every local (the lists may hold some) */
-        PyErr_Clear();
-        for (mergepoint_index = 0; mergepoint_index < mergepoint_count;
-             mergepoint_index++) {
-            PyObject *l =
-                report->mergepoints[mergepoint_index].entries.fatlist;
-            PyList_SetSlice(l, 0, PyList_GET_SIZE(l), NULL);
-        }
-    }
+    _find_dead_locals(co, &report);
     return report;
 }
 
@@ -1336,7 +1325,6 @@ DEFINEFN global_entries_t *
 psyco_join_point(PyObject *mergepoints, int position)
 {
     co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
-    global_entries_t *ge;
     psyco_assert(position >= 0 && position / 2 < report->unit_count);
     if (report->joins == NULL) {
         report->joins =
@@ -1344,15 +1332,7 @@ psyco_join_point(PyObject *mergepoints, int position)
         if (report->joins == NULL)
             return NULL;
     }
-    ge = &report->joins[position / 2];
-    if (ge->fatlist == NULL) {
-        ge->fatlist = psyco_fatlist_new();
-        if (ge->fatlist == NULL) {
-            PyErr_Clear();
-            return NULL;
-        }
-    }
-    return ge;
+    return &report->joins[position / 2];
 }
 
 /* whether 'ge' is one of this report's lists (codemanager.c) */

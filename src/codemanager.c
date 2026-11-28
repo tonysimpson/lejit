@@ -2741,14 +2741,8 @@ owner_add_buffer(le_owner_t *o, CodeBufferObject *b)
 static void
 codebuf_unlist(CodeBufferObject *b)
 {
-    PyObject *l = b->ge->fatlist;
-    Py_ssize_t j;
-    for (j = PyList_GET_SIZE(l); j--;)
-        if (PyList_GET_ITEM(l, j) == (PyObject *)b) {
-            PyList_SetSlice(l, j, j + 1, NULL);
-            psyco_ge_changed(b->ge);
-            break;
-        }
+    if (ge_remove(b->ge, b))
+        psyco_ge_changed(b->ge);
     b->ge = NULL;
 }
 
@@ -2791,7 +2785,7 @@ codebuf_new(PsycoObject *po, global_entries_t *ge, code_t *codestart,
                 psyco_summary_build_short(&b->summary.head, &po->vlocals);
             else
                 psyco_summary_build(&b->summary.full, &po->vlocals);
-            if (register_codebuf(ge, b) < 0)
+            if (ge_add(ge, b) < 0)
                 OUT_OF_MEMORY();
             b->ge = ge;
         }
