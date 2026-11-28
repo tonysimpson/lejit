@@ -53,7 +53,9 @@ static int nopen = 0, opencap = 0;
    costs at least 2 MB of RSS */
 #define EXTENT_MAX (256 * 1024)
 
-static void
+/* false if there was no room to list it: it is then never used again, so
+   that freeing never fails */
+static bool
 free_insert(code_t *start, code_t *end)
 {
     int lo = 0, hi = nfree;
@@ -75,17 +77,19 @@ free_insert(code_t *start, code_t *end)
                     (nfree - lo - 1) * sizeof(extent_t));
             nfree--;
         }
-        return;
+        return true;
     }
     if (lo < nfree && free_ext[lo].start == end) {
         free_ext[lo].start = start;
-        return;
+        return true;
     }
+    if (LE_FAIL(LE_FAIL_FREELIST))
+        return false;
     if (nfree == freecap) {
         int cap = freecap ? 2 * freecap : 64;
         extent_t *n = PyMem_Realloc(free_ext, cap * sizeof(extent_t));
         if (n == NULL)
-            OUT_OF_MEMORY();
+            return false;
         free_ext = n;
         freecap = cap;
     }
@@ -93,6 +97,7 @@ free_insert(code_t *start, code_t *end)
     free_ext[lo].start = start;
     free_ext[lo].end = end;
     nfree++;
+    return true;
 }
 
 /* gives back the pages of the free extent holding [start, end), freed just
@@ -163,7 +168,8 @@ map_region(code_t *near)
     islands[nislands].start = (code_t *)p + REGION_SIZE - ISLAND_SIZE;
     islands[nislands++].end = (code_t *)p + REGION_SIZE;
     LE_LSAN_ROOT(p, REGION_SIZE);
-    free_insert((code_t *)p, (code_t *)p + REGION_SIZE - ISLAND_SIZE);
+    if (!free_insert((code_t *)p, (code_t *)p + REGION_SIZE - ISLAND_SIZE))
+        OUT_OF_MEMORY();
 }
 
 DEFINEFN bool
@@ -1053,20 +1059,23 @@ pin_slot(le_owner_t *o, PyObject *p)
     return i;
 }
 
-static void
+/* false, with the table unchanged, if there is no memory */
+static bool
 pins_grow(le_owner_t *o)
 {
     size_t i, n = o->pins == NULL ? 0 : o->pinmask + 1;
     PyObject **old = o->pins;
     size_t cap = n == 0 ? 8 : 2 * n;
-    o->pins = PyMem_Calloc(cap, sizeof(PyObject *));
-    if (o->pins == NULL)
-        OUT_OF_MEMORY();
+    PyObject **pins = PyMem_Calloc(cap, sizeof(PyObject *));
+    if (pins == NULL)
+        return false;
+    o->pins = pins;
     o->pinmask = cap - 1;
     for (i = 0; i < n; i++)
         if (old[i] != NULL)
             o->pins[pin_slot(o, old[i])] = old[i];
     PyMem_Free(old);
+    return true;
 }
 
 DEFINEFN void
@@ -1080,8 +1089,9 @@ psyco_owner_keep(PyObject *p)
         LE_STAT(psyco_stat_kept_for_good++);
         return;
     }
-    if (o->pins == NULL || 2 * (o->npins + 1) > o->pinmask + 1)
-        pins_grow(o);
+    if ((o->pins == NULL || 2 * (o->npins + 1) > o->pinmask + 1) &&
+        !pins_grow(o))
+        OUT_OF_MEMORY();
     i = pin_slot(o, p);
     if (o->pins[i] == p) {
         Py_DECREF(p); /* it holds another */
@@ -1147,7 +1157,8 @@ owner_root(le_owner_t *o)
 /* the groups' blocks: block -> group (psyco_owner_depend) */
 static le_addrmap_t group_blocks;
 
-/* moves the references 'from' holds into 'to' */
+/* moves the references 'from' holds into 'to'; those 'to' has no room for
+   are kept for good, so that freeing never fails */
 static void
 pins_take(le_owner_t *to, le_owner_t *from)
 {
@@ -1156,8 +1167,12 @@ pins_take(le_owner_t *to, le_owner_t *from)
         PyObject *p = from->pins[j];
         if (p == NULL)
             continue;
-        if (to->pins == NULL || 2 * (to->npins + 1) > to->pinmask + 1)
-            pins_grow(to);
+        if (LE_FAIL(LE_FAIL_PINS) ||
+            ((to->pins == NULL || 2 * (to->npins + 1) > to->pinmask + 1) &&
+             !pins_grow(to))) {
+            LE_STAT(psyco_stat_kept_for_good++);
+            continue;
+        }
         i = pin_slot(to, p);
         if (to->pins[i] == p) {
             Py_DECREF(p); /* 'to' holds another, so never the last */
@@ -1221,8 +1236,8 @@ owner_free(le_owner_t *o, PyObject *mergepoints, PyObject *entry_point)
         memset(s, 0xCC, e - s); /* INT 3: a stale jump traps */
 #endif
         LE_STAT(psyco_stat_code_bytes_live -= e - s);
-        free_insert(s, e);
-        free_release_pages(s, e);
+        if (free_insert(s, e))
+            free_release_pages(s, e);
     }
 #if ALL_CHECKS
     made_forget(o, &dead);
