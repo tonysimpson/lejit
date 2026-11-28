@@ -1420,6 +1420,8 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
 extern void
 le_frame_clear(le_frame_t *f); /* Python/genrecord.c */
 #endif
+extern void
+psyco_frame_returned(le_frame_t *f); /* Python/frames.c */
 /* A generator's frame 'f', run by compiled code (eval_hook.c:LeGen_Run) to
    give 'result', is left as ceval leaves it, which gen_send_ex expects:
    paused at a yield, the thread's exception state is its caller's again
@@ -1427,8 +1429,10 @@ le_frame_clear(le_frame_t *f); /* Python/genrecord.c */
    generator's frame. Where CPython hides that clear, it is done here, as
    ceval's clear_gen_frame does it: not by ceval's unwind, which would give
    the exception a traceback entry for the frame (a generator's frame is
-   never incomplete). A frame object that outlives the frame and has no
-   f_back is linked to the thread's frame, as the unwind would link it. */
+   never incomplete). Where CPython clears an ended generator's frame
+   still linked to its caller, a frame object that outlives the frame
+   gets the frame the generator was run from as f_back: a compiled one
+   where compiled code ran it (psyco_frame_returned). */
 static inline PyObject *
 le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
                    PyObject *done)
@@ -1447,6 +1451,11 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
 #endif
         return result;
     }
+#if !LE_HAS_FINISHED_GENERATOR_UNLINKED
+    f->previous = le_frame_current(ts);
+    if (f->frame_obj != NULL && Py_REFCNT(f->frame_obj) > 1)
+        psyco_frame_returned(f);
+#endif
 #if LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
     result = le_frame_finish(ts, f, result, done);
 #else
@@ -1454,7 +1463,6 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
     gen->gi_frame_state = FRAME_CLEARED;
     ts->exc_info = gen->gi_exc_state.previous_item;
     gen->gi_exc_state.previous_item = NULL;
-    f->previous = le_frame_current(ts);
 #if LE_HAS_C_RECURSION_REMAINING
     ts->c_recursion_remaining--;
 #endif

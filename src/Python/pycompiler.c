@@ -1636,6 +1636,23 @@ put_nth_i(PsycoObject *po, vinfo_t *vi, defield_t df, int index, long value)
     return ok;
 }
 
+/* the frame's place becomes 'place', as an index into its code's units
+   (a pointer to that unit, where the frame keeps one) */
+static bool
+gen_frame_place(PsycoObject *po, int place)
+{
+    vinfo_t *frame = psyco_frame_words_frame(po);
+#if LE_HAS_INTERPRETER_FRAME
+    vinfo_t *v =
+        vinfo_new(CompileTime_New((long)(_PyCode_CODE(po->pr.co) + place)));
+    bool ok = psyco_put_field(po, frame, FRAME_place, v);
+    vinfo_decref(v, po);
+    return ok;
+#else
+    return put_nth_i(po, frame, FRAME_lasti, 0, place);
+#endif
+}
+
 /* the frame left as ceval's YIELD_VALUE at 'lasti' leaves it, with
    'nstack' items under the value and, where frames have them, the
    compile's blocks (mechanisms/frames.h:le_gen_frame_pause), its words
@@ -1652,12 +1669,10 @@ gen_frame_pause(PsycoObject *po, int lasti, int nstack)
 #ifdef FRAME_STATE_SUSPENDED
     state = FRAME_SUSPENDED + (yield->op.arg != 0);
 #else
+    (void)yield;
     state = FRAME_SUSPENDED;
 #endif
-    v = vinfo_new(CompileTime_New((long)(yield + LE_HAS_FRAME_INSTR_PTR)));
-    ok = psyco_put_field(po, frame, FRAME_place, v);
-    vinfo_decref(v, po);
-    if (!ok)
+    if (!gen_frame_place(po, lasti + LE_HAS_FRAME_INSTR_PTR))
         return false;
 #if LE_HAS_FRAME_STACKREFS
     v = integer_add_i(
@@ -1682,7 +1697,7 @@ gen_frame_pause(PsycoObject *po, int lasti, int nstack)
 {
     vinfo_t *frame = psyco_frame_words_frame(po);
     int i, k;
-    if (!put_nth_i(po, frame, FRAME_lasti, 0, lasti))
+    if (!gen_frame_place(po, lasti))
         return false;
 #if LE_HAS_FRAME_STATE
     if (!put_nth_i(po, frame, FRAME_stackdepth, 0, nstack))
@@ -9167,7 +9182,15 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             POP(v);
         return_value:
             /* a resumable generator returns its value, which gen_send_ex
-               makes StopIteration's */
+               makes StopIteration's; its frame's place is left at the
+               return, as ceval leaves it, for a frame object that
+               outlives the frame */
+            if (psyco_generator_mode(po) == GENEXPR_RESUMABLE &&
+                !gen_frame_place(po, le_lasti_of(le_place(
+                                         le_code(co), po->pr.next_instr)))) {
+                vinfo_decref(v, po);
+                break;
+            }
             if ((co->co_flags & CO_GENERATOR) &&
                 psyco_generator_mode(po) != GENEXPR_RESUMABLE &&
                 psyco_generator_mode(po) != GENEXPR_INLINED) {
