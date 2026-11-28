@@ -431,6 +431,15 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
                   global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg);
 
+/* PyLong_FromLong of the run-time word 'x': where x + low is below
+   'count', table[x + low] (a reference is added if 'incref'), with no
+   call. The result is in a register, tested (zero: the call's error), and
+   not yet owned: the caller checks the condition CC_E, then adds the
+   reference. */
+EXTERNFN vinfo_t *
+psyco_long_from_word(PsycoObject *po, vinfo_t *x, PyObject *const *table,
+                     long low, long count, bool incref);
+
 #if !LE_HAS_LONG_VALUE
 /* MEDIUM_VALUE of int 'v' at run time, given its ob_size 'size' of -1, 0 or
    1: ob_size times the first digit, read only when ob_size isn't 0, since

@@ -75,6 +75,22 @@ def big_ints(a):
 
 INTS = [(0, 1), (3, 4), (-5, 7), (100, -3), (2**40, 3)]
 
+def boxed_small(lo, hi):
+    # ints made at run time and boxed: those of CPython's small-int cache
+    # are its objects, the rest new ones
+    out = []
+    for i in range(lo, hi):
+        out.append(i + 1)
+    return [x is int(str(x)) for x in out], out
+
+def boxed_beside_float(n):
+    f = 0.5
+    out = []
+    for i in range(n):
+        f = f * 1.5 + 0.25
+        out.append(i * 7 - 3)
+    return f, out
+
 CASES = [
     ('add', INTS, {}),
     ('sub', INTS, {}),
@@ -92,4 +108,6 @@ CASES = [
     ('inplace', [(0,), (7,), (-3,)], {}),
     ('nested_loops', [(0,), (5,), (30,)], {}),
     ('big_ints', [(10,), (2**21,), (2**40,)], {}),
+    ('boxed_small', [(-12, 1040), (2**40, 2**40 + 3)], {}),
+    ('boxed_beside_float', [(0,), (300,)], {}),
 ]

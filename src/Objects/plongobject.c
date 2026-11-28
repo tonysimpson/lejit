@@ -294,6 +294,46 @@ PsycoLong_FROM_LONG(PsycoObject *po, vinfo_t *v)
 /***************************************************************/
 /*** computing a virtual int                                 ***/
 
+/* CPython's small-int cache as PyLong_FromLong finds it: the
+   small_int_count ints from -small_int_low, each the same object whenever
+   it is asked for. small_ints holds a reference to each. */
+static PyObject **small_ints = NULL;
+static long small_int_low = 0, small_int_count = 0;
+static bool small_ints_mortal = false;
+
+static bool
+is_cached_int(long value)
+{
+    PyObject *a = PyLong_FromLong(value), *b = PyLong_FromLong(value);
+    bool same = a != NULL && a == b;
+    Py_XDECREF(a);
+    Py_XDECREF(b);
+    PyErr_Clear();
+    return same;
+}
+
+static void
+find_small_ints(void)
+{
+    long high = 0, i;
+    while (is_cached_int(high)) high++;
+    while (high > 0 && is_cached_int(-small_int_low - 1)) small_int_low++;
+    if (high == 0)
+        return;
+    small_ints = PyMem_RawMalloc((small_int_low + high) * sizeof(PyObject *));
+    if (small_ints == NULL)
+        return;
+    for (i = 0; i < small_int_low + high; i++) {
+        small_ints[i] = PyLong_FromLong(i - small_int_low);
+#if LE_HAS_IMMORTAL_OBJECTS
+        small_ints_mortal |= !_Py_IsImmortal(small_ints[i]);
+#else
+        small_ints_mortal = true;
+#endif
+    }
+    small_int_count = small_int_low + high;
+}
+
 static bool
 compute_long(PsycoObject *po, vinfo_t *longobj)
 {
@@ -301,8 +341,20 @@ compute_long(PsycoObject *po, vinfo_t *longobj)
     vinfo_t *x = vinfo_getitem(longobj, iLONG_VALUE);
     if (x == NULL)
         return false;
-    newobj = psyco_generic_call(po, PyLong_FromLong,
-                                CfPure | CfCommonNewRefPyObject, "v", x);
+    if (is_runtime(x->source) && small_int_count > 0) {
+        newobj = psyco_long_from_word(po, x, small_ints, small_int_low,
+                                      small_int_count, small_ints_mortal);
+        if (runtime_condition_f(po, CC_E)) {
+            vinfo_decref(newobj, po);
+            PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)),
+                               NULL);
+            return false;
+        }
+        newobj->source = add_rtref(newobj->source);
+    }
+    else
+        newobj = psyco_generic_call(po, PyLong_FromLong,
+                                    CfPure | CfCommonNewRefPyObject, "v", x);
     if (newobj == NULL)
         return false;
     /* move the resulting non-virtual Python object back into 'longobj' */
@@ -882,6 +934,7 @@ psy_longobject_init(void)
     PyNumberMethods *m = PyLong_Type.tp_as_number;
 
     gen_longobject_init();
+    find_small_ints();
     Psyco_DefineMeta(m->nb_remainder, plong_mod);
     Psyco_DefineMeta(m->nb_lshift, plong_lshift);
     Psyco_DefineMeta(m->nb_rshift, plong_rshift);
