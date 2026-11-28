@@ -956,12 +956,21 @@ le_reloc_note(void *at, int kind, int end);
    and gives it back */
 EXTERNFN long
 le_reloc_jump(code_t *end, long value);
+/* code written from 'start' up to 'end' is written again from 'start':
+   the notes made in it since le_reloc_mark() gave 'mark' are dropped, as
+   what is written there next may hold the noted bytes by chance */
+EXTERNFN long
+le_reloc_mark(void);
+EXTERNFN void
+le_reloc_forget(long mark, code_t *start, code_t *end);
 /* where code that the compile just ended wrote at 'p' is now */
 EXTERNFN code_t *
 psyco_code_moved(code_t *p);
 #else
 #define le_reloc_note(at, kind, end) ((void)0)
 #define le_reloc_jump(end, value) (value)
+#define le_reloc_mark() 0L
+#define le_reloc_forget(mark, start, end) ((void)0)
 #define psyco_code_moved(p) (p)
 #endif
 #define LE_RELOC_SLOT(p) le_reloc_note((void *)(p), LE_RELOC_WORD, 0)
