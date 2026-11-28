@@ -610,7 +610,7 @@ psyco_write_far_jump(code_t *code, code_t *target);
             le_reloc_note(code - 4, LE_RELOC_DATA, 4 + (imm_len));            \
         }                                                                     \
         else {                                                                \
-            MOV_R_I(REG_TRANSIENT_2, address);                                \
+            MOV_R_IADDR(REG_TRANSIENT_2, address);                            \
             INDIRECT_ENCODING(rex_w, op_len, b1, b2, b3, mod, r,              \
                               REG_TRANSIENT_2);                               \
         }                                                                     \
@@ -675,6 +675,18 @@ psyco_write_far_jump(code_t *code, code_t *target);
             MOV_R_RIP(rm, (long)_kslot - ((long)code + 7));       \
         else                                                      \
             MOV_R_IABS(rm, _k);                                   \
+    } while (0)
+/* a constant address that the code then reads or writes through 'rm': as
+   MOV_R_I, but never from a constant slot, whose load the access would
+   wait for */
+#define MOV_R_IADDR(rm, i)                                               \
+    do {                                                                 \
+        long _ka = (long)(i);                                            \
+        if (!FITS_IN_32BITS(_ka) && (unsigned long)_ka > 0xFFFFFFFFUL && \
+            LE_RIP_NEAR(code, _ka))                                      \
+            LEA_R_RIP(rm, _ka - ((long)code + 7));                       \
+        else                                                             \
+            MOV_R_IABS(rm, _ka);                                         \
     } while (0)
 /* @asm: movabs {rm}, {i:i64} */
 #define MOV_R_UI(rm, i)                           \
@@ -894,7 +906,7 @@ psyco_write_far_jump(code_t *code, code_t *target);
             CMP_I8_DRIP(i, _rip_off);                       \
         }                                                   \
         else {                                              \
-            MOV_R_I(REG_TRANSIENT_2, (long)(address));      \
+            MOV_R_IADDR(REG_TRANSIENT_2, (long)(address));  \
             CMP_I8_DA(i, REG_TRANSIENT_2);                  \
         }                                                   \
     } while (0)

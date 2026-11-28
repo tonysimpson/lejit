@@ -69,23 +69,23 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
 
 /* Py_INCREF() for a compile-time-known 'pyobj': nothing for an immortal,
    which stays one */
-#define INC_KNOWN_OB_REFCNT(pyobj)                         \
-    do {                                                   \
-        if (!_Py_IsImmortal(pyobj)) {                      \
-            NEED_CC();                                     \
-            MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
-            INC_OB_REFCNT_internal(REG_TRANSIENT_1);       \
-        }                                                  \
+#define INC_KNOWN_OB_REFCNT(pyobj)                             \
+    do {                                                       \
+        if (!_Py_IsImmortal(pyobj)) {                          \
+            NEED_CC();                                         \
+            MOV_R_IADDR(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+            INC_OB_REFCNT_internal(REG_TRANSIENT_1);           \
+        }                                                      \
     } while (0)
 
 /* Py_DECREF() for a compile-time 'pyobj' assuming counter cannot reach zero */
-#define DEC_KNOWN_OB_REFCNT_NZ(pyobj)                      \
-    do {                                                   \
-        if (!_Py_IsImmortal(pyobj)) {                      \
-            NEED_CC();                                     \
-            MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
-            DEC_OB_REFCNT_NZ_internal(REG_TRANSIENT_1);    \
-        }                                                  \
+#define DEC_KNOWN_OB_REFCNT_NZ(pyobj)                          \
+    do {                                                       \
+        if (!_Py_IsImmortal(pyobj)) {                          \
+            NEED_CC();                                         \
+            MOV_R_IADDR(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+            DEC_OB_REFCNT_NZ_internal(REG_TRANSIENT_1);        \
+        }                                                      \
     } while (0)
 
 /* like DEC_OB_REFCNT() but assume the reference counter cannot reach zero */
@@ -115,19 +115,19 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
     } while (0)
 
 /* Py_INCREF() for a compile-time-known 'pyobj' */
-#define INC_KNOWN_OB_REFCNT(pyobj)                     \
-    do {                                               \
-        NEED_CC();                                     \
-        MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
-        ADD_A_I8(REG_TRANSIENT_1, 1);                  \
+#define INC_KNOWN_OB_REFCNT(pyobj)                         \
+    do {                                                   \
+        NEED_CC();                                         \
+        MOV_R_IADDR(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+        ADD_A_I8(REG_TRANSIENT_1, 1);                      \
     } while (0)
 
 /* Py_DECREF() for a compile-time 'pyobj' assuming counter cannot reach zero */
-#define DEC_KNOWN_OB_REFCNT_NZ(pyobj)                  \
-    do {                                               \
-        NEED_CC();                                     \
-        MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
-        SUB_A_I8(REG_TRANSIENT_1, 1);                  \
+#define DEC_KNOWN_OB_REFCNT_NZ(pyobj)                      \
+    do {                                                   \
+        NEED_CC();                                         \
+        MOV_R_IADDR(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+        SUB_A_I8(REG_TRANSIENT_1, 1);                      \
     } while (0)
 
 /* like DEC_OB_REFCNT() but assume the reference counter cannot reach zero */

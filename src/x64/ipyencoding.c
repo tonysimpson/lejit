@@ -161,7 +161,7 @@ dealloc_testing_margin(code_t *code, PsycoObject *po, destructor fn,
     code_t *traced, *by_flag = NULL, *low = NULL, *no_chain = NULL,
                     *chained = NULL, *untracked = NULL;
     extra_assert(fn == NULL || margin);
-    MOV_R_I(ts, (long)tracer);
+    MOV_R_IADDR(ts, (long)tracer);
     CMP_I8_A(0, ts);
     code = short_jump(code, CC_NE, &traced);
     if (fn == NULL) {
@@ -298,7 +298,7 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg,
         if (tracer != NULL) {
         BEGIN_CALL(1);
         CALL_SET_ARG_FROM_REG(rg, 0);
-        MOV_R_I(REG_TRANSIENT_1, (long)tracer);
+        MOV_R_IADDR(REG_TRANSIENT_1, (long)tracer);
         CMP_I8_A(0, REG_TRANSIENT_1);
         MOV_R_I(REG_TRANSIENT_1, (long)_Py_Dealloc); /* keeps the flags */
         BEGIN_SHORT_COND_JUMP(2, CC_NE);
@@ -1299,7 +1299,7 @@ psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
     BEGIN_CODE
     NEED_CC();
     NEED_REGISTER(REG_X64_RAX);
-    MOV_R_I(REG_TRANSIENT_1, (long)tp);
+    MOV_R_IADDR(REG_TRANSIENT_1, (long)tp);
     MOV_R_O(REG_TRANSIENT_2, REG_TRANSIENT_1,
             CPY_OFFSET(PyTypeObject, tp_flags));
     MOV_DR_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
@@ -1310,7 +1310,7 @@ psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
         XOR_R_RIP(REG_TRANSIENT_1, (long)tag - ((long)code + 7));
     }
     else {
-        MOV_R_I(REG_X64_RAX, (long)flags);
+        MOV_R_IADDR(REG_X64_RAX, (long)flags);
         XOR_R_O(REG_TRANSIENT_2, REG_X64_RAX, 0);
         off = (char *)tag - (char *)flags;
         XOR_R_O(REG_TRANSIENT_1, REG_X64_RAX, off);
@@ -1520,7 +1520,7 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
     }
     else if (entry != NULL) {
         code_t *js[2];
-        MOV_R_I(REG_TRANSIENT_1, (long)globals);
+        MOV_R_IADDR(REG_TRANSIENT_1, (long)globals);
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_keys));
         KEYS_SHAPE_CMP(shape, REG_TRANSIENT_1);
@@ -1546,13 +1546,13 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
     }
     else {
 #if LE_HAS_DICT_VERSION_TAG
-        MOV_R_I(REG_TRANSIENT_1, (long)globals);
-        MOV_R_I(REG_TRANSIENT_2, (long)tags);
+        MOV_R_IADDR(REG_TRANSIENT_1, (long)globals);
+        MOV_R_IADDR(REG_TRANSIENT_2, (long)tags);
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_version_tag));
 #else
         LOAD_DICT_TAG(MOV_R_I, REG_TRANSIENT_1, globals);
-        MOV_R_I(REG_TRANSIENT_2, (long)tags);
+        MOV_R_IADDR(REG_TRANSIENT_2, (long)tags);
 #endif
         XOR_R_O(REG_TRANSIENT_1, REG_TRANSIENT_2, 0);
         LOAD_DICT_TAG(MOV_R_I, REG_X64_RAX, builtins);
@@ -1655,7 +1655,7 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
     if (po->codelimit - po->code < 64)
         PsycoObject_EmergencyCodeRoom(po);
     BEGIN_CODE
-    MOV_R_I(REG_TRANSIENT_1, (long)globals);
+    MOV_R_IADDR(REG_TRANSIENT_1, (long)globals);
     MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
             CPY_OFFSET(PyDictObject, ma_keys));
     KEYS_SHAPE_CMP(shape, REG_TRANSIENT_1);
@@ -1720,7 +1720,7 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     NEED_REGISTER(REG_X64_R9);
     NEED_FREE_REG(rg); /* callee-saved: the miss call keeps it */
     start = code;
-    MOV_R_I(REG_TRANSIENT_1, (long)globals);
+    MOV_R_IADDR(REG_TRANSIENT_1, (long)globals);
     MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
             CPY_OFFSET(PyDictObject, ma_keys));
     KEYS_SHAPE_CMP(shape, REG_TRANSIENT_1);

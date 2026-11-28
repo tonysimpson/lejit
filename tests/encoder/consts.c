@@ -2,12 +2,13 @@
  * Executes the code that loads and uses 64-bit constants and checks what
  * it does: MOV_R_I (an address in reach, RIP-relative; another value, from
  * its slot in the constants, dispatcher.c:psyco_const_slot; or the movabs
- * of MOV_R_IABS) and the group instructions with a 64-bit immediate
- * (COMMON_INSTR_IMMED, COMMON_INSTR_IMMED_FROM_RT), into every register,
- * in executable memory (psyco_code_open) and in memory that isn't
- * (no slot there); and a promotion site's entry with its own slot
- * (x64/idispatcher.h), repointed and read back. Built and run by
- * tests/encoder/mov_mem.sh against the objects of an in-place LeJIT build.
+ * of MOV_R_IABS), MOV_R_IADDR (the same with no slot) and the group
+ * instructions with a 64-bit immediate (COMMON_INSTR_IMMED,
+ * COMMON_INSTR_IMMED_FROM_RT), into every register, in executable memory
+ * (psyco_code_open) and in memory that isn't (no slot there); and a promotion
+ * site's entry with its own slot (x64/idispatcher.h), repointed and read back.
+ * Built and run by tests/encoder/mov_mem.sh against the objects of an in-place
+ * LeJIT build.
  */
 #include <Python.h>
 #include "psyco.h"
@@ -63,7 +64,8 @@ form_of(code_t *p)
 }
 
 static void
-check_mov(code_t *at, int reg, long value, int want_form, const char *where)
+check_mov(code_t *at, int reg, long value, int want_form, const char *where,
+          bool addr)
 {
     code_t *code = at, *mov;
     long got;
@@ -71,14 +73,18 @@ check_mov(code_t *at, int reg, long value, int want_form, const char *where)
     cases++;
     PROLOGUE();
     mov = code;
-    MOV_R_I(reg, value);
+    if (addr)
+        MOV_R_IADDR(reg, value);
+    else
+        MOV_R_I(reg, value);
     form = form_of(mov);
     MOV_R_R(REG_X64_RAX, reg);
     EPILOGUE();
     got = ((long (*)(void))at)();
     if (got != value || (want_form && form != want_form)) {
-        printf("FAIL MOV_R_I(%s, %#lx) %s: got %#lx, form '%c' want '%c'\n",
-               REGN[reg], value, where, got, form, want_form);
+        printf("FAIL %s(%s, %#lx) %s: got %#lx, form '%c' want '%c'\n",
+               addr ? "MOV_R_IADDR" : "MOV_R_I", REGN[reg], value, where, got,
+               form, want_form);
         failures++;
     }
 }
@@ -228,9 +234,12 @@ main(void)
         for (v = 0; v < n; v++) {
             /* outside code the same distances, and no slot: a movabs */
             long shift = v < 4 ? (long)plain - (long)exec : 0;
-            check_mov(exec, reg, values[v], forms[v], "in code");
+            check_mov(exec, reg, values[v], forms[v], "in code", false);
             check_mov(plain, reg, values[v] + shift,
-                      forms[v] == 'm' ? 'a' : forms[v], "outside code");
+                      forms[v] == 'm' ? 'a' : forms[v], "outside code", false);
+            /* never from a slot */
+            check_mov(exec, reg, values[v], forms[v] == 'm' ? 'a' : forms[v],
+                      "in code", true);
         }
         for (v = 0; v < n; v++) check_promotion(exec, reg, values[v]);
         if (reg == REG_TRANSIENT_1)

@@ -210,7 +210,7 @@ write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax, bool keep_xmm)
         if (tracer == NULL)
             CALL_I(_Py_Dealloc);
         else {
-            MOV_R_I(REG_X64_RAX, (long)tracer);
+            MOV_R_IADDR(REG_X64_RAX, (long)tracer);
             CMP_I8_A(0, REG_X64_RAX);
             MOV_R_I(REG_X64_RAX, (long)_Py_Dealloc); /* keeps the flags */
             BEGIN_SHORT_COND_JUMP(0, CC_NE);

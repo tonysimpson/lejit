@@ -346,7 +346,7 @@ test_condition_and_pyerr_occured:
         }
     }
 #else
-    MOV_R_I(REG_TRANSIENT_1, (long)le_tstate_current_address());
+    MOV_R_IADDR(REG_TRANSIENT_1, (long)le_tstate_current_address());
     MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
 #endif
     MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1, LE_EXC_OCCURRED_OFFSET);

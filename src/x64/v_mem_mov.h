@@ -224,7 +224,7 @@ v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *index,
          !FITS_IN_32BITS(offset_or_address - (long)code + 64))) {
         /* absolute address not reachable RIP-relative, or combined with an
            index: put it in R11 now, before any prefix of the access itself */
-        MOV_R_I(REG_TRANSIENT_2, offset_or_address);
+        MOV_R_IADDR(REG_TRANSIENT_2, offset_or_address);
         base_reg = REG_TRANSIENT_2;
         offset_or_address = 0;
     }
