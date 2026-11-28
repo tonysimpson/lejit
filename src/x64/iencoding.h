@@ -1337,6 +1337,16 @@ typedef enum {
         }                                                                \
     } while (0)
 
+/* a call of 'c_function' made now, at compile time, or emitted to run
+   (codegen.h:psyco_generic_call) */
+EXTERNFN vinfo_t *
+compile_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
+                  char argtags[], long args[]);
+EXTERNFN vinfo_t *
+run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
+              int arg_count, char argtags[], long args[],
+              int total_output_array_size);
+
 EXTERNFN vinfo_t *
 bininstrgrp(PsycoObject *po, int group, bool ovf, bool nonneg, vinfo_t *v1,
             vinfo_t *v2);

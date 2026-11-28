@@ -1055,4 +1055,9 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          const int *blocks, int nblocks, vinfo_t **unpushed);
 EXTERNFN CodeBufferObject *
 psyco_compile_code_dropping(PsycoObject *po, mergepoint_t *mp, vinfo_t *v);
+#if LE_CODESTATS
+/* the state each new block at a merge point starts from, for
+   lejit._core._codestats() */
+EXTERNVAR PyObject *psyco_codestats_states;
+#endif
 #endif /* _VCOMPILER_H */

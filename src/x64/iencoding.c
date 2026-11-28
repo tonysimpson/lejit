@@ -12,6 +12,7 @@
 #include "iencoding.h"
 #include <ffi.h>
 #include "../Python/frames.h"
+#include "../Python/pyruntime.h"
 #include "../Python/pycompiler.h"
 #include "../cf_flags.h"
 #include "../codegen.h"
@@ -1077,10 +1078,6 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     return run_time_result(po, CfReturnTypePtr);
 }
 #undef PUSH_SOURCE
-
-/* internal, see NEED_CC() */
-EXTERNFN condition_code_t
-cc_from_vsource(Source source); /* in codegen.c */
 
 DEFINEFN
 code_t *

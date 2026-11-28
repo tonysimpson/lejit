@@ -46,6 +46,7 @@
 #include "pbltinmodule.h"
 #include "../bytecode.h"
 #include "frames.h"
+#include "pyruntime.h"
 /* le_frame_current, le_frame_set_current */
 #include "../mechanisms/frames.h"
 /* le_recursion_suspend and le_recursion_resume */
@@ -66,11 +67,6 @@
 
 #include "pycinternal.h"
 #include <ipyencoding.h>
-
-#if LE_HAS_OPCODE_LOAD_COMMON_CONSTANT
-EXTERNFN PyObject *
-le_common_constant(int i); /* pyruntime.c */
-#endif
 
 /* C API calls that some CPython versions don't export: the function where
    libpython exports it, else a copy of CPython's or a public call that

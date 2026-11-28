@@ -22,6 +22,7 @@
 #include "../codemanager.h"
 #include "../mechanisms/tstate.h"
 #include "../mechanisms/gil.h"
+#include "../Python/pyruntime.h"
 
 /* ctypes' CDataObject and PyCFuncPtrObject on Linux */
 typedef struct {
@@ -886,12 +887,6 @@ cimpl_audit_hooked(void)
         PyErr_Clear();
     return hooked;
 }
-#endif
-
-#if LE_HAS_CTYPES_CALL_AUDITED
-/* Python/pyruntime.c */
-extern bool
-le_audit_hook_words(void **runtime_head, void **interp_hooks);
 #endif
 
 /* true where no audit hook would see the call, as ctypes audits it (on

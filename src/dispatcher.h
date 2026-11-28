@@ -451,4 +451,14 @@ EXTERNVAR int psyco_respawn_line;
     LE_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
 #endif
 
+/* for codemanager.c, as an owner is freed: its release records run, and
+   its constant slots die */
+EXTERNFN void
+psyco_owner_release_records(le_owner_t *o);
+EXTERNFN void
+psyco_const_forget(le_owner_t *o);
+/* a compile was abandoned (codemanager.h, compile guards) */
+EXTERNFN void
+psyco_compile_abandoned(void);
+
 #endif /* _DISPATCHER_H */

@@ -665,6 +665,8 @@ le_code_extra_reset(le_code_extra_t *x, PyObject **mergepoints,
    (eval_hook.c:gen_may_resume) */
 EXTERNVAR PyCodeObject *le_gen_interpreted;
 EXTERNVAR le_code_extra_t *le_gen_interpreted_x;
+/* the compiler is set up: lejit._core's first _start did it (lejit.c) */
+EXTERNVAR int le_set_up;
 /* releases the record and its compiled code; its code object is dead */
 EXTERNFN void
 le_code_extra_free(le_code_extra_t *x);

@@ -1,4 +1,5 @@
 #include "Python/frames.h"
+#include "Python/pyruntime.h"
 #include "bytecode.h"
 #include "processor.h"
 #include "codegen.h"
@@ -13,9 +14,6 @@
 #include "mechanisms/recursion.h"
 #include "mechanisms/store_gc.h"
 
-extern int
-le_eval_breaker_at_entry(PyThreadState *ts,
-                         PyCodeObject *co); /* pyruntime.c */
 #if LE_HAS_TSTATE_EVAL_BREAKER
 /* whether an event is flagged for the thread: its eval_breaker's low byte
    (pyruntime.c:le_eval_breaker_handler) */
@@ -25,8 +23,6 @@ le_eval_breaker_pending(PyThreadState *ts)
     return (_Py_atomic_load_uintptr_relaxed(&ts->eval_breaker) & 0xff) != 0;
 }
 #else
-extern void *
-le_eval_breaker_address(void); /* pyruntime.c */
 #define le_eval_breaker_pending(ts) (*(int *)le_eval_breaker_address() != 0)
 #endif
 
@@ -1190,10 +1186,6 @@ le_eval_frame_default(le_frame_t *f)
    hook is internal from 3.8, so Python/pyruntime.c (Py_BUILD_CORE) reads
    and writes it. */
 typedef PyObject *(*le_eval_frame_fn)(PyFrameObject *, int);
-void *
-le_interp_eval_frame(void);
-void
-le_set_interp_eval_frame(void *fn);
 
 static le_eval_frame_fn original_eval_frame = NULL;
 

@@ -102,6 +102,9 @@ psyco_exact_merge_point(PyObject *mergepoints, int position);
    (vcompiler.c:psyco_compile_join); NULL if out of memory. */
 EXTERNFN global_entries_t *
 psyco_join_point(PyObject *mergepoints, int position);
+/* whether 'ge' is one of this report's lists (codemanager.c) */
+EXTERNFN bool
+psyco_ge_in_report(PyObject *mergepoints, global_entries_t *ge);
 
 #define MP_FLAGS_HAS_EXCEPT 1     /* the code block has an 'except' clause */
 #define MP_FLAGS_HAS_FINALLY 2    /* the code block has a 'finally' clause */

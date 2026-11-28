@@ -31,6 +31,9 @@
 
 #if LE_STACK_SEGMENTS
 #include "Python/frames.h"
+#include "Python/pyruntime.h"
+#include "dispatcher.h"
+#include "mechanisms/recursion.h"
 #include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -175,23 +178,10 @@ segment_give(char *s)
         pthread_setspecific(spare_key, s);
 }
 
-/* pyruntime.c */
-#if LE_HAS_C_STACK_SOFT_LIMIT
-extern const long le_c_stack_soft_limit_at;
-EXTERNFN void
-le_c_stack_limits_set(PyThreadState *ts, uintptr_t base, uintptr_t top,
-                      long room, uintptr_t saved[3]);
-EXTERNFN void
-le_c_stack_limits_put_back(PyThreadState *ts, const uintptr_t saved[3]);
-#endif
-
 /* CPython's entry takes from the C count where it has one, or is charged
    on the soft limit where it measures the stack (eval_hook.c); the call it
    stands for takes nothing (mechanisms/recursion.h, LE_C_RECURSION_UNITS) */
 #define ENTRY_C_UNITS 2
-#if LE_HAS_C_STACK_SOFT_LIMIT
-extern long le_c_entry_charge;
-#endif
 
 static long
 call_on_segment(segment_call_t *call)

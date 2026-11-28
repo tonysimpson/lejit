@@ -1,5 +1,12 @@
 #ifndef LE_MECHANISMS_FRAMES_H
 #define LE_MECHANISMS_FRAMES_H
+#include "../Python/pyruntime.h"
+/* CPython's own PyEval_GetFrame, which LeJIT replaces (Python/frames.c) */
+extern PyFrameObject *(*le_cpython_eval_getframe)(void);
+#if ALL_CHECKS
+/* frame objects LeJIT has made (Python/frames.c) */
+extern long le_stat_frame_objects;
+#endif
 #if LE_HAS_INTERPRETER_FRAME
 /* Frames are interpreter frames (_PyInterpreterFrame): the thread's
    innermost is LE_CURRENT_FRAME below, each links to its caller by
@@ -166,12 +173,6 @@ le_frame_start(le_frame_t *f)
     }
     return 0;
 }
-/* CPython's own PyEval_GetFrame, which LeJIT replaces (frames.c) */
-extern PyFrameObject *(*le_cpython_eval_getframe)(void);
-#if ALL_CHECKS
-/* frame objects LeJIT has made (Python/frames.c) */
-extern long le_stat_frame_objects;
-#endif
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
    for it. NULL with no exception set if it can't be made. */

@@ -7,6 +7,7 @@
 #include "mergepoints.h"
 #include "psyco.h"
 #include "psyfunc.h"
+#include "testing.h"
 #include "le_features_gen.h"
 
 #define PSYCO_INITIALIZATION
@@ -299,7 +300,7 @@ static const char MODULE_NAME[] = "lejit._core";
    sets up the compiler, and _start and _stop put in or take out the eval
    hook; each does nothing if that is done already. The API is in Python
    (lejit/__init__.py). */
-DEFINEVAR int le_set_up = 0; /* testing.c reads it */
+DEFINEVAR int le_set_up = 0;
 static int le_running = 0;
 
 static PyObject *
@@ -565,9 +566,6 @@ error:
     Py_XDECREF(d);
     return NULL;
 }
-
-/* the private functions for tests (testing.c) */
-EXTERNVAR PyMethodDef le_testing_methods[];
 
 static struct PyModuleDef le_module = {PyModuleDef_HEAD_INIT, MODULE_NAME,
                                        NULL, -1, module_methods};
