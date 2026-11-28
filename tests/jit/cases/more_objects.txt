@@ -35,9 +35,7 @@ coro_async_for.interrupted                         3.14,3.15                    
 coro_async_for.tracing                             3.12,3.13,3.14                     not looked at yet
 coro_async_for.with_asyncio                        3.14,3.15                          not looked at yet
 coro_async_with.handler_lasti                      3.14,3.15                          not looked at yet
-coro_async_with.started                            3.12                               not looked at yet
 coro_iterable.with_asyncio                         3.12                               not looked at yet
-coro_starts.handler_resumed                        3.12                               not looked at yet
 coro_starts.origins                                3.14                               not looked at yet
 coro_starts.threads                                3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet (varies with thread timing)
 coro_starts.thrown                                 3.12                               not looked at yet
@@ -101,17 +99,14 @@ freeing.recompiled_loops_free                      3.7,3.8,3.9,3.10,3.11,3.12,3.
 freeing.unscanned_freed_in_subinterpreter          3.14,3.15                          not looked at yet
 function_watchers.annotated_inner                  3.15                               not looked at yet
 function_watchers.watched                          3.15                               not looked at yet
-gen_bodies.for_exception_state                     3.12                               not looked at yet
 gen_bodies.from_outside                            3.13                               not looked at yet
-gen_bodies.many_types                              3.12,3.14,3.15                     not looked at yet
-gen_bodies.tracing                                 3.12                               not looked at yet
+gen_bodies.many_types                              3.14,3.15                          not looked at yet
 gen_direct.in_thread                               3.15                               not looked at yet (main makes as many)
 gen_direct.locals_written                          3.12,3.13,3.14,3.15                not looked at yet
-gen_direct.over_sequences                          3.12,3.15                          not looked at yet
+gen_direct.over_sequences                          3.15                               not looked at yet
 gen_direct.send_tracing                            3.12,3.13                          not looked at yet
 gen_functions.arguments_freed                      3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 gen_functions.early_stop                           3.14,3.15                          not looked at yet
-gen_iters.nexts                                    3.12                               not looked at yet
 gen_loops_inlined.keeps_alive                      3.11,3.14,3.15                     an inlined frame asked for has its caller's frame made with it (frames.c:visit_link_frame), where CPython makes that when f_back is read
 gen_loops_inlined.many_kinds                       3.11,3.12,3.13,3.14,3.15           not looked at yet
 gen_loops_inlined.via_inspect                      3.14,3.15                          an inlined frame asked for has its caller's frame made with it (frames.c:visit_link_frame), where CPython makes that when f_back is read
@@ -120,8 +115,6 @@ gen_virtual.dropped_in_yield_from                  3.14,3.15                    
 gen_virtual.escapes_held                           3.12,3.13,3.14,3.15                not looked at yet
 gen_virtual.frame_clear                            3.13,3.14                          not looked at yet
 gen_virtual_chains.kept_frames                     3.14                               not looked at yet
-gen_virtual_chains.raises                          3.12                               not looked at yet
-gen_virtual_chains.traces                          3.12                               not looked at yet
 gen_yield_from.throws                              3.9,3.10                           not looked at yet
 genexpr_loops.many_kinds                           3.11,3.12,3.13,3.14,3.15           not looked at yet
 genexpr_loops.strings                              3.15                               compiled loops make a str or bytes iterator where 3.15's GET_ITER keeps an index
