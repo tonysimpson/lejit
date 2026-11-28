@@ -1,7 +1,10 @@
 # Forms the bytecode compiler chooses differently across versions: truth
 # tests, pairs of locals, f-string conversions, function attributes, calls
 # by keyword or through a bound attribute, the end of for loops, and
-# imports (whose argument carries the name's index with other bits).
+# imports (whose argument carries the name's index with other bits), and
+# the REPL's print.
+import sys
+
 from ref_tracer import count_made, made
 
 
@@ -166,6 +169,47 @@ def fstring_parts_made(n, a, b, c):
     return out
 
 
+def fstring_ints_made(n, c):
+    # an exact int formatted for an f-string is written into the result,
+    # with no str of its own, whatever loads stand between it and the
+    # BUILD_STRING: a constant with a spec, and a local that may be
+    # unbound. The strs made per round (after the first, which compiles)
+    # include none of m's: 4 for each of the 10 (the results, the constant's
+    # part and x's, which may be unbound), and one made once, where CPython
+    # makes 6 for each.
+    if c:
+        x = n + 2
+    out = []
+    for i in range(3):
+        count_made(str)
+        for k in range(10):
+            m = n + k
+            r = (f'{m}{2:>3}', f'{m}{x}')
+        count = made()
+        if i and count is not None:
+            out.append(count)
+    return r, max(out, default=40) <= 41
+
+
+# an expression statement typed at the REPL: its value goes to
+# sys.displayhook, and the statement leaves nothing on the stack
+_SINGLE = compile('x * 2\n', '<single>', 'single')
+
+
+def interactive_print(x):
+    seen = []
+    old = sys.displayhook
+    sys.displayhook = seen.append
+    try:
+        exec(_SINGLE, {'x': x})
+    finally:
+        sys.displayhook = old
+    return seen
+
+
+interactive_print.compiled_code = _SINGLE
+
+
 def imports(name):
     first = name.upper()
     import os.path
@@ -191,5 +235,8 @@ CASES = [
     ('super_by_keyword', [(1,)], {}),
     ('loop_ends', [([0, 1, 2],), ([],)], {}),
     ('fstring_parts_made', [(3, 'x', 'yy', 'zzz'), (2, '', 'é', '')], {}),
+    ('fstring_ints_made', [(5, True)],
+     {'expected': [(('14  2', '147'), True)]}),
+    ('interactive_print', [(3,), ('a',)], {}),
     ('imports', [('json',)], {}),
 ]
