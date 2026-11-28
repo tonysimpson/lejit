@@ -1416,13 +1416,19 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
 #endif
 
 #if LE_HAS_EVAL_FRAME_POPS
+#if !LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
+extern void
+le_frame_clear(le_frame_t *f); /* Python/genrecord.c */
+#endif
 /* A generator's frame 'f', run by compiled code (eval_hook.c:LeGen_Run) to
    give 'result', is left as ceval leaves it, which gen_send_ex expects:
    paused at a yield, the thread's exception state is its caller's again
    and the frame is unlinked; else, ended, it is cleared as ceval clears a
-   generator's frame. Where CPython hides that clear, a frame with a frame
-   object is given to ceval to unwind (le_frame_finish), which clears it
-   as a generator's frame. */
+   generator's frame. Where CPython hides that clear, it is done here, as
+   ceval's clear_gen_frame does it: not by ceval's unwind, which would give
+   the exception a traceback entry for the frame (a generator's frame is
+   never incomplete). A frame object that outlives the frame and has no
+   f_back is linked to the thread's frame, as the unwind would link it. */
 static inline PyObject *
 le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
                    PyObject *done)
@@ -1444,31 +1450,19 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
 #if LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
     result = le_frame_finish(ts, f, result, done);
 #else
-    if (f->frame_obj == NULL) {
-        /* as ceval's clear_gen_frame does */
-        gen->gi_frame_state = FRAME_CLEARED;
-        ts->exc_info = gen->gi_exc_state.previous_item;
-        gen->gi_exc_state.previous_item = NULL;
-        le_frame_clear_except_code(ts, f);
-        f->previous = NULL;
-    }
-    else {
-        /* ceval unwinds it with 'done' raised in place of any exception
-           of the generator's, which already has the frame's traceback
-           entry: ceval gives 'done' one, dropped after */
-        PyObject *raised = result == NULL ? PyErr_GetRaisedException() : NULL;
-        PyObject *ended = le_frame_finish(
-            ts, f, result != NULL ? result : Py_NewRef(Py_None), done);
-        PyException_SetTraceback(done, Py_None);
-        if (result != NULL)
-            result = ended;
-        else if (ended == NULL)
-            Py_XDECREF(raised); /* ceval raised another in its place */
-        else {
-            Py_DECREF(ended);
-            PyErr_SetRaisedException(raised);
-        }
-    }
+    (void)done;
+    gen->gi_frame_state = FRAME_CLEARED;
+    ts->exc_info = gen->gi_exc_state.previous_item;
+    gen->gi_exc_state.previous_item = NULL;
+    f->previous = le_frame_current(ts);
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining--;
+#endif
+    le_frame_clear(f);
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining++;
+#endif
+    f->previous = NULL;
 #endif
 #if LE_HAS_GENERATOR_RETURN_KIND
     /* as ceval's clear of a generator's frame says, set again after
