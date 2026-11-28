@@ -26,7 +26,17 @@ struct mergepoint_s {
        virtual values: ints, bools and floats, and anything else
        (vcompiler.c:mp_new_block; dispatcher.c:made_real_when_dead) */
     int virtual_numbers, virtual_objects;
+    /* the locals dead here (mergepoints.c:_find_dead_locals): 'ndead'
+       ints in the report, 'dead_at' ints from this merge point */
+    int dead_at, ndead;
 };
+
+PSY_INLINE const int *
+mp_dead(mergepoint_t *mp, int *n)
+{
+    *n = mp->ndead;
+    return (const int *)mp + mp->dead_at;
+}
 
 /* 'bytecode_ptr' gives the position of the merge point in the bytecode.
    An array of mergepoint_t structures is sorted against this field.
