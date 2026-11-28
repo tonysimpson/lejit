@@ -317,9 +317,21 @@ psyco_code_move_made(void);
 #define psyco_code_move_begin() ((void)0)
 #define psyco_code_move_made() ((void)0)
 #endif
+#if ALL_CHECKS
+/* the thread whose compile is open. The compile's state is global, so no
+   other thread may compile or run compiled code until it ends; one that
+   does stops the process (le_compile_thread_check) */
+EXTERNVAR unsigned long le_compile_thread;
+EXTERNFN void
+le_compile_thread_check(const char *what);
+#define LE_COMPILE_THREAD_SET(id) (le_compile_thread = (id))
+#else
+#define LE_COMPILE_THREAD_SET(id) ((void)0)
+#endif
 static inline void
 le_outer_compile_begin(void)
 {
+    LE_COMPILE_THREAD_SET(PyThread_get_thread_ident());
     psyco_code_move_begin();
     le_untraced_begin();
 #if LE_HAS_PY_RECURSION_REMAINING
@@ -334,6 +346,7 @@ le_outer_compile_end(void)
 #endif
     psyco_code_move_made();
     le_untraced_end();
+    LE_COMPILE_THREAD_SET(0);
 }
 #if ALL_CHECKS || LE_CODESTATS
 EXTERNFN long
@@ -343,10 +356,10 @@ EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_compile_ns[LE_ENTER_KINDS];
 EXTERNVAR long psyco_stat_compile_count[LE_ENTER_KINDS];
-#define LE_COMPILE_BEGIN(kind)                     \
-    long _le_t0 = le_compile_depth++               \
-                      ? 0                          \
-                      : (le_outer_compile_begin(), \
+#define LE_COMPILE_BEGIN(kind)                                  \
+    long _le_t0 = le_compile_depth++                            \
+                      ? (le_compile_thread_check("compile"), 0) \
+                      : (le_outer_compile_begin(),              \
                          psyco_stat_compile_kind = (kind), le_now_ns())
 #define LE_COMPILE_END(kind)                                     \
     do {                                                         \

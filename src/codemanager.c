@@ -2440,6 +2440,26 @@ psyco_codestats_buffer(const char *kind, code_t *start, code_t *end)
 }
 #endif
 DEFINEVAR int le_compile_depth = 0;
+#if ALL_CHECKS
+DEFINEVAR unsigned long le_compile_thread = 0;
+
+/* another thread can find a compile open only if the compile lost the GIL
+   part-way, as when a finaliser lets it go */
+DEFINEFN void
+le_compile_thread_check(const char *what)
+{
+    unsigned long me = PyThread_get_thread_ident();
+    char msg[160];
+    if (le_compile_depth == 0 || me == le_compile_thread)
+        return;
+    snprintf(
+        msg, sizeof(msg),
+        "LeJIT: thread 0x%lx began to %s while thread 0x%lx's compile was "
+        "open",
+        me, what, le_compile_thread);
+    Py_FatalError(msg);
+}
+#endif
 
 /*** The compiler's allocations, kept out of tracemalloc ***/
 
