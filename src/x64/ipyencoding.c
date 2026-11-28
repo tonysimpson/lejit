@@ -1766,6 +1766,70 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     return v;
 }
 
+/*   lea rax, [X + low]; cmp rax, count; jb SMALL
+     rdi = X; call PyLong_FromLong; RG = rax; jmp DONE
+   SMALL: mov r, table; RG = [r + rax*8] (incref RG)
+   DONE: test RG, RG
+   Hand-allocated like psyco_global_load. Live XMM values are kept round
+   the call, as decref_dealloc_calling does, so the compiler's state is
+   the same on both paths. */
+DEFINEFN
+vinfo_t *
+psyco_long_from_word(PsycoObject *po, vinfo_t *x, PyObject *const *table,
+                     long low, long count, bool incref)
+{
+    char xmm_call = po->xmm_call;
+    int xmm_live, xmm_area = 0;
+    vinfo_t *v;
+    reg_t rg, rx;
+    extra_assert(is_runtime(x->source));
+    if (!is_respawning(po) && po->codelimit - po->code < 256)
+        PsycoObject_EmergencyCodeRoom(po);
+    BEGIN_CODE
+    NEED_CC();
+    NEED_REGISTER(REG_X64_RAX);
+    NEED_REGISTER(REG_X64_RCX);
+    NEED_REGISTER(REG_X64_RDX);
+    NEED_REGISTER(REG_X64_RSI);
+    NEED_REGISTER(REG_X64_RDI);
+    NEED_REGISTER(REG_X64_R8);
+    NEED_REGISTER(REG_X64_R9);
+    NEED_FREE_REG(rg); /* callee-saved: the call keeps it */
+    xmm_live = xmm_live_count(po);
+    if (RUNTIME_REG_IS_NONE(x)) {
+        rx = REG_X64_RDI;
+        LOAD_REG_FROM_RT(x->source, rx);
+    }
+    else
+        rx = RUNTIME_REG(x);
+    LEA_R_O(REG_X64_RAX, rx, low);
+    COMMON_INSTR_IMMED(CMP, REG_X64_RAX, count);
+    BEGIN_COND_JUMP_OF(0, CC_uL, xmm_live > 0);
+    if (xmm_live > 0) {
+        code = xmm_save_live(po, code, &xmm_area);
+        po->xmm_call = XMM_CALL_KEPT;
+    }
+    BEGIN_CALL(1);
+    CALL_SET_ARG_FROM_REG(rx, 0);
+    END_CALL_I(PyLong_FromLong);
+    if (xmm_area > 0)
+        code = xmm_restore_live(po, code, xmm_area);
+    po->xmm_call = xmm_call;
+    MOV_R_R(rg, REG_X64_RAX);
+    BEGIN_SHORT_JUMP(1);
+    END_JUMP_OF(0);
+    MOV_R_I(REG_TRANSIENT_1, (long)table);
+    MOV_R_X8(rg, REG_TRANSIENT_1, 0, REG_X64_RAX, 8);
+    if (incref)
+        INC_OB_REFCNT_internal(rg);
+    END_SHORT_JUMP(1);
+    TEST_R_R(rg, rg);
+    END_CODE
+    v = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = v;
+    return v;
+}
+
 #if !LE_HAS_LONG_VALUE
 DEFINEFN vinfo_t *
 psyco_long_size_times_digit(PsycoObject *po, vinfo_t *v, vinfo_t *size)
