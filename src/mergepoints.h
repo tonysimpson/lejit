@@ -26,8 +26,11 @@ struct mergepoint_s {
        virtual values: ints, bools and floats, and anything else
        (vcompiler.c:mp_new_block; dispatcher.c:made_real_when_dead) */
     int virtual_numbers, virtual_objects;
+    /* a backward jump's target */
+    int loop_head;
     /* the locals dead here (mergepoints.c:_find_dead_locals): 'ndead'
-       ints in the report, 'dead_at' ints from this merge point */
+       ints in the report, 'dead_at' ints from this merge point; read each
+       with psyco_dead_local */
     int dead_at, ndead;
 };
 
@@ -36,6 +39,15 @@ mp_dead(mergepoint_t *mp, int *n)
 {
     *n = mp->ndead;
     return (const int *)mp + mp->dead_at;
+}
+
+/* a dead local's entry (mp_dead): its index, and whether it may be bound
+   on one path to the merge point and unbound on another */
+PSY_INLINE int
+psyco_dead_local(int item, bool *either)
+{
+    *either = item < 0;
+    return item < 0 ? ~item : item;
 }
 
 /* 'bytecode_ptr' gives the position of the merge point in the bytecode.

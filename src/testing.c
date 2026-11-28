@@ -284,8 +284,11 @@ le_dead_locals(PyObject *self, PyObject *co)
         if (names == NULL)
             goto fail;
         for (i = 0; i < ndead; i++) {
-            if (PyList_Append(names, le_code_local_name(((PyCodeObject *)co),
-                                                        dead[i])) < 0) {
+            bool either;
+            if (PyList_Append(names, le_code_local_name(
+                                         ((PyCodeObject *)co),
+                                         psyco_dead_local(dead[i], &either))) <
+                0) {
                 Py_DECREF(names);
                 goto fail;
             }

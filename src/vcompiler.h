@@ -169,8 +169,10 @@ is_megamorphic(Source s)
    though the value is always one that owns its reference, so that nothing
    increfs it. Reads test it (pycompiler.c:local_bound) and its release is
    an XDECREF (vcompiler.c:vinfo_release). Widening past a merge point's
-   cap makes one (dispatcher.c:psyco_forget_values), and so does taking a
-   word from a resumed generator's frame (pycompiler.c:psyco_frame_word) */
+   cap makes one (dispatcher.c:psyco_forget_values), so does a dead local
+   at a merge point that may be bound or not (psyco_forget_dead_vars), and
+   so does taking a word from a resumed generator's frame
+   (pycompiler.c:psyco_frame_word) */
 PSY_INLINE bool
 is_maybe_null(Source s)
 {
