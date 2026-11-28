@@ -1228,13 +1228,18 @@ stub_pool_reserve(size_t n)
 }
 
 /* Constants that compiled code reads RIP-relative (x64/iencoding.h:MOV_R_I)
-   are 8-byte slots in the stub pool, which none crosses a cache line. A
-   shared slot is never changed, so code emitted later reuses one that
-   still holds its value: the cache remembers the last slot per value,
-   valid while it is in its owner's current chunk. A promotion's slot is
-   its own, and the dispatcher rewrites it
-   (idispatcher.h:ipromotion_update_entry). Code written into the pool
-   itself (a stub) gets no slot, as it is written where the slot would go. */
+   are 8-byte slots packed together in chunks of executable memory of their
+   own, so that the data cache lines code reads them from hold only
+   constants, not stubs. Chunks grow from CONST_CHUNK_MIN to
+   CONST_CHUNK_MAX, belong to the owner whose code was being compiled and
+   are freed with it. A shared slot is never changed, so code emitted
+   later reuses one that still holds its value: the cache remembers the
+   last slot per value, valid while it is in its owner's current chunk. A
+   promotion's slot is its own, and the dispatcher rewrites it
+   (idispatcher.h:ipromotion_update_entry). Code being written into the
+   stub pool takes no slot. */
+#define CONST_CHUNK_MIN 64
+#define CONST_CHUNK_MAX 512
 #define CONST_CACHE_SIZE 256
 static struct {
     le_owner_t *owner;
@@ -1244,10 +1249,22 @@ static struct {
 static code_t *
 const_slot_new(long value)
 {
-    code_t *slot = stub_pool_reserve(2 * sizeof(long) - 1);
-    if (((uintptr_t)slot & 63) > 64 - sizeof(long))
-        slot += 64 - ((uintptr_t)slot & 63);
-    POOL_OWNER->stub_pool = slot + sizeof(long);
+    le_owner_t *o = POOL_OWNER;
+    code_t *slot;
+    if (o->consts == o->consts_end) {
+        size_t size = o->const_chunk == 0                ? CONST_CHUNK_MIN
+                      : o->const_chunk < CONST_CHUNK_MAX ? 2 * o->const_chunk
+                                                         : CONST_CHUNK_MAX;
+        code_t *chunk = psyco_code_take(size);
+        o->const_chunk = size;
+        /* 8-aligned, so that no slot crosses a cache line */
+        o->consts = (code_t *)(((uintptr_t)chunk + 7) & ~(uintptr_t)7);
+        o->consts_end = (code_t *)((uintptr_t)(chunk + size) & ~(uintptr_t)7);
+        LE_RELOC_SLOT_END(&o->consts);
+        LE_RELOC_SLOT_END(&o->consts_end);
+    }
+    slot = o->consts;
+    o->consts = slot + sizeof(long);
     *(long *)slot = value;
     return slot;
 }
@@ -1270,8 +1287,8 @@ psyco_const_slot(code_t *at, long value)
     code_t *slot = const_cache[i].slot;
     if (!const_slot_allowed(at))
         return NULL;
-    if (const_cache[i].owner != o || slot < o->stub_pool_end - o->stub_chunk ||
-        slot >= o->stub_pool || *(long *)slot != value) {
+    if (const_cache[i].owner != o || slot < o->consts_end - o->const_chunk ||
+        slot >= o->consts || *(long *)slot != value) {
         slot = const_slot_new(value);
         LE_RELOC_SLOT(slot); /* it may be the address of code */
         const_cache[i].owner = o;
