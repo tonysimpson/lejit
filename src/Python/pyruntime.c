@@ -37,6 +37,7 @@
 #endif
 #include "opcode.h"
 #include "../bytecode.h"
+#include "pyruntime.h"
 
 #if LE_HAS_CTYPES_CALL_AUDITED
 /* the two words PySys_Audit's should_audit (Python/sysmodule.c) tests
@@ -234,7 +235,6 @@ _Static_assert(sizeof(LE_MONITORING_VERSION((PyInterpreterState *)0)) == 8,
                "LeJIT: the monitoring version is read as one word");
 uint64_t le_quiet_version = (uint64_t)-1;
 #ifdef PyFrameLocalsProxy_Check
-extern int psyco_frames_exposed; /* frames.c */
 #define LE_FRAMES_EXPOSED psyco_frames_exposed
 #else
 #define LE_FRAMES_EXPOSED 0
@@ -386,10 +386,6 @@ le_pyframe_new_by_cpython(PyThreadState *ts, PyCodeObject *co,
 #endif
     return f;
 }
-/* fn(arg) with the thread's frames as Python sees them linked and current
-   (frames.c), for signal handlers, which are given the current frame */
-extern int
-le_with_frames_linked(int (*fn)(void *), void *arg);
 #if !LE_HAS_TSTATE_EVAL_BREAKER && !LE_HAS_EVAL_BREAKER_GC
 static int
 le_pending_calls(void *ignored)
@@ -794,9 +790,6 @@ le_compute_eval_breaker(PyInterpreterState *interp)
             _Py_atomic_load_relaxed(&_PyRuntime.ceval.pending.calls_to_do) |
             _PyRuntime.ceval.pending.async_exc);
 }
-
-extern _Bool
-le_pending_is_own(int (*func)(void *));
 
 /* whether a pending call queued may be a signal's: one not LeJIT's own */
 static int

@@ -37,6 +37,7 @@ psyco_in_code_regions(const void *p);
 
 #if LE_CODESTATS
 /* bytes and count of the code closed, by kind */
+EXTERNVAR PyObject *psyco_codestats_buffers;
 EXTERNFN void
 psyco_codestats_buffer(const char *kind, code_t *start, code_t *end);
 #else

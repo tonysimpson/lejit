@@ -32,6 +32,9 @@ EXTERNFN condition_code_t
 psyco_vsource_cc(Source source);
 EXTERNFN void
 psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
+/* the <cc> of a source from psyco_vinfo_condition (iencoding.c, NEED_CC) */
+EXTERNFN condition_code_t
+cc_from_vsource(Source source);
 #else
 #define psyco_vsource_cc(src) CC_ALWAYS_FALSE
 #endif

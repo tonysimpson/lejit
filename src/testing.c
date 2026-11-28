@@ -4,6 +4,7 @@
    builds (LEJIT_DEV_CODESTATS=1). lejit.c adds them to the module. */
 #include "Python/genrecord.h"
 #include "Python/frames.h"
+#include "Python/pyruntime.h"
 #include "Python/pycompiler.h"
 #include "Objects/pmethodobject.h"
 #include "Objects/pobject.h"
@@ -12,17 +13,12 @@
 #include "mergepoints.h"
 #include "psyco.h"
 #include "psyfunc.h"
+#include "testing.h"
 #include <sched.h>
-
-EXTERNVAR int le_set_up; /* lejit.c */
 
 /* counters for tests and measurements, e.g. that a loop is not compiled
    afresh on every back-edge */
 #if LE_CODESTATS
-EXTERNVAR PyObject *psyco_codestats;
-EXTERNVAR long psyco_codestats_lost;
-EXTERNVAR PyObject *psyco_codestats_buffers;
-EXTERNVAR PyObject *psyco_codestats_states;
 /* the code size counts (pycompiler.c), handed over and reset */
 static PyObject *
 le_codestats(PyObject *self, PyObject *unused)
@@ -40,8 +36,6 @@ le_codestats(PyObject *self, PyObject *unused)
     psyco_codestats_lost = 0;
     return t;
 }
-EXTERNFN PyObject *
-psyco_cs_promo_stats(void); /* pycompiler.c */
 static PyObject *
 le_promostats(PyObject *self, PyObject *unused)
 {
@@ -142,7 +136,6 @@ le_stats(PyObject *self, PyObject *unused)
 #if LE_HAS_MONITORING
     if (d != NULL) {
         /* compiled code's exact tracing tests (pyruntime.c) */
-        extern long le_stat_tracing_rechecks;
         PyObject *t = PyLong_FromLong(le_stat_tracing_rechecks);
         if (t == NULL || PyDict_SetItemString(d, "tracing_rechecks", t) < 0)
             Py_CLEAR(d);
@@ -152,7 +145,6 @@ le_stats(PyObject *self, PyObject *unused)
     if (d != NULL) {
         /* frame objects made (frames.c:le_pyframe_new,
            mechanisms/frames.h:le_frame_object) */
-        extern long le_stat_frame_objects;
         PyObject *t = PyLong_FromLong(le_stat_frame_objects);
         if (t == NULL || PyDict_SetItemString(d, "frame_objects", t) < 0)
             Py_CLEAR(d);
@@ -395,13 +387,6 @@ allocs_free(void *ctx, void *ptr)
 {
     allocs_under.free(allocs_under.ctx, ptr);
 }
-
-EXTERNFN void
-le_allocs_begin(void);
-EXTERNFN long
-le_allocs_end(void);
-EXTERNFN long
-le_allocs_asked(void);
 
 DEFINEFN void
 le_allocs_begin(void)

@@ -1,4 +1,6 @@
 #include "codemanager.h"
+#include "Python/pyruntime.h"
+#include "mergepoints.h"
 #include <time.h>
 #include "platform.h"
 #include "mechanisms/exc.h"
@@ -1112,13 +1114,6 @@ codebuf_unlist(CodeBufferObject *b);
 static void
 made_forget(le_owner_t *o, const le_owner_t *dead);
 #endif
-EXTERNFN void
-psyco_owner_release_records(le_owner_t *o); /* dispatcher.c */
-EXTERNFN void
-psyco_const_forget(le_owner_t *o); /* dispatcher.c: its slots die */
-EXTERNFN bool
-psyco_ge_in_report(PyObject *mergepoints,
-                   global_entries_t *ge); /* mergepoints.c */
 static void
 amap_remove(le_addrmap_t *m, void *key);
 
@@ -2647,8 +2642,6 @@ journal_add(CodeBufferObject *b)
 DEFINEVAR le_compile_guard_t *psyco_compile_guard = NULL;
 #if ALL_CHECKS
 DEFINEVAR long psyco_fail_after[LE_FAIL_SITES];
-EXTERNVAR const char *psyco_respawn_file; /* dispatcher.h */
-EXTERNVAR int psyco_respawn_line;
 #endif
 
 DEFINEFN void
@@ -2690,9 +2683,6 @@ psyco_guard_retry(le_compile_guard_t *g)
         psyco_out_of_memory(__FILE__, __LINE__);
     }
 }
-
-EXTERNFN void
-psyco_compile_abandoned(void); /* dispatcher.c */
 
 DEFINEFN void
 psyco_guard_abandon(void)

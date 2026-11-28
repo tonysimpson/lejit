@@ -208,15 +208,6 @@ psyco_vsource_is_promotion(VirtualTimeSource source)
 /*****************************************************************/
 /***   Calling C functions                                     ***/
 
-/* implemented in iencoding.c */
-EXTERNFN vinfo_t *
-compile_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
-                  char argtags[], long args[]);
-EXTERNFN vinfo_t *
-run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
-              int arg_count, char argtags[], long args[],
-              int total_output_array_size);
-
 #define MAX_ARGUMENTS_COUNT                          \
     8 /* as the psyco_generic_call macro (codegen.h) \
        */

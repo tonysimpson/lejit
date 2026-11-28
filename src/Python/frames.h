@@ -120,15 +120,6 @@ le_gen_init_names(PyGenObject *gen, PyFunctionObject *func);
 EXTERNFN PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
                PyFunctionObject *func);
-#if LE_HAS_EVAL_FRAME_POPS
-/* the object the GC tracked last, or NULL */
-EXTERNFN PyObject *
-le_gc_youngest(PyThreadState *ts); /* pyruntime.c */
-#endif
-/* PyFrame_New, with no function watcher told of the function it makes */
-EXTERNFN PyFrameObject *
-le_pyframe_new_by_cpython(PyThreadState *ts, PyCodeObject *co,
-                          PyObject *globals); /* pyruntime.c */
 /* a frame's place, as CPython gives it, while the instruction at 'pos'
    in its code 'co' calls: the instruction's last unit, past its caches */
 EXTERNFN int
@@ -349,9 +340,6 @@ le_run_frameless(PyObject *codebuf, PyFunctionObject *func,
 EXTERNFN void
 psyco_frame_start_unregister(FrameRuntime *fr);
 #ifdef PyFrameLocalsProxy_Check
-/* how many compiled frames' locals are their frame objects' now
-   (frames.c:expose); compiled code tests it with tracing */
-EXTERNVAR int psyco_frames_exposed;
 /* the compiled frame running code 'co' goes on in ceval at its next
    resume test: tracing is on, or its locals are exposed */
 EXTERNFN int

@@ -1,13 +1,12 @@
 #ifndef LE_MECHANISMS_TSTATE_H
 #define LE_MECHANISMS_TSTATE_H
+#include "../Python/pyruntime.h"
 #if LE_HAS_THREAD_LOCAL_TSTATE
 /* The running thread's state is a thread-local of libpython's, which
    PyThreadState_Get() reads. Where it is at one offset from every thread's
    thread pointer (Python/pyruntime.c:le_tstate_thread_offset), compiled
    code loads it with one move; else it calls PyThreadState_Get each time
    it needs the state. Included after vcompiler.h. */
-extern bool
-le_tstate_thread_offset(long *offset);
 /* a run-time load of the word at 'offset' from the thread pointer
    (x64/ipyencoding.c) */
 EXTERNFN vinfo_t *
@@ -46,9 +45,6 @@ typedef struct {
 } tstate_slot_t;
 #define TSTATE_current \
     FMUT(DEF_FIELD(tstate_slot_t, PyThreadState *, ts, NO_PREV_FIELD))
-
-extern void *
-le_tstate_current_address(void);
 
 /* the running thread's state, read at run time */
 static inline vinfo_t *

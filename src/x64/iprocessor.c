@@ -6,6 +6,7 @@
  * walks machine-stack frames for frames.c.
  */
 #include "../Python/frames.h"
+#include "../Python/pyruntime.h"
 #include "../codemanager.h"
 #include "../dispatcher.h"
 #include "../processor.h"
@@ -176,12 +177,6 @@ write_stub_trampoline(PsycoObject *po, bool respawn)
     JMP_R(REG_X64_R11);
     END_CODE
 }
-
-#if LE_HAS_DEALLOC_HOOKS
-/* Python/pyruntime.c */
-extern void *
-le_ref_tracer_word(void);
-#endif
 
 /* Out-of-line slow paths that compiled code calls with its arguments
    already in the SysV registers and the stack at any alignment (the

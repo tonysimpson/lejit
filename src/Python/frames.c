@@ -60,6 +60,7 @@
  * compiled code had at the call, which PyFrame_LocalsToFast would write back.
  */
 #include "frames.h"
+#include "pyruntime.h"
 #include "genrecord.h"
 #include "../Objects/pobject.h"
 #include "../codemanager.h"

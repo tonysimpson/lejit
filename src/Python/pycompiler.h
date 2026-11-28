@@ -192,6 +192,13 @@ psyco_cs_promo_counter(code_t *code);
 EXTERNFN void
 psyco_cs_promo_miss(int site);
 #define LE_CS_PROMO_COUNTER(code) psyco_cs_promo_counter(code)
+/* the sites, for lejit._core._promostats() */
+EXTERNFN PyObject *
+psyco_cs_promo_stats(void);
+/* code size per instruction, and the bytes lost in jumps to a new buffer,
+   for lejit._core._codestats() */
+EXTERNVAR PyObject *psyco_codestats;
+EXTERNVAR long psyco_codestats_lost;
 #else
 #define LE_CS_PROMO_COUNTER(code) (code)
 #endif

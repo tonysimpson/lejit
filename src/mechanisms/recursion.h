@@ -1,5 +1,6 @@
 #ifndef LE_MECHANISMS_RECURSION_H
 #define LE_MECHANISMS_RECURSION_H
+#include "../Python/pyruntime.h"
 #if LE_HAS_PY_RECURSION_REMAINING
 /* A thread counts down the Python calls it may still make, in
    py_recursion_remaining, apart from the C calls (c_recursion_remaining,
@@ -97,8 +98,6 @@ cimpl_check_recursive_call(void);
 #define LE_C_RECURSION_TAKE(ts) ((ts)->c_recursion_remaining--)
 #define LE_C_RECURSION_GIVE(ts) ((ts)->c_recursion_remaining++)
 #elif LE_HAS_C_STACK_SOFT_LIMIT
-/* pyruntime.c: the offset of _PyThreadStateImpl's c_stack_soft_limit */
-extern const long le_c_stack_soft_limit_at;
 /* eval_hook.c: what a frame entered through the hook is charged, and what
    compiled code that stands in for C running a frame, each way
    (codegen.h's le_through_c), is */
@@ -287,9 +286,6 @@ cimpl_check_recursive_call(void)
     return 0;
 }
 #elif LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING
-/* Python/pyruntime.c */
-extern int *
-le_recursion_limit_address(void);
 /* exported, declared in an internal header */
 PyAPI_FUNC(int)
     _Py_CheckRecursiveCall(PyThreadState *tstate, const char *where);

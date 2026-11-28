@@ -1,12 +1,11 @@
 #ifndef LE_MECHANISMS_GIL_H
 #define LE_MECHANISMS_GIL_H
+#include "../Python/pyruntime.h"
 /* The GIL released around a call of C code from compiled code and taken
    back after it, as Py_BEGIN_ALLOW_THREADS and Py_END_ALLOW_THREADS do,
    with the running thread's state compiled code loads itself
    (Python/pyruntime.c:le_gil_release, le_gil_take). Included after
    mechanisms/tstate.h. */
-extern void
-le_gil_calls(void **release, void **take);
 
 /* the GIL released: the thread state to take it back with, a new
    reference, or NULL */

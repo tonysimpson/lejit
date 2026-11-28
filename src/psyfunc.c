@@ -28,6 +28,7 @@
 #include "Objects/ptupleobject.h"
 #include "Objects/punicodeobject.h"
 #include "Python/frames.h"
+#include "Python/pyruntime.h"
 #include "Python/genrecord.h"
 #include "Python/pycompiler.h"
 #include "codemanager.h"
@@ -42,8 +43,6 @@
 #include "mechanisms/tstate.h"
 #include "mechanisms/recursion.h"
 #include "mechanisms/frames.h"
-extern int
-le_eval_breaker_handler(void);
 #if LE_HAS_TSTATE_EVAL_BREAKER
 /* ceval's eval_breaker is the running thread's, in its state, and its
    events are its low byte (Python/pyruntime.c, with the handler):
@@ -83,8 +82,6 @@ le_eval_breaker_check(void)
 /* ceval's eval_breaker is a 32-bit int at an address fixed for the
    process: compiled code compares it with 0 in place. The
    address and the handler are Python/pyruntime.c's. */
-extern void *
-le_eval_breaker_address(void);
 
 static inline condition_code_t
 le_eval_breaker_test(PsycoObject *po)

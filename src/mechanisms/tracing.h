@@ -1,5 +1,6 @@
 #ifndef LE_MECHANISMS_TRACING_H
 #define LE_MECHANISMS_TRACING_H
+#include "../Python/pyruntime.h"
 /* the thread's interpreter, whose eval_frame le_direct_call_refused reads */
 #define TSTATE_interp \
     FMUT(DEF_FIELD(PyThreadState, PyInterpreterState *, interp, NO_PREV_FIELD))
@@ -16,11 +17,6 @@
    exposed; only where that fails does it make the exact test
    (psyfunc.c:tracing_on). Where it passes, le_code_tools_on tests the code's
    own tools. Included after vcompiler.h and codegen.h. */
-extern int
-le_monitoring_on(PyThreadState *ts);
-extern int
-le_code_monitored(PyCodeObject *co);
-extern const long le_monitors_tools_at, le_monitors_tools_size;
 static inline int
 le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {
@@ -31,11 +27,6 @@ le_tracing_now(PyThreadState *ts, PyCodeObject *co)
     return (a | b) != 0 ||
            (co->_co_monitoring != NULL && le_code_monitored(co));
 }
-extern uint64_t le_quiet_version;
-extern const void *
-le_monitoring_version_address(void);
-extern int
-le_tracing_recheck(PyCodeObject *co);
 
 /* nonzero where the tools may have changed since they were last seen
    empty, or a frame's locals are exposed ('vts', 'vinterp' and 'co'
@@ -231,7 +222,6 @@ le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp,
    needed, as on an error. */
 extern void *
 le_eval_hook(void);
-extern const long le_interp_eval_frame_at;
 
 static inline bool
 le_direct_call_refused(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)

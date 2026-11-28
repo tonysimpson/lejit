@@ -9,6 +9,7 @@
 #endif
 /* PyLazyImport_Type */
 #include "../Python/pycinternal.h"
+#include "../Python/pyruntime.h"
 
 /* Emitted code's view of the shape of dict keys (pobject.h:le_dict_shape):
    a compare of the keys at 'rk' with an immediate, which ends the
@@ -67,12 +68,6 @@ function_return(PsycoObject *po, Source retval, int nframelocal, long retpos)
     END_CODE
 }
 
-#if LE_HAS_DEALLOC_HOOKS
-/* Python/pyruntime.c */
-extern void *
-le_ref_tracer_word(void);
-#endif
-
 /* the live XMM registers stored below RSP and loaded back, around a call
    on a path that must leave the state as it was; 'area' is the bytes used */
 static int
@@ -120,10 +115,6 @@ xmm_restore_live(PsycoObject *po, code_t *code, int area)
 }
 
 #if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
-/* Python/pyruntime.c */
-extern bool
-le_trashcan_words(long *tstate_at, long *soft_at, long *chain_at, long *room);
-
 _Static_assert(Py_TPFLAGS_HAVE_GC >> 8 < 256 &&
                    (Py_TPFLAGS_HAVE_GC & 255) == 0,
                "the GC flag is tested in tp_flags' second byte");

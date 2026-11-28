@@ -17,6 +17,7 @@
 #include "../bytecode.h"
 #include "../mechanisms/frames.h"
 #include "../mechanisms/store_gc.h"
+#include "pyruntime.h"
 
 /* exported by CPython, declared in its internal headers where it has them */
 PyAPI_FUNC(int) _PyGen_SetStopIterationValue(PyObject *);
