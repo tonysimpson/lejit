@@ -237,6 +237,7 @@ CASES = [
     ('star_arguments', [(3,)], {}),
     ('exit_drops_traceback', [(3,)], {}),
     ('caller_frames', [(3,)], {}),
-    ('getattr_deletes_itself', [(3,)], {}),
+    ('getattr_deletes_itself', [(3,)],
+     {'compiles_each_call': 'each call makes a module and compiles its __getattr__'}),
     ('thread_generator_frames', [(4,)], {}),
 ]

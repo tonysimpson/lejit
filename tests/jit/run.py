@@ -20,6 +20,7 @@ leak check empties CPython's type cache around the rounds, and runs the
 calls once more before them, as emptying it can make compiled code compile
 again),
 'checked': reason (needs a checked build),
+'skip': reason (not run here, said with the reason),
 'expected': [result, ...] (LeJIT's results must be these, one per call, not
 plain CPython's: for a language rule some CPython gets wrong),
 'compiles_each_call': reason (the function makes and compiles new code on
@@ -178,8 +179,7 @@ def main():
         ASLR_OFF[:] = []
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
     more_known = more_objects_known()
-    if release:
-        counts['skip'] = 0
+    counts['skip'] = 0
     print('seed %d' % seed)
     sys.stdout.flush()
     cases_dir = [CASES] if CASES != os.path.join(ROOT, 'tests', 'jit', 'cases') else []
@@ -190,6 +190,10 @@ def main():
                                                     key=lambda c: rank(seed, c[0])):
         if release and opts.get('checked'):
             counts['skip'] += 1
+            continue
+        if opts.get('skip'):
+            counts['skip'] += 1
+            print('skip  %s: %s' % (name, opts['skip']))
             continue
         warmup = opts.get('warmup', (9,))[0]
         # both runs hash alike: what plain CPython itself keeps after the

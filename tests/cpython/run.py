@@ -8,7 +8,7 @@ module's plain and LeJIT runs share its order and its hash seed.
 
     python3.X tests/cpython/run.py [-j N] [--seed N] [module ...]
 """
-import contextlib, fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile, threading
+import contextlib, fnmatch, functools, json, os, re, resource, signal, subprocess, sys, tempfile, threading
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import ROOT, rank, take_seed
@@ -360,6 +360,11 @@ one_at_a_time = threading.Lock()
 # Where a gc callback that fails at the recursion limit leaves the limit off,
 # so CPython aborts at it, LeJIT's own callback makes these abort.
 GC_CALLBACK_ABORTS = 'test_functools test_json test_pickle test_pickletools'
+# The same CPython leaves the limit off after any RecursionError raised and
+# swallowed during a collection, such as by _pyio's IOBase.__del__; these
+# recurse to the limit and abort, plain too, when a collection that frees an
+# earlier test's _pyio file comes there.
+GC_FINALIZER_ABORTS = 'test.test_io.Py*.test_recursive_repr'
 GC_CALLBACK_PROBE = r'''
 import gc, sys
 gc.callbacks.append(lambda phase, info: None)
@@ -376,6 +381,7 @@ for top in range(limit - 10, limit + 10):
 '''
 
 
+@functools.lru_cache()
 def gc_callback_aborts():
     return subprocess.run([sys.executable, '-c', GC_CALLBACK_PROBE],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -459,6 +465,8 @@ def run(mode, name, seed):
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
         skip = [t for ts in SKIPPED.values() for t in ts.split()]
+        if gc_callback_aborts():
+            skip += GC_FINALIZER_ABORTS.split()
         env = dict(os.environ)
         env.setdefault('PYTHONHASHSEED', str(int(rank(seed, name), 16) % (1 << 32)))
         p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT,
