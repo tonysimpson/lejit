@@ -15,9 +15,11 @@
  *     and shared: any instruction boundary may be a merge point.
  *  3. Liveness of locals (as upstream's FULL_CONTROL_FLOW): at each merge
  *     point, the locals never read again are listed first in its fatlist,
- *     and psyco_forget_dead_vars drops what is known about them before the
- *     state is compared, so states differing only in that share code.
- *     Their values stay, as CPython's frame keeps them. Successors are
+ *     and psyco_forget_dead_vars puts them in one form before the state
+ *     is compared, so states differing only in them share code; with each
+ *     goes whether it may be bound on one path there and unbound on
+ *     another, from a forward pass over the same successors. Their values
+ *     stay, as CPython's frame keeps them. Successors are
  *     those of 2, made conservative where 3.7 bytecode doesn't say: an
  *     instruction may reach the handler of every SETUP_EXCEPT/FINALLY/WITH
  *     whose body contains it (the compiler lays the body out between the
@@ -107,6 +109,7 @@ report_destructor(PyObject *capsule)
         Py_ssize_t _t = JUMP_TARGET(target);               \
         if (_t <= entry_count_index) {                     \
             entry_count[_t] = 8;                           \
+            is_loop_head[_t] = 1;                          \
             if (!LE_IS_JBACK(in.raw))                      \
                 BREAKER_CHECK(_t);                         \
             else if (opcode != JUMP_BACKWARD_NO_INTERRUPT) \
@@ -248,8 +251,96 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
     return changed;
 }
 
+/* a store (bind) or a delete (unbind) of local in the sets of locals that
+   may be bound and that may be unbound, going forward */
+static inline __attribute__((always_inline)) void
+_bound_access(uint64_t *bound, uint64_t *unbound, int local, int bind,
+              int nlocals)
+{
+    uint64_t bit = (uint64_t)1 << (local % 64);
+    if (local >= nlocals)
+        return;
+    if (bind) {
+        bound[local / 64] |= bit;
+        unbound[local / 64] &= ~bit;
+    }
+    else {
+        bound[local / 64] &= ~bit;
+        unbound[local / 64] |= bit;
+    }
+}
+
+/* the sets out of instruction i (tb, tu) joined into instruction j's: whether
+   one grew */
+static inline __attribute__((always_inline)) int
+_bound_flow(uint64_t *bound, uint64_t *unbound, const uint64_t *tb,
+            const uint64_t *tu, Py_ssize_t j, int words)
+{
+    return _live_union(bound + j * words, tb, words) |
+           _live_union(unbound + j * words, tu, words);
+}
+
+/* one forward pass of the locals that may be bound and that may be unbound
+   at each instruction, over the successors _live_pass uses: whether a set
+   grew. A handler gets the state before each instruction of its body: no
+   instruction raises after it binds or unbinds a local. */
+static int
+_bound_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
+            const int *setup_at, const int *try_end, const int *handler_at,
+            int nsetups, const int *break_to, int nbreak, const int *exit_to,
+            int nexit, uint64_t *bound, uint64_t *unbound, uint64_t *tb,
+            uint64_t *tu, int nlocals, int words)
+{
+    Py_ssize_t i, k;
+    int changed = 0;
+    for (i = 0; i < n; i++) {
+        int o = op[i], a = arg[i], f;
+        if (o < 0)
+            continue;
+        f = le_op_flags(o);
+        memcpy(tb, bound + i * words, words * sizeof(uint64_t));
+        memcpy(tu, unbound + i * words, words * sizeof(uint64_t));
+        for (k = 0; k < nsetups; k++)
+            if (setup_at[k] <= i && i < try_end[k])
+                changed |=
+                    _bound_flow(bound, unbound, tb, tu, handler_at[k], words);
+        if (o == STORE_FAST)
+            _bound_access(tb, tu, a, 1, nlocals);
+        else if (o == DELETE_FAST || o == LOAD_FAST_AND_CLEAR)
+            _bound_access(tb, tu, a, 0, nlocals);
+        else if (o == STORE_FAST_LOAD_FAST)
+            _bound_access(tb, tu, a >> 4, 1, nlocals);
+        else if (o == STORE_FAST_STORE_FAST) {
+            _bound_access(tb, tu, a >> 4, 1, nlocals);
+            _bound_access(tb, tu, a & 15, 1, nlocals);
+        }
+        if (o == BREAK_LOOP)
+            for (k = 0; k < nbreak; k++)
+                changed |=
+                    _bound_flow(bound, unbound, tb, tu, break_to[k], words);
+        else if (o == END_FINALLY) {
+            for (k = 0; k < nexit; k++)
+                changed |=
+                    _bound_flow(bound, unbound, tb, tu, exit_to[k], words);
+            changed |= _bound_flow(bound, unbound, tb, tu, nxt[i], words);
+        }
+        else if (o == CALL_FINALLY)
+            changed |= _bound_flow(bound, unbound, tb, tu, a, words);
+        else if (!(f & LE_OPF_STOPS)) {
+            if (f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
+                changed |= _bound_flow(bound, unbound, tb, tu, a, words);
+            if (!(f & LE_OPF_JUMPS))
+                changed |= _bound_flow(bound, unbound, tb, tu, nxt[i], words);
+        }
+    }
+    return changed;
+}
+
 /* write the dead locals at each merge point into its fatlist (before any
-   code buffer is added). Returns 0 on memory error, with nothing set.
+   code buffer is added), as ~index where the local may be bound on one
+   path there and unbound on another (psyco_dead_local), from the
+   arguments bound at the start. Returns 0 on memory error, with nothing
+   set.
    The first argument of code with a __class__ cell is never dead: a
    zero-argument super() reads it (psuper_noargs). Nor is a local that is
    also a cell, which the *_DEREF instructions read. */
@@ -265,7 +356,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     int *setup_at, *try_end, *handler_at,
         nsetups = 0; /* try bodies: [setup_at, try_end) */
     int *break_to, *exit_to, nbreak = 0, nexit = 0;
-    uint64_t *live, *tmp;
+    uint64_t *live, *tmp, *bound = NULL, *unbound, *tb, *tu;
     unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
     int ok = 0;
     int keep_first = co->co_argcount > 0 && psyco_class_cell(co) >= 0;
@@ -350,13 +441,35 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
                           nsetups, break_to, nbreak, exit_to, nexit, live, tmp,
                           nlocals, words));
 
+    /* forward, from the arguments */
+    bound = PyMem_Calloc(2 * (n + 2) * words, sizeof(uint64_t));
+    if (bound == NULL)
+        goto done;
+    unbound = bound + (n + 1) * words;
+    tb = unbound + (n + 1) * words;
+    tu = tb + words;
+    {
+        int nargs = co->co_argcount + co->co_kwonlyargcount +
+                    ((co->co_flags & CO_VARARGS) != 0) +
+                    ((co->co_flags & CO_VARKEYWORDS) != 0);
+        int v;
+        for (v = 0; v < nlocals; v++)
+            _bound_access(bound, unbound, v, v < nargs, nlocals);
+    }
+    while (_bound_pass(n, op, arg, nxt, setup_at, try_end, handler_at, nsetups,
+                       break_to, nbreak, exit_to, nexit, bound, unbound, tb,
+                       tu, nlocals, words));
+
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
-        uint64_t *in = live + (mp->bytecode_position / LE_UNIT) * words;
+        Py_ssize_t at = mp->bytecode_position / LE_UNIT;
+        uint64_t *in = live + at * words;
         int v;
         for (v = keep_first; v < nlocals; v++)
             if (!LIVE_TEST(in, v) && !le_code_local_is_cell(co, v)) {
-                PyObject *o = PyLong_FromLong(v);
+                int either = LIVE_TEST(bound + at * words, v) &&
+                             LIVE_TEST(unbound + at * words, v);
+                PyObject *o = PyLong_FromLong(either ? ~v : v);
                 if (o == NULL || PyList_Append(mp->entries.fatlist, o) < 0) {
                     Py_XDECREF(o);
                     goto done;
@@ -366,6 +479,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     }
     ok = 1;
 done:
+    PyMem_Free(bound);
     PyMem_Free(live);
     return ok;
 }
@@ -388,14 +502,15 @@ _find_merge_points(PyCodeObject *co, int *bad)
     Py_ssize_t entry_count_len = end_unit + 1;
     /* a byte per code unit each, on the heap: a function's code can be
        longer than the C stack */
-    unsigned char *entry_count = PyMem_Calloc(4, entry_count_len);
-    unsigned char *is_start, *breaker_check, *is_target;
+    unsigned char *entry_count = PyMem_Calloc(5, entry_count_len);
+    unsigned char *is_start, *breaker_check, *is_target, *is_loop_head;
     int bad_jump = 0;
     if (entry_count == NULL)
         return NULL;
     is_start = entry_count + entry_count_len;
     breaker_check = is_start + entry_count_len;
     is_target = breaker_check + entry_count_len;
+    is_loop_head = is_target + entry_count_len;
 
     entry_count[0] = 2; /* start of code is always a merge point */
     while (next_unit < end_unit) {
@@ -540,6 +655,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
             report->mergepoints[mergepoint_index].real_from = 0;
             report->mergepoints[mergepoint_index].virtual_numbers = 0;
             report->mergepoints[mergepoint_index].virtual_objects = 0;
+            report->mergepoints[mergepoint_index].loop_head =
+                is_loop_head[entry_count_index];
             mergepoint_index++;
         }
     }
@@ -550,6 +667,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].real_from = 0;
     report->mergepoints[mergepoint_count].virtual_numbers = 0;
     report->mergepoints[mergepoint_count].virtual_objects = 0;
+    report->mergepoints[mergepoint_count].loop_head = 0;
     PyMem_Free(entry_count);
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
