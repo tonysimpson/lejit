@@ -10139,8 +10139,7 @@ inline_gen_round(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int pause;
-    if (!po->pr.is_inlining ||
-        psyco_generator_mode(po) != GENEXPR_INLINED ||
+    if (!po->pr.is_inlining || psyco_generator_mode(po) != GENEXPR_INLINED ||
         po->pr.next_instr !=
             psyco_inline_loop_head(po->pr.merge_points, &pause))
         return false;
