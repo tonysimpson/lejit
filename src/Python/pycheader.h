@@ -91,6 +91,8 @@
    gives the loop's FOR_ITER the value; its return ends it. acc is
    unused. */
 #define GENEXPR_INLINED 13
+/* one more than the last mode (pycompiler.c:gen_modes) */
+#define GENEXPR_MODES 14
 /* pr.inline_left for a generator compiled into its loop left at its yield */
 #define INLINE_LEFT_PAUSED 2
 #define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)

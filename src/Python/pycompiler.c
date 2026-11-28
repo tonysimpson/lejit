@@ -5504,6 +5504,28 @@ released_at_run_time(vinfo_t *v)
 }
 #endif
 
+/* What compiled code does at a yield and a return and as it ends, by its
+   generator mode (GENEXPR_*, psyco_generator_mode; 0 for code that is no
+   generator's body). The table, gen_modes, is before
+   compile_functions_and_returns. */
+struct gen_mode {
+    /* at a yield of 'v', the top of the stack, 'at' the YIELD_VALUE: true
+       to go on with None in its place, the value send() would have pushed
+       for the POP_TOP after; false where the body is left, or with an
+       exception */
+    bool (*yield)(PsycoObject *po, long mode, vinfo_t *v, int at);
+    /* at a return of 'v', which it takes: what the body returns, NULL
+       with an exception */
+    vinfo_t *(*result)(PsycoObject *po, long mode, vinfo_t *v);
+    /* when the body is left, before its locals go; false with an
+       exception */
+    bool (*end)(PsycoObject *po);
+    /* where StopIteration leaving the body becomes RuntimeError (PEP 479,
+       as gen_send_ex), and with which message */
+    enum { GEN_STOP_NONE, GEN_STOP_GENERATOR, GEN_STOP_COROUTINE } stop;
+};
+static const struct gen_mode gen_modes[GENEXPR_MODES];
+
 static code_t *
 exit_function(PsycoObject *po)
 {
@@ -5511,14 +5533,15 @@ exit_function(PsycoObject *po)
     vinfo_t **pp;
     long i, n, last = -1;
     Source retsource;
-    long mode = psyco_generator_mode(po); /* before the locals go */
+    /* before the locals go */
+    const struct gen_mode *mode = &gen_modes[psyco_generator_mode(po)];
     extra_assert(!po->pr.is_inlining);
     (void)last;
 
     /* the frame that stood for the call keeps its locals as they end */
     if (!catcher_flush(po))
         return NULL;
-    if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po))
+    if (mode->end != NULL && !mode->end(po))
         return NULL;
     /* clear the locals, first to last as frame_dealloc does (finalisers run
        in that order), then the stack; where FRAME_CLEARED_LAST_FIRST, the
@@ -5588,13 +5611,9 @@ exit_function(PsycoObject *po)
     else {
         if (!compute_and_raise_exception(po))
             return NULL;
-        /* PEP 479, as gen_send_ex: StopIteration leaving a fused generator
-           or a direct-started coroutine becomes RuntimeError. A resumable
-           one's gen_send_ex does it, once the frame has gone, so the
-           traceback has no more entries. */
-        if (mode != 0 && mode != GENEXPR_RESUMABLE &&
+        if (mode->stop != GEN_STOP_NONE &&
             !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, "l",
-                                (long)(mode == GENEXPR_DIRECT)))
+                                (long)(mode->stop == GEN_STOP_COROUTINE)))
             return NULL;
         clear_pseudo_exception(po);
         sk_incref(&psyco_skZero);
@@ -6098,10 +6117,13 @@ long
 psyco_generator_mode(PsycoObject *po)
 {
     PyCodeObject *co = po->pr.co;
+    long mode;
     if (!(co->co_flags & LE_BODY_FLAGS))
         return 0;
-    return CompileTime_Get(po->vlocals.items[GENEXPR_SLOT_MODE(co)]->source)
-        ->value;
+    mode = CompileTime_Get(po->vlocals.items[GENEXPR_SLOT_MODE(co)]->source)
+               ->value;
+    extra_assert(0 <= mode && mode < GENEXPR_MODES);
+    return mode;
 }
 
 DEFINEFN
@@ -9136,6 +9158,194 @@ start_directly(PsycoObject *po, int depth, bool drop)
     return 0;
 }
 
+/* A generator fused with its consumer (psyfunc.c:psyco_call_genexpr) does
+   the consumer's step at each yield, its accumulator in the slot after the
+   mode's, and returns the consumer's result: its own return value is
+   dropped, as the consumers drop StopIteration's value. */
+static vinfo_t **
+gen_slots(PsycoObject *po)
+{
+    return po->vlocals.items + GENEXPR_SLOT_MODE(po->pr.co);
+}
+
+static bool
+list_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    return PsycoList_Append(po, gen_slots(po)[1], v);
+}
+
+static bool
+set_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    return psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv",
+                              gen_slots(po)[1], v) != NULL;
+}
+
+static bool
+sum_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    vinfo_t **slots = gen_slots(po);
+#if LE_HAS_SUM_COMPENSATED
+    /* builtin_sum_impl's loop for the phase it is in; another phase is
+       another version of the fused code */
+    int phase = (int)mode;
+    if (!psyco_sum_step(po, &phase, &slots[1], &slots[2], v))
+        return false;
+    if (phase != mode) {
+        vinfo_decref(slots[0], po);
+        slots[0] = vinfo_new(CompileTime_NewSk(sk_new(phase, SkFlagFixed)));
+    }
+#else
+    vinfo_t *acc = slots[1];
+    vinfo_t *x = psyco_sum_add(po, acc, v);
+    if (x == NULL)
+        return false;
+    slots[1] = x;
+    vinfo_decref(acc, po);
+#endif
+    return true;
+}
+
+static bool
+minmax_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    vinfo_t **slots = gen_slots(po);
+    vinfo_t *acc = slots[1];
+    vinfo_t *x = psyco_generic_call(
+        po, cimpl_minmax_step, CfCommonNewRefPyObject, "vvl", acc, v,
+        (long)(mode == GENEXPR_MIN ? Py_LT : Py_GT));
+    if (x == NULL)
+        return false;
+    slots[1] = x;
+    vinfo_decref(acc, po);
+    return true;
+}
+
+static bool
+any_all_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    condition_code_t cc = integer_NON_NULL(po, PsycoObject_IsTrue(po, v));
+    if (cc == CC_ERROR)
+        return false;
+    if (mode == GENEXPR_ALL)
+        cc = INVERT_CC(cc);
+    if (runtime_condition_f(po, cc)) {
+        PycException_Raise(
+            po, vinfo_new(VirtualTime_New(&EReturn)),
+            mode == GENEXPR_ANY ? psyco_vi_Py_True() : psyco_vi_Py_False());
+        return false;
+    }
+    return true;
+}
+
+static bool
+resumable_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    yield_resumable(po, at, false);
+    return false;
+}
+
+static bool
+direct_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    yield_direct(po, at);
+    return false;
+}
+
+/* compiled into its consumer's loop: the frame is left, with the value
+   send() would have pushed for the POP_TOP after, for FOR_ITER
+   (psyfunc.c:psyco_gen_inline_yield) */
+static bool
+inlined_yield(PsycoObject *po, long mode, vinfo_t *v, int at)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    POP(v);
+    PUSH(psyco_vi_None());
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EYield)), v);
+    return false;
+}
+
+static vinfo_t *
+value_result(PsycoObject *po, long mode, vinfo_t *v)
+{
+    return v;
+}
+
+/* a resumable generator returns its value, which gen_send_ex makes
+   StopIteration's; its frame's place is left at the return, as ceval
+   leaves it, for a frame object that outlives the frame */
+static vinfo_t *
+resumable_result(PsycoObject *po, long mode, vinfo_t *v)
+{
+    if (!gen_frame_place(po, le_lasti_of(le_place(le_code(po->pr.co),
+                                                  po->pr.next_instr)))) {
+        vinfo_decref(v, po);
+        return NULL;
+    }
+    return v;
+}
+
+static vinfo_t *
+acc_result(PsycoObject *po, long mode, vinfo_t *v)
+{
+    vinfo_t *acc = gen_slots(po)[1];
+    vinfo_decref(v, po);
+    vinfo_incref(acc);
+    return acc;
+}
+
+static vinfo_t *
+sum_result(PsycoObject *po, long mode, vinfo_t *v)
+{
+#if LE_HAS_SUM_COMPENSATED
+    vinfo_t **slots = gen_slots(po);
+    vinfo_decref(v, po);
+    return psyco_sum_result(po, (int)mode, slots[1], slots[2]);
+#else
+    return acc_result(po, mode, v);
+#endif
+}
+
+static vinfo_t *
+minmax_result(PsycoObject *po, long mode, vinfo_t *v)
+{
+    vinfo_decref(v, po);
+    return psyco_generic_call(po, cimpl_minmax_result, CfCommonNewRefPyObject,
+                              "vl", gen_slots(po)[1],
+                              (long)(mode == GENEXPR_MIN));
+}
+
+static vinfo_t *
+any_all_result(PsycoObject *po, long mode, vinfo_t *v)
+{
+    vinfo_decref(v, po);
+    return mode == GENEXPR_ANY ? psyco_vi_Py_False() : psyco_vi_Py_True();
+}
+
+/* A fused generator or a direct-started coroutine turns StopIteration
+   into RuntimeError as it leaves; a resumable one's gen_send_ex does it,
+   once the frame has gone, so the traceback has no more entries. */
+static const struct gen_mode gen_modes[GENEXPR_MODES] = {
+    [0] = {NULL, value_result, NULL, GEN_STOP_NONE},
+    [GENEXPR_LIST] = {list_yield, acc_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_SET] = {set_yield, acc_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_SUM] = {sum_yield, sum_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_ANY] = {any_all_yield, any_all_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_ALL] = {any_all_yield, any_all_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_MIN] = {minmax_yield, minmax_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_MAX] = {minmax_yield, minmax_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_RESUMABLE] = {resumable_yield, resumable_result, gen_locals_end,
+                           GEN_STOP_NONE},
+    [GENEXPR_DIRECT] = {direct_yield, value_result, NULL, GEN_STOP_COROUTINE},
+#if LE_HAS_SUM_COMPENSATED
+    [GENEXPR_SUM_FLOAT] = {sum_yield, sum_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_SUM_COMPLEX] = {sum_yield, sum_result, NULL, GEN_STOP_GENERATOR},
+    [GENEXPR_SUM_GENERIC] = {sum_yield, sum_result, NULL, GEN_STOP_GENERATOR},
+#endif
+    [GENEXPR_INLINED] = {inlined_yield, value_result, NULL,
+                         GEN_STOP_GENERATOR},
+};
+
 /* returning, yielding and making functions */
 static int
 compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
@@ -9145,7 +9355,6 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
     vinfo_t *v, *x;
-    condition_code_t cc;
     int next_instr = *next_instr_io;
     int ended;
 
@@ -9156,56 +9365,14 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
 
         case RETURN_VALUE:
             POP(v);
-        return_value:
-            /* a resumable generator returns its value, which gen_send_ex
-               makes StopIteration's; its frame's place is left at the
-               return, as ceval leaves it, for a frame object that
-               outlives the frame */
-            if (psyco_generator_mode(po) == GENEXPR_RESUMABLE &&
-                !gen_frame_place(po, le_lasti_of(le_place(
-                                         le_code(co), po->pr.next_instr)))) {
-                vinfo_decref(v, po);
+        return_value: {
+            long mode = psyco_generator_mode(po);
+            v = gen_modes[mode].result(po, mode, v);
+            if (v == NULL)
                 break;
-            }
-            if ((co->co_flags & CO_GENERATOR) &&
-                psyco_generator_mode(po) != GENEXPR_RESUMABLE &&
-                psyco_generator_mode(po) != GENEXPR_INLINED) {
-                /* a fused generator: return the consumer's result; the
-                 * generator's own return value is dropped, as the
-                 * consumers drop StopIteration's value */
-                int slot = GENEXPR_SLOT_MODE(co);
-                long mode =
-                    CompileTime_Get(po->vlocals.items[slot]->source)->value;
-                vinfo_decref(v, po);
-                if (mode == GENEXPR_ANY)
-                    v = psyco_vi_Py_False();
-                else if (mode == GENEXPR_ALL)
-                    v = psyco_vi_Py_True();
-                else if (mode == GENEXPR_MIN || mode == GENEXPR_MAX) {
-                    v = psyco_generic_call(po, cimpl_minmax_result,
-                                           CfCommonNewRefPyObject, "vl",
-                                           po->vlocals.items[slot + 1],
-                                           (long)(mode == GENEXPR_MIN));
-                    if (v == NULL)
-                        break;
-                }
-#if LE_HAS_SUM_COMPENSATED
-                else if (mode == GENEXPR_SUM_FLOAT ||
-                         mode == GENEXPR_SUM_COMPLEX) {
-                    v = psyco_sum_result(po, (int)mode,
-                                         po->vlocals.items[slot + 1],
-                                         po->vlocals.items[slot + 2]);
-                    if (v == NULL)
-                        break;
-                }
-#endif
-                else {
-                    v = po->vlocals.items[slot + 1];
-                    vinfo_incref(v);
-                }
-            }
             PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
             break;
+        }
 
         case GEN_START:
             /* a resumable generator pops the None gen_send_ex pushed; one
@@ -9222,13 +9389,9 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
 
         case YIELD_VALUE: {
-            /* in a generator fused with its consumer (GENEXPR_*): do the
-               consumer's step, then push the value send() would have, for the
-               POP_TOP that follows */
-            int slot = GENEXPR_SLOT_MODE(co);
-            long mode =
-                CompileTime_Get(po->vlocals.items[slot]->source)->value;
-            vinfo_t *acc = po->vlocals.items[slot + 1];
+            /* the mode's step (gen_modes), then the value send() would have
+               pushed, for the POP_TOP that follows */
+            long mode = psyco_generator_mode(po);
 #if LE_HAS_YIELD_VALUE_WRAPS
             /* an async generator's yield wraps its value, as ASYNC_GEN_WRAP
                does where that is an instruction of its own */
@@ -9242,81 +9405,8 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 PUSH(x);
             }
 #endif
-            /* compiled into its consumer's loop: the frame is left, with
-               the value send() would have pushed for the POP_TOP after,
-               for FOR_ITER (psyfunc.c:psyco_gen_inline_yield) */
-            if (mode == GENEXPR_INLINED) {
-                POP(v);
-                PUSH(psyco_vi_None());
-                PycException_Raise(po, vinfo_new(VirtualTime_New(&EYield)), v);
+            if (!gen_modes[mode].yield(po, mode, TOP(), next_instr - LE_UNIT))
                 break;
-            }
-            v = TOP();
-            if (mode == GENEXPR_RESUMABLE) {
-                yield_resumable(po, next_instr - LE_UNIT, false);
-                break;
-            }
-            if (mode == GENEXPR_DIRECT) {
-                yield_direct(po, next_instr - LE_UNIT);
-                break;
-            }
-            if (mode == GENEXPR_LIST) {
-                if (!PsycoList_Append(po, acc, v))
-                    break;
-            }
-            else if (mode == GENEXPR_SET) {
-                if (!psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv",
-                                        acc, v))
-                    break;
-            }
-#if LE_HAS_SUM_COMPENSATED
-            else if (mode == GENEXPR_SUM || mode == GENEXPR_SUM_FLOAT ||
-                     mode == GENEXPR_SUM_COMPLEX ||
-                     mode == GENEXPR_SUM_GENERIC) {
-                /* builtin_sum_impl's loop for the phase it is in; another
-                   phase is another version of the fused code */
-                int phase = (int)mode;
-                if (!psyco_sum_step(po, &phase, &po->vlocals.items[slot + 1],
-                                    &po->vlocals.items[slot + 2], v))
-                    break;
-                if (phase != mode) {
-                    vinfo_decref(po->vlocals.items[slot], po);
-                    po->vlocals.items[slot] = vinfo_new(
-                        CompileTime_NewSk(sk_new(phase, SkFlagFixed)));
-                }
-            }
-#else
-            else if (mode == GENEXPR_SUM) {
-                x = psyco_sum_add(po, acc, v);
-                if (x == NULL)
-                    break;
-                po->vlocals.items[slot + 1] = x;
-                vinfo_decref(acc, po);
-            }
-#endif
-            else if (mode == GENEXPR_MIN || mode == GENEXPR_MAX) {
-                x = psyco_generic_call(
-                    po, cimpl_minmax_step, CfCommonNewRefPyObject, "vvl", acc,
-                    v, (long)(mode == GENEXPR_MIN ? Py_LT : Py_GT));
-                if (x == NULL)
-                    break;
-                po->vlocals.items[slot + 1] = x;
-                vinfo_decref(acc, po);
-            }
-            else {
-                cc = integer_NON_NULL(po, PsycoObject_IsTrue(po, v));
-                if (cc == CC_ERROR)
-                    break;
-                if (mode == GENEXPR_ALL)
-                    cc = INVERT_CC(cc);
-                if (runtime_condition_f(po, cc)) {
-                    PycException_Raise(
-                        po, vinfo_new(VirtualTime_New(&EReturn)),
-                        mode == GENEXPR_ANY ? psyco_vi_Py_True()
-                                            : psyco_vi_Py_False());
-                    break;
-                }
-            }
             POP_DECREF();
             PUSH(psyco_vi_None());
             goto fine;
