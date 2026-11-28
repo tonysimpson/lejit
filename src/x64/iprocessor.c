@@ -341,7 +341,7 @@ le_function_gate_new(void *frameless, void ***original)
     code = psyco_write_far_jump(code, NULL);
     *original = (void **)(code - sizeof(void *));
     gate = code;
-    MOV_R_O(REG_X64_RAX, REG_X64_RDI, offsetof(PyFunctionObject, func_code));
+    MOV_R_O(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyFunctionObject, func_code));
     MOV_R_O(REG_X64_RAX, REG_X64_RAX, offsetof(PyCodeObject, co_weakreflist));
     TEST_R_R(REG_X64_RAX, REG_X64_RAX);
     FAR_COND_JUMP_TO(start, CC_E);

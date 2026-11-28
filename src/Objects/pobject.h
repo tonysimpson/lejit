@@ -8,10 +8,10 @@
 #include "../Python/pycompiler.h"
 
 /*#define OB_REFCOUNT         never directly manipulated*/
-#define OB_type CPY_FIELD(PyObject, ob_type, NO_PREV_FIELD)
-#define FIX_size CPY_NONNEG_FIELD(PyVarObject, ob_size, OB_type)
+#define OB_type DEF_FIELD(PyObject, ob_type, NO_PREV_FIELD)
+#define FIX_size NONNEG_FIELD(PyVarObject, ob_size, OB_type)
 #define VAR_size FMUT(FIX_size)
-#define FIX_signed_size CPY_FIELD(PyVarObject, ob_size, OB_type)
+#define FIX_signed_size DEF_FIELD(PyVarObject, ob_size, OB_type)
 #define VAR_signed_size FMUT(FIX_signed_size)
 
 #define iOB_TYPE FIELD_INDEX(OB_type)
@@ -20,20 +20,20 @@
 
 /* the field descriptors of the virtual types: TUPLE_ob_item, SLICE_*,
    METHOD_* */
-#define TUPLE_ob_item FARRAY(CPY_FIELD(PyTupleObject, ob_item, FIX_size))
+#define TUPLE_ob_item FARRAY(DEF_ARRAY_FIELD(PyTupleObject, ob_item, FIX_size))
 #define iTUPLE_OB_ITEM FIELD_INDEX(TUPLE_ob_item)
 
-#define SLICE_start CPY_FIELD(PySliceObject, start, OB_type)
+#define SLICE_start DEF_FIELD(PySliceObject, start, OB_type)
 #define iSLICE_START FIELD_INDEX(SLICE_start)
-#define SLICE_stop CPY_FIELD(PySliceObject, stop, SLICE_start)
+#define SLICE_stop DEF_FIELD(PySliceObject, stop, SLICE_start)
 #define iSLICE_STOP FIELD_INDEX(SLICE_stop)
-#define SLICE_step CPY_FIELD(PySliceObject, step, SLICE_stop)
+#define SLICE_step DEF_FIELD(PySliceObject, step, SLICE_stop)
 #define iSLICE_STEP FIELD_INDEX(SLICE_step)
 #define SLICE_TOTAL FIELDS_TOTAL(SLICE_step)
 
-#define METHOD_im_func CPY_FIELD(PyMethodObject, im_func, OB_type)
+#define METHOD_im_func DEF_FIELD(PyMethodObject, im_func, OB_type)
 #define iMETHOD_IM_FUNC FIELD_INDEX(METHOD_im_func)
-#define METHOD_im_self CPY_FIELD(PyMethodObject, im_self, METHOD_im_func)
+#define METHOD_im_self DEF_FIELD(PyMethodObject, im_self, METHOD_im_func)
 #define iMETHOD_IM_SELF FIELD_INDEX(METHOD_im_self)
 #define METHOD_TOTAL FIELDS_TOTAL(METHOD_im_self)
 

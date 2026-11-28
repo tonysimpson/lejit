@@ -577,16 +577,8 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
    which follows them, with the stack's depth (le_frame_stack_depth), its
    place at the yield and its generator's state. Compiled code stores into
    localsplus by its offset. */
-#define LE_OFS_le_frame_t__localsplus offsetof(le_frame_t, localsplus)
-#define LE_SIZE2_le_frame_t__localsplus 3
-#define LE_UNSIGNED_le_frame_t__localsplus 0
 _Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
                "LeJIT: a frame's localsplus words are not pointers");
-/* the frame's object, or NULL: Python can see the frame's words only
-   through it */
-#define LE_OFS_le_frame_t__frame_obj offsetof(le_frame_t, frame_obj)
-#define LE_SIZE2_le_frame_t__frame_obj 3
-#define LE_UNSIGNED_le_frame_t__frame_obj 0
 /* Where compiled code that steps a generator itself (psyfunc.c:
    psyco_gen_step) finds what it reads and writes: the generator's fields,
    its frame's (counted from the generator, whose frame is inside it), and
@@ -594,63 +586,10 @@ _Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
    is a _PyStackRef where the frame's words are (le_gen_word_code). */
 #define LE_GEN_FRAME_OFS offsetof(PyGenObject, gi_iframe)
 #if LE_HAS_FRAME_STACKREFS || LE_HAS_FRAME_EXECUTABLE
-#define LE_OFS_PyGenObject__code \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, f_executable))
+#define LE_FRAME_CODE_WORD f_executable
 #else
-#define LE_OFS_PyGenObject__code \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, f_code))
+#define LE_FRAME_CODE_WORD f_code
 #endif
-#define LE_SIZE2_PyGenObject__code 3
-#define LE_UNSIGNED_PyGenObject__code 0
-#define LE_OFS_PyGenObject__globals \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, f_globals))
-#define LE_SIZE2_PyGenObject__globals 3
-#define LE_UNSIGNED_PyGenObject__globals 0
-#define LE_OFS_PyGenObject__builtins \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, f_builtins))
-#define LE_SIZE2_PyGenObject__builtins 3
-#define LE_UNSIGNED_PyGenObject__builtins 0
-#define LE_OFS_PyGenObject__locals \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, f_locals))
-#define LE_SIZE2_PyGenObject__locals 3
-#define LE_UNSIGNED_PyGenObject__locals 0
-#define LE_OFS_PyGenObject__place \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, LE_FRAME_PLACE_FIELD))
-#define LE_SIZE2_PyGenObject__place 3
-#define LE_UNSIGNED_PyGenObject__place 0
-#define LE_OFS_PyGenObject__previous \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, previous))
-#define LE_SIZE2_PyGenObject__previous 3
-#define LE_UNSIGNED_PyGenObject__previous 0
-#define LE_OFS_PyGenObject__frame_state offsetof(PyGenObject, gi_frame_state)
-#define LE_SIZE2_PyGenObject__frame_state 0
-#define LE_UNSIGNED_PyGenObject__frame_state 0
-#define LE_OFS_PyGenObject__exc_previous \
-    offsetof(PyGenObject, gi_exc_state.previous_item)
-#define LE_SIZE2_PyGenObject__exc_previous 3
-#define LE_UNSIGNED_PyGenObject__exc_previous 0
-#if LE_HAS_FRAME_STACKREFS
-#define LE_OFS_PyGenObject__stackpointer \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, stackpointer))
-#define LE_SIZE2_PyGenObject__stackpointer 3
-#define LE_UNSIGNED_PyGenObject__stackpointer 0
-#else
-#define LE_OFS_PyGenObject__stacktop \
-    (LE_GEN_FRAME_OFS + offsetof(le_frame_t, stacktop))
-#define LE_SIZE2_PyGenObject__stacktop 2
-#define LE_UNSIGNED_PyGenObject__stacktop 0
-_Static_assert(sizeof(((le_frame_t *)0)->stacktop) == 4,
-               "LeJIT: a frame's stack top is not 32 bits");
-#endif
-#define LE_OFS_PyThreadState__exc_info offsetof(PyThreadState, exc_info)
-#define LE_SIZE2_PyThreadState__exc_info 3
-#define LE_UNSIGNED_PyThreadState__exc_info 0
-_Static_assert(sizeof(((PyGenObject *)0)->gi_frame_state) == 1,
-               "LeJIT: a generator's frame state is not a byte");
-_Static_assert(sizeof(((le_frame_t *)0)->LE_FRAME_PLACE_FIELD) ==
-                       sizeof(void *) &&
-                   sizeof(((le_frame_t *)0)->f_locals) == sizeof(void *),
-               "LeJIT: a frame's place or locals is not a pointer");
 /* the code object of a generator's code word */
 static inline PyCodeObject *
 le_gen_word_code(long w)
@@ -1074,10 +1013,6 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
    which follows them, with the stack's depth (le_frame_stack_depth),
    f_lasti at the yield and its blocks. Compiled code stores into
    f_localsplus by its offset. */
-#define LE_OFS_PyFrameObject__f_localsplus \
-    offsetof(PyFrameObject, f_localsplus)
-#define LE_SIZE2_PyFrameObject__f_localsplus 3
-#define LE_UNSIGNED_PyFrameObject__f_localsplus 0
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyFrameObject *)0)->f_localsplus),
                    PyObject *[1]),

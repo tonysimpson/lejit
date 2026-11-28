@@ -472,9 +472,8 @@ DEFINEVAR vectorcallfunc le_usual_vectorcall;
 /* CPython calls a function through its vectorcall function, which C code
    may have replaced: emits 'func's is not the usual one' and says if it
    is true at run time */
-#define FUNC_vectorcall_now                                          \
-    STRUCT_FIELD_BUILD(PyFunctionObject, vectorcallfunc, vectorcall, \
-                       NO_PREV_FIELD, FIELD_MUTABLE)
+#define FUNC_vectorcall_now \
+    FMUT(DEF_FIELD(PyFunctionObject, vectorcall, NO_PREV_FIELD))
 static int
 vectorcall_replaced(PsycoObject *po, vinfo_t *func)
 {

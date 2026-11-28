@@ -1,8 +1,7 @@
 #ifndef LE_MECHANISMS_TRACING_H
 #define LE_MECHANISMS_TRACING_H
 /* the thread's interpreter, whose eval_frame le_direct_call_refused reads */
-#define TSTATE_interp \
-    FMUT(DEF_FIELD(PyThreadState, PyInterpreterState *, interp, NO_PREV_FIELD))
+#define TSTATE_interp FMUT(DEF_FIELD(PyThreadState, interp, NO_PREV_FIELD))
 #if LE_HAS_MONITORING
 /* Tracing is on for a code object while sys.monitoring has any event on
    in the interpreter (pyruntime.c:le_monitoring_on), or on that code
@@ -139,11 +138,9 @@ le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 }
 
 typedef __typeof__(*((PyThreadState *)0)->cframe) le_cframe_t;
-#define TSTATE_cframe \
-    FMUT(DEF_FIELD(PyThreadState, le_cframe_t *, cframe, NO_PREV_FIELD))
-#define CFRAME_use_tracing                                                   \
-    FMUT(DEF_FIELD(le_cframe_t, __typeof__(((le_cframe_t *)0)->use_tracing), \
-                   use_tracing, NO_PREV_FIELD))
+#define TSTATE_cframe FMUT(DEF_FIELD(PyThreadState, cframe, NO_PREV_FIELD))
+#define CFRAME_use_tracing \
+    FMUT(DEF_FIELD(le_cframe_t, use_tracing, NO_PREV_FIELD))
 
 /* the flag itself, for le_direct_call_refused ('vinterp' and 'co' unused
    here) */
@@ -216,8 +213,7 @@ le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp,
     (void)vinterp;
     (void)co;
     return psyco_get_field(
-        po, vts,
-        FMUT(DEF_FIELD(PyThreadState, int, use_tracing, NO_PREV_FIELD)));
+        po, vts, FMUT(DEF_FIELD(PyThreadState, use_tracing, NO_PREV_FIELD)));
 }
 #endif
 

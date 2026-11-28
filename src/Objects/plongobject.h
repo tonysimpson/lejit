@@ -22,7 +22,8 @@ _Static_assert(offsetof(PyLongObject, long_value.lv_tag) ==
                    offsetof(PyVarObject, ob_size),
                "LeJIT: lv_tag is where ob_size is");
 #endif
-#define LONG_ob_digit0 CPY_FIELD(PyLongObject, ob_digit, FIX_signed_size)
+#define LONG_ob_digit0 \
+    DEF_ARRAY_FIELD(PyLongObject, LE_PyLongObject_digits, FIX_signed_size)
 #define iLONG_OB_DIGIT0 FIELD_INDEX(LONG_ob_digit0)
 /* the value as a machine word: a virtual int's, and a run-time int's once
    read (plongobject.c:plong_medium_value) or kept from when it was virtual;

@@ -3,7 +3,8 @@
 #include "plongobject.h"
 #include "psliceobject.h"
 
-#define BYTES_sval CPY_ARRAY(PyBytesObject, ob_sval)
+/* unsigned, as a bytes' items are 0 to 255; ob_sval is of char */
+#define BYTES_sval FREAD_AS(unsigned char, DEF_ITEMS(PyBytesObject, ob_sval))
 
 static binaryfunc bytes_subscript;
 

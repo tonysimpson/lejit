@@ -12,7 +12,7 @@
 #include "pobject.h"
 #include "pabstract.h"
 
-#define FLOAT_ob_fval CPY_FIELD(PyFloatObject, ob_fval, OB_type)
+#define FLOAT_ob_fval DEF_FIELD(PyFloatObject, ob_fval, OB_type)
 #define iFLOAT_OB_FVAL FIELD_INDEX(FLOAT_ob_fval)
 #define FLOAT_TOTAL FIELDS_TOTAL(FLOAT_ob_fval)
 
