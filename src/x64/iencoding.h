@@ -2,8 +2,9 @@
  * The x86-64 backend's macro layer: instruction encoders, the register and
  * condition-code model stored in PsycoObject, spill/reload, SysV C-call macros
  * and jumps. Conventions to know before editing:
- *  - Only callee-saved registers (R13, R14, R15, RBX: see RegistersLoop
- * in iencoding.c) hold tracked values, which is why C calls need no spilling,
+ *  - Only callee-saved registers (R13, R14, R15, RBX, and RBP where it is
+ * not the frame pointer: see RegistersLoop in iencoding.c) hold tracked
+ * values, which is why C calls need no spilling,
  *    and XMM8-XMM14, which hold only doubles and are stored at every call
  *    (iencoding.c:psyco_xmm_store). R10/R11 and XMM15 are encoder scratch
  *    (REG_TRANSIENT_1/2, XMM_SCRATCH); RAX is the return value.
@@ -51,7 +52,8 @@ typedef enum {
     REG_X64_RDX = 2,  /* 3rd ARG */
     REG_X64_RBX = 3,  /* CALLEE Saved */
     REG_X64_RSP = 4,  /* stack pointer */
-    REG_X64_RBP = 5,  /* the frame pointer, never allocated */
+    REG_X64_RBP = 5,  /* CALLEE Saved; the frame pointer, never allocated,
+                         where LE_KEEPS_FRAME_POINTERS */
     REG_X64_RSI = 6,  /* 2nd ARG */
     REG_X64_RDI = 7,  /* 1st ARG */
     REG_X64_R8 = 8,   /* 5th ARG */

@@ -73,10 +73,21 @@ if CPYTHON_SRC not in ('', 'fetch') and not os.path.isdir(CPYTHON_SRC):
 
 ####################################################################
 
+def cpython_keeps_frame_pointers():
+    """Whether CPython's C, and so LeJIT's, which gets its CFLAGS, keeps
+    RBP as the frame pointer: then compiled code keeps it too, so profilers
+    that unwind by frame pointers walk through it. The flags are read, not
+    a configure option: PEP 831's builds put them in CFLAGS, and so do
+    distributions that kept frame pointers in older versions."""
+    flags = [f for f in (sysconfig.get_config_var('CFLAGS') or '').split()
+             if f in ('-fno-omit-frame-pointer', '-fomit-frame-pointer')]
+    return flags[-1:] == ['-fno-omit-frame-pointer']
+
 macros = [
     ('LE_TRACE', str(LE_TRACE)),
     ('ALL_CHECKS', str(ALL_CHECKS)),
     ('LE_CODESTATS', str(LE_CODESTATS)),
+    ('LE_KEEPS_FRAME_POINTERS', str(int(cpython_keeps_frame_pointers()))),
 ]
 
 class ProcessorAutodetectError(Exception):
