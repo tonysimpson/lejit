@@ -852,6 +852,7 @@ psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
     bool near[STORE_MAX_MISS_JUMPS];
     site_consts_t consts;
     code_t *jat[STORE_MAX_MISS_JUMPS], *miss, *start;
+    long mark;
     int i, nj;
     extra_assert(!is_virtualtime(s->obj->source) &&
                  !is_virtualtime(s->value->source));
@@ -877,7 +878,9 @@ psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
     site_const(&consts, start, (long)s->cache->name);
 #endif
     for (i = 0; i < STORE_MAX_MISS_JUMPS; i++) near[i] = true;
-    inline_store_body(po, start, s, &consts, near, jat, &nj, &miss);
+    mark = le_reloc_mark();
+    code = inline_store_body(po, start, s, &consts, near, jat, &nj, &miss);
+    le_reloc_forget(mark, start, code);
     for (i = 0; i < nj; i++) /* each later jump made short shortens it */
         near[i] = miss - jat[i] - 6 > 127;
     code = inline_store_body(po, start, s, &consts, near, jat, &nj, &miss);
@@ -1246,6 +1249,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
     load_jumps_t fj;
     site_consts_t consts;
     code_t *start;
+    long mark;
     vinfo_t *v;
     reg_t rg;
     int i;
@@ -1277,7 +1281,9 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         fj.to[i] = NULL;
     }
     fj.n = 0;
-    inline_load_body(po, start, s, rg, &consts, &fj);
+    mark = le_reloc_mark();
+    code = inline_load_body(po, start, s, rg, &consts, &fj);
+    le_reloc_forget(mark, start, code);
     for (i = 0; i < fj.n; i++)
         fj.is_short[i] = fj.to[i] != NULL && fj.to[i] - (fj.at[i] + 2) < 128;
     fj.n = 0;

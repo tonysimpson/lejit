@@ -569,6 +569,21 @@ le_reloc_note(void *at, int kind, int end)
 }
 
 DEFINEFN long
+le_reloc_mark(void)
+{
+    return nnotes;
+}
+
+DEFINEFN void
+le_reloc_forget(long mark, code_t *start, code_t *end)
+{
+    long i;
+    for (i = mark; i < nnotes; i++)
+        if (start <= notes[i].at && notes[i].at < end)
+            notes[i].at = NULL;
+}
+
+DEFINEFN long
 le_reloc_jump(code_t *end, long value)
 {
     if (le_compile_depth != 0) {

@@ -1116,6 +1116,7 @@ psyco_respawn_detected(PsycoObject *po)
     /* restart at the beginning of the buffer, overriding the code written
        so far. What the overwritten code made (constants, frame records) is
        held by the owner like the rest: a replay only wastes it. */
+    le_reloc_forget(0, (code_t *)codebuf->codestart, po->code);
     po->code = (code_t *)codebuf->codestart;
     INIT_CODE_EMISSION(po->code);
 }
