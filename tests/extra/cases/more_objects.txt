@@ -19,6 +19,7 @@ frame_builtins.class_and_import_mid_call           3.7,3.8,3.9,3.10             
 frame_clear.assert_raises                          3.7,3.8,3.9,3.10                   not looked at yet
 frame_clear.clear_in_except                        3.9,3.10                           not looked at yet
 frame_clear.clear_own_frame                        3.9,3.10                           not looked at yet
+framelocals.uses_eval_locals                       3.7,3.8,3.9,3.10                   compiles new eval code every round
 gen_builtins.rebind_builtin                        3.7,3.8,3.9,3.10                   not looked at yet
 gen_doubles.arith                                  3.7,3.8,3.9,3.10                   not looked at yet (makes more in some runs, not others)
 gen_doubles.as_float                               3.7,3.8,3.9,3.10                   not looked at yet
