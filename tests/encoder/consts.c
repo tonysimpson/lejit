@@ -1,9 +1,9 @@
 /*
  * Executes the code that loads and uses 64-bit constants and checks what
- * it does: MOV_R_I (an address in reach, RIP-relative; another value, from
- * its slot in the constants, dispatcher.c:psyco_const_slot; or the movabs
- * of MOV_R_IABS) and the group instructions with a 64-bit immediate
- * (COMMON_INSTR_IMMED, COMMON_INSTR_IMMED_FROM_RT), into every register,
+ * it does: MOV_R_I (an address in reach, RIP-relative; another value, the
+ * movabs of MOV_R_IABS) and the group instructions with a 64-bit immediate
+ * (COMMON_INSTR_IMMED, COMMON_INSTR_IMMED_FROM_RT, from its slot in the
+ * constants, dispatcher.c:psyco_const_slot), into every register,
  * in executable memory (psyco_code_open) and in memory that isn't
  * (no slot there); and a promotion site's entry with its own slot
  * (x64/idispatcher.h), repointed and read back. Built and run by
@@ -46,8 +46,8 @@ static const char *INSTRN[8] = {"add", "or",  "adc", "sbb",
     POP_R(REG_X64_RBX); \
     RET()
 
-/* the form MOV_R_I took at 'p': 'l' lea, 'm' a load from a slot, 'a'
-   movabs, 'i' a 32-bit immediate */
+/* the form MOV_R_I took at 'p': 'l' lea, 'a' movabs, 'i' a 32-bit
+   immediate */
 static int
 form_of(code_t *p)
 {
@@ -55,8 +55,6 @@ form_of(code_t *p)
     code_t op = p[rex];
     if (op == 0x8D)
         return 'l';
-    if (op == 0x8B)
-        return 'm';
     if (rex && (p[0] & 8) && (op & 0xF8) == 0xB8)
         return 'a';
     return 'i';
@@ -216,21 +214,20 @@ main(void)
     n = 0;
     values[n] = (long)exec + 0x10000000L, forms[n++] = 'l';
     values[n] = (long)exec - 0x7e000000L, forms[n++] = 'l';
-    values[n] = (long)exec + 0x7f800000L, forms[n++] = 'm';
-    values[n] = (long)exec + 0x123456789aL, forms[n++] = 'm';
-    values[n] = 0x123456789abcdef0L, forms[n++] = 'm';
-    values[n] = -0x123456789abcL, forms[n++] = 'm';
+    values[n] = (long)exec + 0x7f800000L, forms[n++] = 'a';
+    values[n] = (long)exec + 0x123456789aL, forms[n++] = 'a';
+    values[n] = 0x123456789abcdef0L, forms[n++] = 'a';
+    values[n] = -0x123456789abcL, forms[n++] = 'a';
     values[n] = 0x87654321L, forms[n++] = 'i';
     values[n] = -5, forms[n++] = 'i';
     for (reg = 0; reg < 16; reg++) {
         if (reg == REG_X64_RSP)
             continue;
         for (v = 0; v < n; v++) {
-            /* outside code the same distances, and no slot: a movabs */
+            /* outside code the same distances */
             long shift = v < 4 ? (long)plain - (long)exec : 0;
             check_mov(exec, reg, values[v], forms[v], "in code");
-            check_mov(plain, reg, values[v] + shift,
-                      forms[v] == 'm' ? 'a' : forms[v], "outside code");
+            check_mov(plain, reg, values[v] + shift, forms[v], "outside code");
         }
         for (v = 0; v < n; v++) check_promotion(exec, reg, values[v]);
         if (reg == REG_TRANSIENT_1)
@@ -246,9 +243,9 @@ main(void)
         code_t *code = exec, *first;
         long d1, d2;
         cases++;
-        MOV_R_I(REG_X64_RAX, values[4]);
+        COMMON_INSTR_IMMED(CMP, REG_X64_RAX, values[4]);
         first = code;
-        MOV_R_I(REG_X64_RCX, values[4]);
+        COMMON_INSTR_IMMED(CMP, REG_X64_RCX, values[4]);
         d1 = (long)first + *(int *)(first - 4);
         d2 = (long)code + *(int *)(code - 4);
         if (d1 != d2) {

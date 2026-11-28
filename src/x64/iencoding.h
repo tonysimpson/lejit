@@ -650,31 +650,18 @@ psyco_write_far_jump(code_t *code, code_t *target);
             WRITE_64BIT(_mov_i);                                 \
         }                                                        \
     } while (0)
-/* @asm: mov {r}, qword ptr [rip{o:d32}] */
-#define MOV_R_RIP(r, o)                            \
-    do {                                           \
-        long _rip_o = (o);                         \
-        REX_ENCODING(true, r, 0, 0);               \
-        WRITE_1(0x8B);                             \
-        MODRM_ENCODING(0, r, 5);                   \
-        WRITE_32BIT(_rip_o);                       \
-        le_reloc_note(code - 4, LE_RELOC_DATA, 4); \
-    } while (0)
-/* a constant in a register, in 7 bytes where MOV_R_IABS would take 10: the
-   address of something within reach, or a load from its slot in the
-   owner's constants (dispatcher.c:psyco_const_slot) */
-#define MOV_R_I(rm, i)                                            \
-    do {                                                          \
-        long _k = (long)(i);                                      \
-        code_t *_kslot;                                           \
-        if (FITS_IN_32BITS(_k) || (_k >= 0 && _k <= 0xFFFFFFFFL)) \
-            MOV_R_IABS(rm, _k);                                   \
-        else if (LE_RIP_NEAR(code, _k))                           \
-            LEA_R_RIP(rm, _k - ((long)code + 7));                 \
-        else if ((_kslot = psyco_const_slot(code, _k)) != NULL)   \
-            MOV_R_RIP(rm, (long)_kslot - ((long)code + 7));       \
-        else                                                      \
-            MOV_R_IABS(rm, _k);                                   \
+/* a constant in a register: 7 bytes for the address of something within
+   reach, else MOV_R_IABS. A far value is never loaded from a constant
+   slot: what uses the register (a type guard reads the type's fields)
+   would wait for that load too. */
+#define MOV_R_I(rm, i)                                                 \
+    do {                                                               \
+        long _k = (long)(i);                                           \
+        if (!FITS_IN_32BITS(_k) && (unsigned long)_k > 0xFFFFFFFFUL && \
+            LE_RIP_NEAR(code, _k))                                     \
+            LEA_R_RIP(rm, _k - ((long)code + 7));                      \
+        else                                                           \
+            MOV_R_IABS(rm, _k);                                        \
     } while (0)
 /* @asm: movabs {rm}, {i:i64} */
 #define MOV_R_UI(rm, i)                           \
@@ -1201,8 +1188,8 @@ typedef enum {
         }                                                                     \
     } while (0)
 /* "INSTR rm, i" for an 'i' beyond 32 bits: with its slot in the owner's
-   constants (MOV_R_I), "INSTR rm, qword ptr [rip+slot]", which computes
-   the same; else through REG_TRANSIENT_1 */
+   constants (dispatcher.c:psyco_const_slot), "INSTR rm, qword ptr
+   [rip+slot]", which computes the same; else through REG_TRANSIENT_1 */
 #define COMMON_INSTR_I64(instr, rm, i)                                      \
     do {                                                                    \
         long _ci = (long)(i);                                               \

@@ -1227,7 +1227,8 @@ stub_pool_reserve(size_t n)
     return o->stub_pool;
 }
 
-/* Constants that compiled code reads RIP-relative (x64/iencoding.h:MOV_R_I)
+/* Constants that compiled code reads RIP-relative (x64/iencoding.h:
+   COMMON_INSTR_I64, and promotions)
    are 8-byte slots packed together in chunks of executable memory of their
    own, so that the data cache lines code reads them from hold only
    constants, not stubs. Chunks grow from CONST_CHUNK_MIN to

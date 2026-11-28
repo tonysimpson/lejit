@@ -422,51 +422,14 @@ _Static_assert(offsetof(store_cache_t, shape) == 0,
 
 /* Code emitted twice from 'start' (the attribute store and load, whose
    short jumps the first pass measures) decides each encoding from 'start'
-   with a margin (LE_RIP_NEAR), and finds its constants' slots before the
-   first pass, so that both passes emit the same lengths. */
-#define SITE_CONSTS_MAX 6
-typedef struct {
-    long value[SITE_CONSTS_MAX];
-    code_t *slot[SITE_CONSTS_MAX];
-    int n;
-} site_consts_t;
-
-static void
-site_const(site_consts_t *k, code_t *start, long value)
-{
-    extra_assert(k->n < SITE_CONSTS_MAX);
-    k->value[k->n] = value;
-    k->slot[k->n++] = FITS_IN_32BITS(value) || LE_RIP_NEAR(start, value)
-                          ? NULL
-                          : psyco_const_slot(start, value);
-}
-
-static void
-site_consts_operand(site_consts_t *k, code_t *start, Source src)
-{
-    if (is_compiletime(src))
-        site_const(k, start, KSOURCE_SOURCE(src)->value);
-}
-
-static code_t *
-site_slot(const site_consts_t *k, long value)
-{
-    int i;
-    for (i = 0; i < k->n; i++)
-        if (k->value[i] == value)
-            return k->slot[i];
-    return NULL;
-}
-/* the constant 'addr' in a register: 5 bytes below 4 GB, else 7
-   (RIP-relative, or from its slot in 'consts') or 10 */
+   with a margin (LE_RIP_NEAR), so that both passes emit the same
+   lengths: the constant 'addr' in a register, 5 bytes below 4 GB, else 7
+   (RIP-relative) or 10 */
 #define LOAD_ADDRESS(rg, addr)                                            \
     do {                                                                  \
         long _la = (long)(addr);                                          \
-        code_t *_ls = site_slot(consts, _la);                             \
         if ((unsigned long)_la > 0xFFFFFFFFUL && LE_RIP_NEAR(start, _la)) \
             LEA_R_RIP(rg, _la - ((long)code + 7));                        \
-        else if ((unsigned long)_la > 0xFFFFFFFFUL && _ls != NULL)        \
-            MOV_R_RIP(rg, (long)_ls - ((long)code + 7));                  \
         else                                                              \
             MOV_R_IABS(rg, _la);                                          \
     } while (0)
@@ -494,7 +457,7 @@ site_slot(const site_consts_t *k, long value)
     } while (0)
 static void
 load_operand(PsycoObject *po, code_t **pcode, Source src, reg_t rg,
-             code_t *start, const site_consts_t *consts)
+             code_t *start)
 {
     code_t *code = *pcode;
     if (is_compiletime(src)) {
@@ -540,8 +503,7 @@ static signed char le_probe_masks[8] = {0, 1, 3, 7, 15, 31, 63, 127};
 
 static code_t *
 inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
-                  const site_consts_t *consts, const bool *near, code_t **jat,
-                  int *pnj, code_t **pmiss)
+                  const bool *near, code_t **jat, int *pnj, code_t **pmiss)
 {
     code_t *start = code;
     int nj = 0;
@@ -576,8 +538,8 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         WRITE_2(0x0F, 0x80 | (cc));                 \
         code += 4;                                  \
     } while (0)
-    load_operand(po, &code, s->obj->source, REG_X64_RDI, start, consts);
-    load_operand(po, &code, s->value->source, REG_X64_RSI, start, consts);
+    load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
+    load_operand(po, &code, s->value->source, REG_X64_RSI, start);
     LOAD_ADDRESS(REG_X64_RDX, s->cache);
     if (IN_VALUES(s)) {
 #if LE_HAS_INLINE_VALUES
@@ -789,7 +751,7 @@ probe:
         le_trace_jump_cond(jfound, jfound + 2, code);
         /* R9: the entry's value */
         LEA_R_X8(REG_X64_R9, REG_X64_R9, ind + 9, REG_X64_RAX, 1);
-        load_operand(po, &code, s->value->source, REG_X64_RSI, start, consts);
+        load_operand(po, &code, s->value->source, REG_X64_RSI, start);
         if (s->dict_gc != STORE_GC_NONE) {     /* MAINTAIN_TRACKING */
             LE_GC_UNTRACKED_TEST(REG_X64_RCX); /* mechanisms/store_gc.h */
             if (s->dict_gc == STORE_GC_DICT) {
@@ -820,8 +782,8 @@ probe:
             *(dword_t *)(jstub[i] + 2) = REL32(jstub[i] + 6, code);
             le_trace_jump_cond(jstub[i], jstub[i] + 6, code);
         }
-        load_operand(po, &code, s->obj->source, REG_X64_RDI, start, consts);
-        load_operand(po, &code, s->value->source, REG_X64_RSI, start, consts);
+        load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
+        load_operand(po, &code, s->value->source, REG_X64_RSI, start);
         LOAD_ADDRESS(REG_X64_RDX, s->cache);
     }
 #endif
@@ -841,7 +803,6 @@ void
 psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
 {
     bool near[STORE_MAX_MISS_JUMPS];
-    site_consts_t consts;
     code_t *jat[STORE_MAX_MISS_JUMPS], *miss, *start;
     long mark;
     int i, nj;
@@ -859,22 +820,13 @@ psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
     NEED_REGISTER(REG_X64_R8);
     NEED_REGISTER(REG_X64_R9);
     start = code;
-    consts.n = 0;
-    site_consts_operand(&consts, start, s->obj->source);
-    site_consts_operand(&consts, start, s->value->source);
-    site_const(&consts, start, (long)s->cache);
-    if (IN_VALUES(s))
-        site_const(&consts, start, (long)s->keys);
-#if LE_HAS_DICT_KEYS_KIND
-    site_const(&consts, start, (long)s->cache->name);
-#endif
     for (i = 0; i < STORE_MAX_MISS_JUMPS; i++) near[i] = true;
     mark = le_reloc_mark();
-    code = inline_store_body(po, start, s, &consts, near, jat, &nj, &miss);
+    code = inline_store_body(po, start, s, near, jat, &nj, &miss);
     le_reloc_forget(mark, start, code);
     for (i = 0; i < nj; i++) /* each later jump made short shortens it */
         near[i] = miss - jat[i] - 6 > 127;
-    code = inline_store_body(po, start, s, &consts, near, jat, &nj, &miss);
+    code = inline_store_body(po, start, s, near, jat, &nj, &miss);
     for (i = 0; i < nj; i++) {
         if (near[i]) {
             *(dword_t *)(jat[i] + 2) = REL32(jat[i] + 6, miss);
@@ -956,7 +908,7 @@ typedef struct {
 
 static code_t *
 inline_load_body(PsycoObject *po, code_t *code, inline_load_t *s, reg_t rg,
-                 const site_consts_t *consts, load_jumps_t *fj)
+                 load_jumps_t *fj)
 {
     code_t *start = code, *at;
     int jmiss[LOAD_MAX_JUMPS], jnone[2], jdone[5];
@@ -1032,7 +984,7 @@ inline_load_body(PsycoObject *po, code_t *code, inline_load_t *s, reg_t rg,
     }
     else {
         ro = REG_X64_RDI;
-        load_operand(po, &code, s->obj->source, ro, start, consts);
+        load_operand(po, &code, s->obj->source, ro, start);
     }
     if (IN_VALUES(s)) {
 #if LE_MANAGED_VALUES
@@ -1238,7 +1190,6 @@ vinfo_t *
 psyco_inline_load(PsycoObject *po, inline_load_t *s)
 {
     load_jumps_t fj;
-    site_consts_t consts;
     code_t *start;
     long mark;
     vinfo_t *v;
@@ -1258,14 +1209,6 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
     NEED_REGISTER(REG_X64_R9);
     NEED_FREE_REG(rg); /* callee-saved: the miss call keeps it */
     start = code;
-    consts.n = 0;
-    site_consts_operand(&consts, start, s->obj->source);
-    site_const(&consts, start, (long)s->cache);
-    if (IN_VALUES(s))
-        site_const(&consts, start, (long)s->keys);
-#if LE_HAS_DICT_KEYS_KIND
-    site_const(&consts, start, (long)s->cache->name);
-#endif
     /* the first pass, all near, gives an upper bound on each distance */
     for (i = 0; i < LOAD_MAX_FORWARD; i++) {
         fj.is_short[i] = false;
@@ -1273,12 +1216,12 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
     }
     fj.n = 0;
     mark = le_reloc_mark();
-    code = inline_load_body(po, start, s, rg, &consts, &fj);
+    code = inline_load_body(po, start, s, rg, &fj);
     le_reloc_forget(mark, start, code);
     for (i = 0; i < fj.n; i++)
         fj.is_short[i] = fj.to[i] != NULL && fj.to[i] - (fj.at[i] + 2) < 128;
     fj.n = 0;
-    code = inline_load_body(po, start, s, rg, &consts, &fj);
+    code = inline_load_body(po, start, s, rg, &fj);
     END_CODE
     v = vinfo_new(RunTime_New(rg, false, false));
     REG_NUMBER(po, rg) = v;
