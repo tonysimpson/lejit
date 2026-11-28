@@ -46,6 +46,8 @@ typedef struct {
     unsigned char *breaker_checks;
     /* psyco_inline_merge_points, or NULL */
     PyObject *inline_view;
+    /* psyco_inline_loop_head, or -1, and the place after the yield */
+    int inline_head, inline_pause;
     /*
     NULL terminated.
     on allocation we extend this array to count(mergepoints) + 1.
@@ -656,6 +658,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->flags = flags;
     report->fuse_stopped = 0;
     report->inline_view = NULL;
+    report->inline_head = -1;
     report->mergepoint_count = mergepoint_count;
     report->unit_count = entry_count_len - 1;
     report->joins = NULL;
@@ -698,7 +701,7 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
 static int
 fusable_yield(PyCodeObject *co);
 static int
-inlinable_generator(PyCodeObject *co, le_code_t c, int yield);
+inlinable_generator(PyCodeObject *co, le_code_t c, int yield, int *head);
 
 static PyObject *
 _build_merge_points(PyCodeObject *co)
@@ -776,12 +779,14 @@ _build_merge_points(PyCodeObject *co)
     if (resumable)
         report->flags |= MP_FLAGS_RESUMABLE;
     if (co->co_flags & CO_GENERATOR) {
-        int yield = fusable_yield(co);
+        int yield = fusable_yield(co), head;
         /* made now: compiling the frame must not fail for memory */
-        if (yield >= 0 && inlinable_generator(co, c, yield)) {
+        if (yield >= 0 && inlinable_generator(co, c, yield, &head)) {
             PyObject *view = PyCapsule_New(report, NULL, NULL);
             if (view != NULL && PyCapsule_SetContext(view, report) == 0) {
                 report->inline_view = view;
+                report->inline_head = head;
+                report->inline_pause = le_instr(c, yield).next;
                 report->flags |= MP_FLAGS_GEN_INLINABLE;
             }
             else {
@@ -920,21 +925,51 @@ walk_successors(le_code_t c, int unit, int next[2])
     return n;
 }
 
+/* The loop head that the generator's resumption after its 'yield' jumps
+   back to once it has popped the value sent ([RESUME], POP_TOP, then a
+   jump with nothing else), or -1.
+   Any other way into that loop head is a step going round the loop
+   without yielding, which leaves the generator exactly as a pause at the
+   yield would, once resumed: at the loop head, with the same stack (an
+   instruction's stack depth is the same on every way in). */
+static int
+yield_loop_head(le_code_t c, int yield)
+{
+    int pos = le_instr(c, yield).next;
+    bool popped = false;
+    while (pos < c.size) {
+        le_instr_t in = le_instr(c, pos);
+        if (in.op == POP_TOP && !popped)
+            popped = true;
+        else if (popped && (le_op_flags(in.op) & LE_OPF_JUMPS) &&
+                 in.target >= 0 && in.target < yield)
+            return in.target;
+        else if (in.op != RESUME && in.op != NOP)
+            return -1;
+        pos = in.next;
+    }
+    return -1;
+}
+
 /* whether a for loop can compile the generator of code 'co' into its own
    body (psyfunc.c:psyco_gen_inline_next), each step running the code from
    where it paused to its one yield: fusable, with no exception handler but
    PEP 479's around the whole body nor a break or continue (an inlined
    frame keeps no blocks, and its exceptions go straight to its caller),
-   no cycle that misses the yield
-   (an inlined frame has no merge points: psyco_inline_merge_points), and
-   no heavier than a function LeJIT inlines. 'yield' is where the yield
-   is. */
+   no cycle that misses both the yield and the loop head its resumption
+   jumps back to (an inlined frame has no merge points:
+   psyco_inline_merge_points), and no heavier than a function LeJIT
+   inlines. 'yield' is where the yield is. A way back into that loop head
+   from elsewhere in the loop (a filter's) ends the step there, as a pause
+   at the yield (pycompiler.c:inline_gen_round): its position goes in
+   '*head', or -1 where the resumption has no such loop head. */
 static int
-inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
+inlinable_generator(PyCodeObject *co, le_code_t c, int yield, int *head)
 {
     int units = c.size / LE_UNIT, pos, top, weight = 0, ok = 1, r;
-    int roots[2], *work;
+    int roots[3], *work, loop = -1;
     unsigned char *state; /* 0 unseen, 1 on the walk's path, 2 done */
+    *head = -1;
     if (!psyco_handlers_only_pep479(co))
         return 0;
     for (pos = 0; pos < c.size;) {
@@ -947,9 +982,14 @@ inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
     }
     if (weight > INLINE_MAXIMUM_WEIGHT)
         return 0;
-    /* depth-first from the start and from after the yield: an edge to an
-       instruction on the walk's path closes a cycle. Each entry of the
-       work list is a unit and how many of its successors are walked. */
+    pos = yield_loop_head(c, yield);
+    if (pos >= 0)
+        loop = pos / LE_UNIT;
+    /* depth-first from the start, from after the yield and from that
+       loop head: an edge to an instruction on the walk's path closes a
+       cycle. An edge to the loop head ends there, the head being walked
+       from itself. Each entry of the work list is a unit and how many of
+       its successors are walked. */
     work = PyMem_Malloc((units + 1) * (2 * sizeof(int) + 1));
     if (work == NULL)
         return 0;
@@ -957,8 +997,9 @@ inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
     memset(state, 0, units + 1);
     roots[0] = 0;
     roots[1] = le_instr(c, yield).next / LE_UNIT;
-    for (r = 0; r < 2 && ok; r++) {
-        if (roots[r] >= units || state[roots[r]] != 0)
+    roots[2] = loop;
+    for (r = 0; r < 3 && ok; r++) {
+        if (roots[r] < 0 || roots[r] >= units || state[roots[r]] != 0)
             continue;
         state[roots[r]] = 1;
         work[0] = roots[r];
@@ -972,6 +1013,8 @@ inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
                 state[u] = 2;
                 top--;
             }
+            else if (next[k] == loop)
+                ; /* walked from itself */
             else if (state[next[k]] == 1)
                 ok = 0;
             else if (state[next[k]] == 0) {
@@ -983,6 +1026,8 @@ inlinable_generator(PyCodeObject *co, le_code_t c, int yield)
         }
     }
     PyMem_Free(work);
+    if (ok && loop >= 0)
+        *head = loop * LE_UNIT;
     return ok;
 }
 
@@ -1418,6 +1463,14 @@ psyco_inline_merge_points(PyObject *mergepoints)
     co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
     psyco_assert(report->inline_view != NULL);
     return report->inline_view;
+}
+
+DEFINEFN int
+psyco_inline_loop_head(PyObject *mergepoints, int *pause)
+{
+    co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
+    *pause = report->inline_pause;
+    return report->inline_head;
 }
 
 DEFINEFN mergepoint_t *

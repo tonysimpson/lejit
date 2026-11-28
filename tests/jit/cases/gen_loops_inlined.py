@@ -3,7 +3,8 @@
 # which LeJIT compiles into the loop. What Python sees must be CPython's:
 # values, the return value dropped, exceptions and tracebacks raised in
 # the body (PEP 479's RuntimeError included), frames asked for in it, and
-# the order objects die in when the generator ends, stops early or raises.
+# the order objects die in when the generator ends, stops early or raises;
+# and the same for a step that goes round its loop without yielding.
 import inspect
 import sys
 
@@ -353,6 +354,109 @@ def trace_in_body(n):
     return out, seen
 
 
+# a step that goes round its loop without yielding (a filter, a continue):
+# it ends at the loop head as if paused at the yield, and the consumer's
+# loop steps it again
+def odd_only(xs):
+    for x in xs:
+        if x % 2 == 0:
+            continue
+        yield x
+
+
+def countdown(n):
+    while n > 0:
+        n -= 1
+        if n % 3:
+            continue
+        yield n
+
+
+def filtered(n):
+    xs = list(range(n))
+    out = [[y for y in odd_only(xs)], [y for y in countdown(n)],
+           list(x for x in xs if x > 2), set(x % 3 for x in xs if x),
+           tuple(x for x in xs if x % 2 if x > 1),
+           any(x > n for x in xs if x), all(x < 3 for x in xs if x < 2),
+           sum(x for x in xs if x % 3 == 0)]
+    t = 0
+    for y in (x * 2 for x in xs if x != 1):
+        t += y
+    out.append(t)
+    # none passes, and all but the last
+    out.append([y for y in (x for x in xs if x > n)])
+    out.append([y for y in (x for x in xs if x == n - 1)])
+    # a break after some went round
+    y = None
+    for y in odd_only(xs):
+        if y > 2:
+            break
+    out.append(y)
+    return out
+
+
+def filter_raises(n):
+    xs = list(range(n))
+    return [run(lambda: [y for y in (x for x in xs if raiser(x) > 0)]),
+            run(lambda: [y for y in odd_only(map(raiser, xs))]),
+            run(lambda: list(x for x in xs if 1 // (x - 3)))]
+
+
+def filter_frames(n):
+    FRAMES.clear()
+    out = [y for y in (x for x in range(n) if grab(x) % 2)]
+    out.append((len(FRAMES), all(g is FRAMES[0] for g in FRAMES),
+                FRAMES[0].f_code.co_name, FRAMES[0].f_back is None))
+    FRAMES.clear()
+    out.append([y for y in (x for x in range(n) if where(x)[3] > 0)])
+    return out
+
+
+def filter_finalisers(n):
+    out = []
+    LOG.clear()
+    items = [Noted('n%d' % i) for i in range(n)]
+    out.append([y.name for y in (w for w in items if w.name != 'n1')])
+    del items
+    out.append(list(LOG))
+    LOG.clear()
+    for y in (w for w in [Noted('m%d' % i) for i in range(n)]
+              if w.name > 'm0'):
+        break
+    out.append(list(LOG))
+    del y
+    out.append(list(LOG))
+    return out
+
+
+def filter_kinds(n):
+    out = []
+    for i, k in enumerate(KINDS):
+        out.append(sum(1 for x in [k(i), k(i + 1)] * n if x % 2))
+        out.append([y for y in odd_only([k(i)] * n)])
+    return out
+
+
+def filter_traced(n):
+    seen = []
+
+    def tracer(frame, event, arg):
+        if frame.f_code.co_name in ('odd_only', 'filter_traced'):
+            seen.append((frame.f_code.co_name, event, place(frame)))
+        return tracer
+    old = sys.gettrace()
+    out = []
+    try:
+        for y in odd_only(range(n)):
+            if y == 3:
+                sys.settrace(tracer)
+                sys._getframe().f_trace = tracer
+            out.append(y)
+    finally:
+        sys.settrace(old)
+    return out, seen
+
+
 CASES = [
     ('loops', [(0,), (1,), (4,)], {}),
     ('raises', [(4,)], {}),
@@ -366,4 +470,10 @@ CASES = [
     ('keeps_alive', [(3,)], {}),
     ('frame_then_raise', [(3,)], {}),
     ('trace_in_body', [(4,)], {}),
+    ('filtered', [(0,), (1,), (7,)], {}),
+    ('filter_raises', [(5,)], {}),
+    ('filter_frames', [(4,)], {}),
+    ('filter_finalisers', [(3,)], {}),
+    ('filter_kinds', [(3,)], {}),
+    ('filter_traced', [(7,)], {}),
 ]
