@@ -1,11 +1,13 @@
 # What logging, warnings and line-number users see of compiled frames, from
 # an adversarial test's frames_logging: the f_back of a
 # frame a keyword call runs, warnings' stacklevel, which _warnings walks in
-# C from tstate->frame, and emulated frames' current lines.
+# C from tstate->frame, a warning C raises filtered by its caller's module,
+# and emulated frames' current lines.
 import gc
 import inspect
 import io
 import logging
+import math
 import operator
 import sys
 import traceback
@@ -575,10 +577,30 @@ def replaced_functions():
 # or cached small ones depends on when it runs
 LOGS = {'objects': "a log record's time decides whether its ints are new objects"}
 
+class FloatGivesSubclass:
+    def __float__(self):
+        return Subfloat(1.5)
+
+
+class Subfloat(float):
+    pass
+
+
+def c_warning_module(names):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('ignore')
+        for name in names:
+            warnings.filterwarnings('always', module=name)
+        math.sin(FloatGivesSubclass())
+    return [(w.category.__name__, w.lineno - c_warning_module.__code__.co_firstlineno)
+            for w in caught]
+
+
 CASES = [
     ('pos_call_chain', "[()]", {}),
     ('kw_call_chain', "[()]", {}),
     ('warn_stacklevel', "[()]", {}),
+    ('c_warning_module', "[([__name__],), (['__main__'],)]", {}),
     ('log_caller', "[()]", LOGS),
     ('log_kw_caller', "[()]", LOGS),
     ('log_init_caller', "[()]", LOGS),

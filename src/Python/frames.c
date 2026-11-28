@@ -4091,7 +4091,8 @@ le_warn(PyObject *self, PyObject *args, PyObject *kwds)
    sys._getframe would see it, before the original shows it. Only a message
    naming the place C could have found (in the real frame or the true one,
    at the line its fields give), with no source line given, is changed. The
-   filters and the registries were applied at the place C found. */
+   filters and the registries were applied at the place C found, the true
+   one where C's warnings can find it (capi_err_warnex). */
 static PyObject *original_showwarnmsg = NULL;
 /* the message's attribute names, interned once: a name made for each
    lookup is kept by the type's attribute cache */
@@ -5420,26 +5421,117 @@ capi_frame_fasttolocals(PyFrameObject *f)
     frame_fasttolocals_cpython(f);
 }
 
+/* C's warnings (_warnings.c:setup_context) take their module, registry
+   and line from the thread's frames, through PyThreadState_GetFrame where
+   it is replaced, else from tstate itself: there they run as
+   _warnings.warn does (le_warn_with_frames). The variadic ones are given
+   their message made. Their entries jump
+   straight to ours (le_patch_entry_jump), as le_patch_call would move the
+   arguments passed on the stack; a caller can't count on them leaving any
+   register alone, as they run Python code (the filters, showwarning). */
+static int (*err_warnex_cpython)(PyObject *, const char *, Py_ssize_t);
+static int (*err_warnformat_cpython)(PyObject *, Py_ssize_t, const char *,
+                                     ...);
+static int (*err_resourcewarning_cpython)(PyObject *, Py_ssize_t, const char *,
+                                          ...);
+
+static bool
+capi_warn_begin(linked_t *l)
+{
+    bool compiled = capi_compiled_innermost(PyThreadState_GET());
+    if (compiled)
+        frames_linked(l, LINK_ALL);
+    return compiled;
+}
+
 static void
-capi_replace(const char *name, void *ours, void *cpython)
+capi_warn_end(linked_t *l, bool compiled)
+{
+    if (compiled)
+        frames_unlinked(l);
+    Py_XDECREF(l->top);
+}
+
+static int
+capi_err_warnex(PyObject *category, const char *text, Py_ssize_t level)
+{
+    linked_t l = {NULL, NULL, NULL};
+    bool compiled = capi_warn_begin(&l);
+    int r = err_warnex_cpython(category, text, level);
+    capi_warn_end(&l, compiled);
+    return r;
+}
+
+static int
+capi_err_warnformat(PyObject *category, Py_ssize_t level, const char *format,
+                    ...)
+{
+    linked_t l = {NULL, NULL, NULL};
+    bool compiled;
+    PyObject *msg;
+    va_list va;
+    int r;
+    va_start(va, format);
+    msg = PyUnicode_FromFormatV(format, va);
+    va_end(va);
+    if (msg == NULL)
+        return -1;
+    compiled = capi_warn_begin(&l);
+    r = err_warnformat_cpython(category, level, "%U", msg);
+    capi_warn_end(&l, compiled);
+    Py_DECREF(msg);
+    return r;
+}
+
+static int
+capi_err_resourcewarning(PyObject *source, Py_ssize_t level,
+                         const char *format, ...)
+{
+    linked_t l = {NULL, NULL, NULL};
+    bool compiled;
+    PyObject *msg;
+    va_list va;
+    int r;
+    va_start(va, format);
+    msg = PyUnicode_FromFormatV(format, va);
+    va_end(va);
+    if (msg == NULL)
+        return -1;
+    compiled = capi_warn_begin(&l);
+    r = err_resourcewarning_cpython(source, level, "%U", msg);
+    capi_warn_end(&l, compiled);
+    Py_DECREF(msg);
+    return r;
+}
+
+/* whether 'name' is ours now */
+static bool
+capi_replace(const char *name, void *ours, void *cpython, bool jump)
 {
     void *fn = dlsym(RTLD_DEFAULT, name), *original;
     if (fn == NULL)
-        return;
+        return false;
     *(void **)cpython = fn;
-    if ((original = le_patch_entry(fn, ours)) != NULL)
-        *(void **)cpython = original;
+    if ((original = jump ? le_patch_entry_jump(fn, ours)
+                         : le_patch_entry(fn, ours)) == NULL)
+        return false;
+    *(void **)cpython = original;
+    return true;
 }
 
 static void
 capi_init(void)
 {
+    bool threadstate_frame_ours;
     tracemalloc_config = dlsym(RTLD_DEFAULT, "_Py_tracemalloc_config");
 #define REPLACE(name, ours, cpython) \
-    capi_replace(name, (void *)(ours), (void *)&(cpython))
+    capi_replace(name, (void *)(ours), (void *)&(cpython), false)
+#define REPLACE_JUMP(name, ours, cpython) \
+    capi_replace(name, (void *)(ours), (void *)&(cpython), true)
     REPLACE("PyEval_GetFrame", capi_eval_getframe, le_cpython_eval_getframe);
-    REPLACE("PyThreadState_GetFrame", capi_threadstate_getframe,
-            threadstate_getframe_cpython);
+    threadstate_frame_ours =
+        REPLACE("PyThreadState_GetFrame", capi_threadstate_getframe,
+                threadstate_getframe_cpython);
     REPLACE("PyEval_GetGlobals", capi_eval_getglobals,
             eval_getglobals_cpython);
     REPLACE("PyEval_GetBuiltins", capi_eval_getbuiltins,
@@ -5461,7 +5553,15 @@ capi_init(void)
             frame_fasttolocalswitherror_cpython);
     REPLACE("PyFrame_FastToLocals", capi_frame_fasttolocals,
             frame_fasttolocals_cpython);
+    if (!threadstate_frame_ours) {
+        REPLACE("PyErr_WarnEx", capi_err_warnex, err_warnex_cpython);
+        REPLACE_JUMP("PyErr_WarnFormat", capi_err_warnformat,
+                     err_warnformat_cpython);
+        REPLACE_JUMP("PyErr_ResourceWarning", capi_err_resourcewarning,
+                     err_resourcewarning_cpython);
+    }
 #undef REPLACE
+#undef REPLACE_JUMP
 #if LE_HAS_FRAME_FUNCOBJ
     capi_replace_new("_typing", "TypeVar");
     capi_replace_new("_typing", "ParamSpec");

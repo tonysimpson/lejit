@@ -77,6 +77,7 @@ frameless_entries.other_globals                    3.13,3.14                    
 frames.current_frames                              3.11,3.12,3.13,3.14,3.15           not looked at yet
 frames.make_namedtuple                             3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 frames_seen_from_c.back_names_kept_and_dropped     3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 sys._getframe emulates the compiled callee out of the frame it gives (frames.c:visit_link_frame), where CPython makes no frame object for it
+frames_seen_from_c.c_warning_module                3.14,3.15                          not looked at yet
 frames_seen_from_c.c_warning_places                3.7,3.8,3.9,3.10,3.11,3.14,3.15    not looked at yet
 frames_seen_from_c.caller_module_name              3.14,3.15                          not looked at yet
 frames_seen_from_c.getframe_through                3.11,3.13,3.14,3.15                not looked at yet
