@@ -157,10 +157,11 @@ report_destructor(PyObject *capsule)
         entry_count[entry_count_index] = 8; \
     } while (0)
 
-/* one bit per local, per instruction start */
+/* one bit per local */
 #define LIVE_WORDS(nlocals) (((nlocals) + 63) / 64)
 #define LIVE_TEST(set, i) (((set)[(i) / 64] >> ((i) % 64)) & 1)
 
+/* dst |= src: whether dst grew */
 static inline __attribute__((always_inline)) int
 _live_union(uint64_t *dst, const uint64_t *src, int words)
 {
@@ -196,61 +197,25 @@ _live_access(uint64_t *set, int local, int load, int nlocals)
         set[local / 64] &= ~((uint64_t)1 << (local % 64));
 }
 
-/* one backward pass of _find_dead_locals's dataflow: whether a set grew */
-static inline __attribute__((always_inline)) int
-_live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
-           const int *setup_at, const int *try_end, const int *handler_at,
-           int nsetups, const int *break_to, int nbreak, const int *exit_to,
-           int nexit, uint64_t *live, uint64_t *tmp, int nlocals, int words)
+/* set, the live locals after one instruction, becomes those before it:
+   uses | (set - defs) */
+static inline __attribute__((always_inline)) void
+_live_step(uint64_t *set, int o, int a, int nlocals)
 {
-    Py_ssize_t i, k;
-    int changed = 0;
-    for (i = n - 1; i >= 0; i--) {
-        int o = op[i], a = arg[i], f;
-        uint64_t *in = live + i * words;
-        if (o < 0)
-            continue;
-        f = le_op_flags(o);
-        memset(tmp, 0, words * sizeof(uint64_t));
-        for (k = 0; k < nsetups; k++)
-            if (setup_at[k] <= i && i < try_end[k])
-                _live_union(tmp, live + handler_at[k] * words, words);
-        if (o == BREAK_LOOP)
-            for (k = 0; k < nbreak; k++)
-                _live_union(tmp, live + break_to[k] * words, words);
-        else if (o == END_FINALLY) {
-            for (k = 0; k < nexit; k++)
-                _live_union(tmp, live + exit_to[k] * words, words);
-            _live_union(tmp, live + nxt[i] * words, words);
-        }
-        /* its return, by END_FINALLY, is an exit_to */
-        else if (o == CALL_FINALLY)
-            _live_union(tmp, live + a * words, words);
-        else if (!(f & LE_OPF_STOPS)) {
-            if (f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
-                _live_union(tmp, live + a * words, words);
-            if (!(f & LE_OPF_JUMPS))
-                _live_union(tmp, live + nxt[i] * words, words);
-        }
-        /* in = uses | (out - defs) */
-        if ((o == STORE_FAST || o == DELETE_FAST ||
-             o == LOAD_FAST_AND_CLEAR) &&
-            a < nlocals)
-            tmp[a / 64] &= ~((uint64_t)1 << (a % 64));
-        if ((o == LOAD_FAST || o == DELETE_FAST || o == LOAD_FAST_CHECK ||
-             o == LOAD_FAST_AND_CLEAR) &&
-            a < nlocals)
-            tmp[a / 64] |= (uint64_t)1 << (a % 64);
-        /* two locals, the first in the high four bits: the second's access
-           first, going backward */
-        if (o == LOAD_FAST_LOAD_FAST || o == STORE_FAST_LOAD_FAST ||
-            o == STORE_FAST_STORE_FAST) {
-            _live_access(tmp, a & 15, o != STORE_FAST_STORE_FAST, nlocals);
-            _live_access(tmp, a >> 4, o == LOAD_FAST_LOAD_FAST, nlocals);
-        }
-        changed |= _live_union(in, tmp, words);
+    if ((o == STORE_FAST || o == DELETE_FAST || o == LOAD_FAST_AND_CLEAR) &&
+        a < nlocals)
+        set[a / 64] &= ~((uint64_t)1 << (a % 64));
+    if ((o == LOAD_FAST || o == DELETE_FAST || o == LOAD_FAST_CHECK ||
+         o == LOAD_FAST_AND_CLEAR) &&
+        a < nlocals)
+        set[a / 64] |= (uint64_t)1 << (a % 64);
+    /* two locals, the first in the high four bits: the second's access
+       first, going backward */
+    if (o == LOAD_FAST_LOAD_FAST || o == STORE_FAST_LOAD_FAST ||
+        o == STORE_FAST_STORE_FAST) {
+        _live_access(set, a & 15, o != STORE_FAST_STORE_FAST, nlocals);
+        _live_access(set, a >> 4, o == LOAD_FAST_LOAD_FAST, nlocals);
     }
-    return changed;
 }
 
 /* a store (bind) or a delete (unbind) of local in the sets of locals that
@@ -272,70 +237,155 @@ _bound_access(uint64_t *bound, uint64_t *unbound, int local, int bind,
     }
 }
 
-/* the sets out of instruction i (tb, tu) joined into instruction j's: whether
-   one grew */
-static inline __attribute__((always_inline)) int
-_bound_flow(uint64_t *bound, uint64_t *unbound, const uint64_t *tb,
-            const uint64_t *tu, Py_ssize_t j, int words)
+/* the sets before one instruction become those after it */
+static inline __attribute__((always_inline)) void
+_bound_step(uint64_t *bound, uint64_t *unbound, int o, int a, int nlocals)
 {
-    return _live_union(bound + j * words, tb, words) |
-           _live_union(unbound + j * words, tu, words);
+    if (o == STORE_FAST)
+        _bound_access(bound, unbound, a, 1, nlocals);
+    else if (o == DELETE_FAST || o == LOAD_FAST_AND_CLEAR)
+        _bound_access(bound, unbound, a, 0, nlocals);
+    else if (o == STORE_FAST_LOAD_FAST)
+        _bound_access(bound, unbound, a >> 4, 1, nlocals);
+    else if (o == STORE_FAST_STORE_FAST) {
+        _bound_access(bound, unbound, a >> 4, 1, nlocals);
+        _bound_access(bound, unbound, a & 15, 1, nlocals);
+    }
 }
 
-/* one forward pass of the locals that may be bound and that may be unbound
-   at each instruction, over the successors _live_pass uses: whether a set
-   grew. A handler gets the state before each instruction of its body: no
-   instruction raises after it binds or unbinds a local. */
-static int
-_bound_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
-            const int *setup_at, const int *try_end, const int *handler_at,
-            int nsetups, const int *break_to, int nbreak, const int *exit_to,
-            int nexit, uint64_t *bound, uint64_t *unbound, uint64_t *tb,
-            uint64_t *tu, int nlocals, int words)
+/* the dataflow runs over basic blocks: a block starts at the code's start,
+   at a merge point, at a successor other than the next instruction, after
+   an instruction with any other successor, and where the set of try
+   ranges containing the instruction changes. Each instruction's effect on
+   a set either sets, clears or keeps each bit, so a block's effect is
+   g | (x & p), with g its effect on no bits and p on all bits. */
+typedef struct {
+    int first, last; /* its first and last instructions, in df_t.ins */
+    int handlers_at; /* its handlers: blocks in df_t.handlers from here */
+    int nhandlers;
+} df_block_t;
+
+typedef struct {
+    const int *op, *arg, *nxt; /* per code unit */
+    const int *ins;            /* each instruction's code unit, in order */
+    const int *block_of;       /* per code unit: the block it starts, or -1 */
+    df_block_t *blocks;
+    int nblocks;
+    const int *handlers;
+    const int *break_to, *exit_to; /* code units */
+    int nbreak, nexit;
+    int words;
+} df_t;
+
+/* VISIT(successor) for each block after block b's last instruction, other
+   than its handlers; -1 for the code's end */
+#define DF_FOR_SUCCESSORS(df, b, VISIT)                                      \
+    do {                                                                     \
+        int _u = (df)->ins[(df)->blocks[b].last], _o = (df)->op[_u], _k, _f; \
+        _f = le_op_flags(_o);                                                \
+        if (_o == BREAK_LOOP)                                                \
+            for (_k = 0; _k < (df)->nbreak; _k++)                            \
+                VISIT((df)->block_of[(df)->break_to[_k]]);                   \
+        else if (_o == END_FINALLY) {                                        \
+            for (_k = 0; _k < (df)->nexit; _k++)                             \
+                VISIT((df)->block_of[(df)->exit_to[_k]]);                    \
+            VISIT((df)->block_of[(df)->nxt[_u]]);                            \
+        }                                                                    \
+        /* its return, by END_FINALLY, is an exit_to */                      \
+        else if (_o == CALL_FINALLY)                                         \
+            VISIT((df)->block_of[(df)->arg[_u]]);                            \
+        else if (!(_f & LE_OPF_STOPS)) {                                     \
+            if (_f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))                       \
+                VISIT((df)->block_of[(df)->arg[_u]]);                        \
+            if (!(_f & LE_OPF_JUMPS))                                        \
+                VISIT((df)->block_of[(df)->nxt[_u]]);                        \
+        }                                                                    \
+    } while (0)
+
+/* the live locals at each block's start, to a fixed point. A handler's
+   live locals are live after every instruction of its body. */
+static void
+_live_blocks(const df_t *df, const uint64_t *g, const uint64_t *p,
+             uint64_t *live, uint64_t *tmp, uint64_t *from_handlers,
+             int nlocals)
 {
-    Py_ssize_t i, k;
-    int changed = 0;
-    for (i = 0; i < n; i++) {
-        int o = op[i], a = arg[i], f;
-        if (o < 0)
-            continue;
-        f = le_op_flags(o);
-        memcpy(tb, bound + i * words, words * sizeof(uint64_t));
-        memcpy(tu, unbound + i * words, words * sizeof(uint64_t));
-        for (k = 0; k < nsetups; k++)
-            if (setup_at[k] <= i && i < try_end[k])
-                changed |=
-                    _bound_flow(bound, unbound, tb, tu, handler_at[k], words);
-        if (o == STORE_FAST)
-            _bound_access(tb, tu, a, 1, nlocals);
-        else if (o == DELETE_FAST || o == LOAD_FAST_AND_CLEAR)
-            _bound_access(tb, tu, a, 0, nlocals);
-        else if (o == STORE_FAST_LOAD_FAST)
-            _bound_access(tb, tu, a >> 4, 1, nlocals);
-        else if (o == STORE_FAST_STORE_FAST) {
-            _bound_access(tb, tu, a >> 4, 1, nlocals);
-            _bound_access(tb, tu, a & 15, 1, nlocals);
+    int words = df->words, changed;
+    do {
+        int b;
+        changed = 0;
+        for (b = df->nblocks - 1; b >= 0; b--) {
+            const df_block_t *blk = &df->blocks[b];
+            int i, k;
+            memset(tmp, 0, words * sizeof(uint64_t));
+#define LIVE_FROM(s)                                                \
+    do {                                                            \
+        int _s = (s);                                               \
+        if (_s >= 0)                                                \
+            _live_union(tmp, live + (Py_ssize_t)_s * words, words); \
+    } while (0)
+            DF_FOR_SUCCESSORS(df, b, LIVE_FROM);
+#undef LIVE_FROM
+            for (i = 0; i < words; i++)
+                tmp[i] = g[(Py_ssize_t)b * words + i] |
+                         (tmp[i] & p[(Py_ssize_t)b * words + i]);
+            if (blk->nhandlers > 0) {
+                /* what its handlers need after any of its instructions:
+   after its first, through that one's effect alone, as
+   what later ones read is in g already and what they
+   store only clears more */
+                memset(from_handlers, 0, words * sizeof(uint64_t));
+                for (k = 0; k < blk->nhandlers; k++)
+                    _live_union(
+                        from_handlers,
+                        live + (Py_ssize_t)df->handlers[blk->handlers_at + k] *
+                                   words,
+                        words);
+                _live_step(from_handlers, df->op[df->ins[blk->first]],
+                           df->arg[df->ins[blk->first]], nlocals);
+                _live_union(tmp, from_handlers, words);
+            }
+            changed |= _live_union(live + (Py_ssize_t)b * words, tmp, words);
         }
-        if (o == BREAK_LOOP)
-            for (k = 0; k < nbreak; k++)
-                changed |=
-                    _bound_flow(bound, unbound, tb, tu, break_to[k], words);
-        else if (o == END_FINALLY) {
-            for (k = 0; k < nexit; k++)
-                changed |=
-                    _bound_flow(bound, unbound, tb, tu, exit_to[k], words);
-            changed |= _bound_flow(bound, unbound, tb, tu, nxt[i], words);
+    } while (changed);
+}
+
+/* the locals that may be bound and that may be unbound at each block's
+   start, to a fixed point, block 0's set already from the arguments.
+   g and p are a block's effects on the two sets, each 2 * words per block;
+   before[b] what the block's instructions after its first may add to the
+   sets they start with. A handler gets the sets before each instruction
+   of its body: no instruction raises after it binds or unbinds a local. */
+static void
+_bound_blocks(const df_t *df, const uint64_t *g, const uint64_t *p,
+              const uint64_t *before, uint64_t *sets, uint64_t *tmp)
+{
+    int changed, two = 2 * df->words;
+    do {
+        int b;
+        changed = 0;
+        for (b = 0; b < df->nblocks; b++) {
+            const df_block_t *blk = &df->blocks[b];
+            const uint64_t *in = sets + (Py_ssize_t)b * two;
+            int i, k;
+#define BOUND_TO(s)                                                        \
+    do {                                                                   \
+        int _s = (s);                                                      \
+        if (_s >= 0)                                                       \
+            changed |= _live_union(sets + (Py_ssize_t)_s * two, tmp, two); \
+    } while (0)
+            if (blk->nhandlers > 0) {
+                for (i = 0; i < two; i++)
+                    tmp[i] = in[i] | before[(Py_ssize_t)b * two + i];
+                for (k = 0; k < blk->nhandlers; k++)
+                    BOUND_TO(df->handlers[blk->handlers_at + k]);
+            }
+            for (i = 0; i < two; i++)
+                tmp[i] = g[(Py_ssize_t)b * two + i] |
+                         (in[i] & p[(Py_ssize_t)b * two + i]);
+            DF_FOR_SUCCESSORS(df, b, BOUND_TO);
+#undef BOUND_TO
         }
-        else if (o == CALL_FINALLY)
-            changed |= _bound_flow(bound, unbound, tb, tu, a, words);
-        else if (!(f & LE_OPF_STOPS)) {
-            if (f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
-                changed |= _bound_flow(bound, unbound, tb, tu, a, words);
-            if (!(f & LE_OPF_JUMPS))
-                changed |= _bound_flow(bound, unbound, tb, tu, nxt[i], words);
-        }
-    }
-    return changed;
+    } while (changed);
 }
 
 /* list the dead locals at each merge point, in ints added at the end of
@@ -353,26 +403,30 @@ _find_dead_locals(PyCodeObject *co, co_report_t **reportp)
     Py_ssize_t n = c.size / LE_UNIT;
     int nlocals = le_code_nlocals(co), words = LIVE_WORDS(le_code_nlocals(co));
     Py_ssize_t i, m;
-    int *op, *nxt;
+    int k, *op, *nxt, *block_of, *handlers, *ins, nins = 0;
     int *arg; /* a jump's target, in code units; else the argument */
     int *setup_at, *try_end, *handler_at,
         nsetups = 0; /* try bodies: [setup_at, try_end) */
     int *break_to, *exit_to, nbreak = 0, nexit = 0;
-    uint64_t *live, *tmp, *bound = NULL, *unbound, *tb, *tu;
     unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
+    unsigned char *starts_block;
+    void *units = NULL, *per_block = NULL;
+    df_block_t *blocks;
+    int nblocks = 0, nhandlers = 0, two = 2 * words;
+    uint64_t *live_g, *live_p, *live, *bound_g, *bound_p, *before, *sets, *tmp,
+        *none, *may_die;
     size_t at, ndead = 0;
     int *dead;
     int keep_first = co->co_argcount > 0 && psyco_class_cell(co) >= 0;
+    df_t df;
 
     if (nlocals == 0)
         return;
-    /* one block: the sets first, for their alignment */
-    live = PyMem_Calloc(1, ((n + 2) * words) * sizeof(uint64_t) +
-                               8 * (n + 1) * sizeof(int) + (n + 1));
-    if (live == NULL)
+    /* per code unit, in one block */
+    units = PyMem_Malloc(10 * (n + 1) * sizeof(int) + 2 * (n + 1));
+    if (units == NULL)
         goto done;
-    tmp = live + (n + 1) * words;
-    op = (int *)(tmp + words);
+    op = units;
     arg = op + (n + 1);
     nxt = arg + (n + 1);
     setup_at = nxt + (n + 1);
@@ -380,17 +434,24 @@ _find_dead_locals(PyCodeObject *co, co_report_t **reportp)
     handler_at = try_end + (n + 1);
     break_to = handler_at + (n + 1);
     exit_to = break_to + (n + 1);
-    jump_targets = (unsigned char *)(exit_to + (n + 1));
+    block_of = exit_to + (n + 1);
+    ins = block_of + (n + 1);
+    jump_targets = (unsigned char *)(ins + (n + 1));
+    starts_block = jump_targets + (n + 1);
+    memset(jump_targets, 0, 2 * (n + 1));
 
     /* decode: op[i] = -1 except at instruction starts */
-    for (i = 0; i < n; i++) op[i] = -1;
-    op[n] = -1;
+    for (i = 0; i <= n; i++) {
+        op[i] = -1;
+        block_of[i] = -1;
+    }
     for (i = 0; i < n;) {
         Py_ssize_t start = i;
         le_instr_t in = le_instr(c, (int)i * LE_UNIT);
-        int o = in.op, j;
+        int o = in.op, j, f = le_op_flags(o);
         i = in.next / LE_UNIT;
         j = in.target >= 0 ? in.target / LE_UNIT : -1;
+        ins[nins++] = (int)start;
         op[start] = o;
         arg[start] = j >= 0 ? j : in.arg;
         nxt[start] = (int)i;
@@ -412,6 +473,13 @@ _find_dead_locals(PyCodeObject *co, co_report_t **reportp)
                 handler_at[nsetups++] = j;
                 break;
         }
+        /* any successor but the next instruction alone ends the block */
+        if (j >= 0 || o == BREAK_LOOP || o == END_FINALLY ||
+            (f & (LE_OPF_STOPS | LE_OPF_JUMPS | LE_OPF_BRANCHES))) {
+            starts_block[i] = 1;
+            if (j >= 0)
+                starts_block[j] = 1;
+        }
     }
 #if LE_HAS_EXCEPTION_TABLE
     {
@@ -426,51 +494,155 @@ _find_dead_locals(PyCodeObject *co, co_report_t **reportp)
 #endif
 
     /* where BREAK_LOOP and END_FINALLY may go */
-    for (i = 0; i < n; i++)
-        if (op[i] >= 0 && jump_targets[i] != 0) {
-            if (jump_targets[i] & 1)
-                break_to[nbreak++] = (int)i;
-            exit_to[nexit++] = (int)i;
+    for (k = 0; k < nins; k++)
+        if (jump_targets[ins[k]] != 0) {
+            if (jump_targets[ins[k]] & 1)
+                break_to[nbreak++] = ins[k];
+            exit_to[nexit++] = ins[k];
+            starts_block[ins[k]] = 1;
+        }
+    /* a range's end may be no instruction's start: the block starts at
+       the next one */
+#define MARK_START(unit)                   \
+    do {                                   \
+        Py_ssize_t _u = (unit);            \
+        while (_u < n && op[_u] < 0) _u++; \
+        starts_block[_u] = 1;              \
+    } while (0)
+    for (k = 0; k < nsetups; k++) {
+        MARK_START(setup_at[k]);
+        MARK_START(try_end[k]);
+        MARK_START(handler_at[k]);
+    }
+#undef MARK_START
+    for (m = 0; m < report->mergepoint_count; m++)
+        starts_block[report->mergepoints[m].bytecode_position / LE_UNIT] = 1;
+    starts_block[0] = 1;
+
+    /* number the blocks, and count the handlers of each block's
+       instructions, the same for all of them */
+    for (k = 0; k < nins; k++)
+        if (starts_block[ins[k]])
+            block_of[ins[k]] = nblocks++;
+    for (k = 0; k < nins; k++)
+        if (block_of[ins[k]] >= 0) {
+            int h;
+            for (h = 0; h < nsetups; h++)
+                nhandlers += setup_at[h] <= ins[k] && ins[k] < try_end[h] &&
+                             block_of[handler_at[h]] >= 0;
         }
 
-    /* backward dataflow to a fixed point; a separate copy for code with
-       at most 64 locals, where a set is one word */
-    if (words == 1)
-        while (_live_pass(n, op, arg, nxt, setup_at, try_end, handler_at,
-                          nsetups, break_to, nbreak, exit_to, nexit, live, tmp,
-                          nlocals, 1));
-    else
-        while (_live_pass(n, op, arg, nxt, setup_at, try_end, handler_at,
-                          nsetups, break_to, nbreak, exit_to, nexit, live, tmp,
-                          nlocals, words));
+    /* per block, in one block: the sets first, for their alignment, then
+   a set of no locals for a merge point at the code's end and the
+   locals that may be listed dead */
+    per_block = PyMem_Calloc(
+        1, (size_t)nblocks * ((3 * words + 4 * two) * sizeof(uint64_t) +
+                              sizeof(df_block_t)) +
+               (4 * two + words) * sizeof(uint64_t) +
+               (size_t)nhandlers * sizeof(int));
+    if (per_block == NULL)
+        goto done;
+    live_g = per_block;
+    live_p = live_g + (Py_ssize_t)nblocks * words;
+    live = live_p + (Py_ssize_t)nblocks * words;
+    bound_g = live + (Py_ssize_t)nblocks * words;
+    bound_p = bound_g + (Py_ssize_t)nblocks * two;
+    before = bound_p + (Py_ssize_t)nblocks * two;
+    sets = before + (Py_ssize_t)nblocks * two;
+    tmp = sets + (Py_ssize_t)nblocks * two;
+    none = tmp + 3 * two;
+    may_die = none + two;
+    blocks = (df_block_t *)(may_die + words);
+    handlers = (int *)(blocks + nblocks);
+    nhandlers = 0;
+
+    /* each block's instructions, handlers and effects */
+    {
+        int b = -1;
+        for (k = 0; k < nins; k++) {
+            i = ins[k];
+            if (block_of[i] >= 0) {
+                int h;
+                b = block_of[i];
+                blocks[b].first = k;
+                blocks[b].handlers_at = nhandlers;
+                for (h = 0; h < nsetups; h++)
+                    if (setup_at[h] <= i && i < try_end[h] &&
+                        block_of[handler_at[h]] >= 0)
+                        handlers[nhandlers++] = block_of[handler_at[h]];
+                blocks[b].nhandlers = nhandlers - blocks[b].handlers_at;
+            }
+            blocks[b].last = k;
+        }
+        for (b = 0; b < nblocks; b++) {
+            uint64_t *lg = live_g + (Py_ssize_t)b * words,
+                     *lp = live_p + (Py_ssize_t)b * words,
+                     *bg = bound_g + (Py_ssize_t)b * two,
+                     *bp = bound_p + (Py_ssize_t)b * two,
+                     *bb = before + (Py_ssize_t)b * two;
+            int w;
+            memset(lp, 0xff, words * sizeof(uint64_t));
+            memset(bp, 0xff, two * sizeof(uint64_t));
+            for (k = blocks[b].last; k >= blocks[b].first; k--) {
+                _live_step(lg, op[ins[k]], arg[ins[k]], nlocals);
+                _live_step(lp, op[ins[k]], arg[ins[k]], nlocals);
+            }
+            for (k = blocks[b].first; k <= blocks[b].last; k++) {
+                if (k > blocks[b].first)
+                    for (w = 0; w < two; w++) bb[w] |= bg[w];
+                _bound_step(bg, bg + words, op[ins[k]], arg[ins[k]], nlocals);
+                _bound_step(bp, bp + words, op[ins[k]], arg[ins[k]], nlocals);
+            }
+        }
+    }
+
+    df.op = op;
+    df.arg = arg;
+    df.nxt = nxt;
+    df.ins = ins;
+    df.block_of = block_of;
+    df.blocks = blocks;
+    df.nblocks = nblocks;
+    df.handlers = handlers;
+    df.break_to = break_to;
+    df.exit_to = exit_to;
+    df.nbreak = nbreak;
+    df.nexit = nexit;
+    df.words = words;
+
+    _live_blocks(&df, live_g, live_p, live, tmp, tmp + words, nlocals);
 
     /* forward, from the arguments */
-    bound = PyMem_Calloc(2 * (n + 2) * words, sizeof(uint64_t));
-    if (bound == NULL)
-        goto done;
-    unbound = bound + (n + 1) * words;
-    tb = unbound + (n + 1) * words;
-    tu = tb + words;
     {
         int nargs = co->co_argcount + co->co_kwonlyargcount +
                     ((co->co_flags & CO_VARARGS) != 0) +
                     ((co->co_flags & CO_VARKEYWORDS) != 0);
         int v;
         for (v = 0; v < nlocals; v++)
-            _bound_access(bound, unbound, v, v < nargs, nlocals);
+            _bound_access(sets, sets + words, v, v < nargs, nlocals);
     }
-    while (_bound_pass(n, op, arg, nxt, setup_at, try_end, handler_at, nsetups,
-                       break_to, nbreak, exit_to, nexit, bound, unbound, tb,
-                       tu, nlocals, words));
+    _bound_blocks(&df, bound_g, bound_p, before, sets, tmp);
 
-#define DEAD_AT(m, v)                                                         \
-    (!LIVE_TEST(                                                              \
-         live + (report->mergepoints[m].bytecode_position / LE_UNIT) * words, \
-         v) &&                                                                \
-     !le_code_local_is_cell(co, v))
-    for (m = 0; m < report->mergepoint_count; m++) {
+    /* a merge point starts a block, or is at the code's end */
+#define MP_SETS(m, base, size)                                             \
+    (block_of[report->mergepoints[m].bytecode_position / LE_UNIT] >= 0     \
+         ? (base) +                                                        \
+               (Py_ssize_t)                                                \
+                       block_of[report->mergepoints[m].bytecode_position / \
+                                LE_UNIT] *                                 \
+                   (size)                                                  \
+         : none)
+    {
         int v;
-        for (v = keep_first; v < nlocals; v++) ndead += DEAD_AT(m, v);
+        for (v = keep_first; v < nlocals; v++)
+            if (!le_code_local_is_cell(co, v))
+                may_die[v / 64] |= (uint64_t)1 << (v % 64);
+    }
+    for (m = 0; m < report->mergepoint_count; m++) {
+        const uint64_t *mp_live = MP_SETS(m, live, words);
+        int w;
+        for (w = 0; w < words; w++)
+            ndead += __builtin_popcountll(may_die[w] & ~mp_live[w]);
     }
     if (ndead == 0)
         goto done;
@@ -488,21 +660,21 @@ _find_dead_locals(PyCodeObject *co, co_report_t **reportp)
     dead = (int *)report + at;
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
-        Py_ssize_t u = mp->bytecode_position / LE_UNIT;
+        const uint64_t *s = MP_SETS(m, sets, two),
+                       *mp_live = MP_SETS(m, live, words);
         int v;
         mp->dead_at = (int)(dead - (int *)mp);
         for (v = keep_first; v < nlocals; v++)
-            if (DEAD_AT(m, v)) {
-                int either = LIVE_TEST(bound + u * words, v) &&
-                             LIVE_TEST(unbound + u * words, v);
+            if (LIVE_TEST(may_die, v) && !LIVE_TEST(mp_live, v)) {
+                int either = LIVE_TEST(s, v) && LIVE_TEST(s + words, v);
                 dead[mp->ndead++] = either ? ~v : v;
             }
         dead += mp->ndead;
     }
-#undef DEAD_AT
+#undef MP_SETS
 done:
-    PyMem_Free(bound);
-    PyMem_Free(live);
+    PyMem_Free(per_block);
+    PyMem_Free(units);
 }
 
 /* NULL with *bad set: a jump to no instruction's start, which LeJIT doesn't
