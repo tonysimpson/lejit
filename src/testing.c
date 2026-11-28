@@ -343,7 +343,8 @@ static PyObject *
 le_fail_after(PyObject *self, PyObject *args)
 {
     static const char *names[LE_FAIL_SITES] = {
-        "psycoobject", "array", "codebuf", "lookup", "owner", "traceback"};
+        "psycoobject", "array",     "codebuf",  "lookup",
+        "owner",       "traceback", "freelist", "pins"};
     const char *site;
     long n, left;
     int i;
