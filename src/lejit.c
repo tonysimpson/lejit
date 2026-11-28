@@ -548,6 +548,8 @@ static struct PyModuleDef le_module = {PyModuleDef_HEAD_INIT, MODULE_NAME,
 
 /* Importing lejit._core starts nothing: lejit.start calls _start. */
 PyMODINIT_FUNC
+PyInit__core(void);
+PyMODINIT_FUNC
 PyInit__core(void)
 {
     PyObject *module = PyModule_Create(&le_module), *build;

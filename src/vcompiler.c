@@ -31,6 +31,7 @@
 #include "pycodegen.h"
 #include "v_mem_mov.h"
 #include <idispatcher.h>
+#include "initialize.h"
 
 DEFINEVAR const long psyco_zero = 0;
 DEFINEVAR source_virtual_t psyco_vsource_not_important;

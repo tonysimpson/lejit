@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include "platform.h"
 
 long
 psyco_allocate_executable_buffer(long size, char **result)

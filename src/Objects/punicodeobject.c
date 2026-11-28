@@ -25,6 +25,7 @@
 #include "../pycodegen.h"
 #include "../psyfunc.h"
 #include "../Python/pycheader.h"
+#include "../initialize.h"
 
 /* n characters of 'from' into 'to', a string not yet shared and wide
    enough for them */

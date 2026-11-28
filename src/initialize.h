@@ -3,7 +3,9 @@
    for Psyco as a "#include <Python.h>" has for Python:
    including all headers extension modules generally need.
 
-   This file is moreover used internally by psyco.c. */
+   It also declares each file's start-up function, so every definition
+   is checked against it, and with PSYCO_INITIALIZATION defined (by
+   lejit.c) gives initialize_all_files instead of the headers. */
 
 #ifndef PSYCO_INITIALIZATION
 
@@ -23,13 +25,10 @@
 #include "Objects/pstructmember.h"
 #include "Objects/ptupleobject.h"
 #include "Objects/ptypeobject.h"
+#endif /* !PSYCO_INITIALIZATION */
 
-#else /* if PSYCO_INITIALIZATION */
-#undef PSYCO_INITIALIZATION
-
-#include <iinitialize.h> /* processor-specific initialization */
-
-/* internal part for psyco.c */
+#ifndef LE_INITIALIZE_H
+#define LE_INITIALIZE_H
 EXTERNFN void
 psyco_compiler_init(void); /* vcompiler.c */
 EXTERNFN void
@@ -82,6 +81,12 @@ EXTERNFN void
 codemanager_init(void); /* codemanager.c */
 EXTERNFN void
 psycofunction_init(void); /* psyfunc.c */
+#endif                    /* LE_INITIALIZE_H */
+
+#ifdef PSYCO_INITIALIZATION
+#undef PSYCO_INITIALIZATION
+
+#include <iinitialize.h> /* processor-specific initialization */
 
 PSY_INLINE void
 initialize_all_files(void)

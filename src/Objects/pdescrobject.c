@@ -14,6 +14,7 @@
 #include "pabstract.h"
 #include "pdictobject.h"
 #include "ptupleobject.h"
+#include "../initialize.h"
 
 static vinfo_t *
 member_get(PsycoObject *po, PyMemberDescrObject *descr, vinfo_t *obj,

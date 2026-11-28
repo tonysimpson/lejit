@@ -9,6 +9,7 @@
 #include "../Objects/ptypeobject.h"
 #include "../psyfunc.h"
 #include "../mergepoints.h"
+#include "../initialize.h"
 
 /* the metas of Python/bltinmodule.c's abs, callable, delattr, divmod,
    getattr, hasattr, hash, id, isinstance, issubclass, len, pow and setattr;

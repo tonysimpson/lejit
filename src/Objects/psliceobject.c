@@ -19,6 +19,7 @@
  */
 #include "psliceobject.h"
 #include "plongobject.h"
+#include "../initialize.h"
 
 static source_virtual_t psyco_computed_slice;
 
