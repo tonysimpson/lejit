@@ -4681,14 +4681,8 @@ lend_locals(lent_t **lent, int *nlent, int *cap, le_frame_t *frame,
     PyObject **values;
     if (n == 0)
         return;
-    if (*nlent == *cap) {
-        int c = *cap == 0 ? 8 : 2 * *cap;
-        lent_t *t = PyMem_Realloc(*lent, c * sizeof(lent_t));
-        if (t == NULL)
-            return;
-        *lent = t;
-        *cap = c;
-    }
+    if (le_grow(lent, cap, *nlent + 1, 8, sizeof **lent) < 0)
+        return;
     values = PyMem_Malloc(n_locals_plus(co) * sizeof(PyObject *) + 1);
     if (values == NULL)
         return;

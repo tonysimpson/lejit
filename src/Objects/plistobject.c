@@ -192,7 +192,8 @@ piece_step(vinfo_t *v, int k)
 /* the items being gathered for a list, borrowed by no one: each holds a
    new reference until the list or the slice assignment takes it */
 static PyObject **gathered = NULL;
-static Py_ssize_t gathered_count = 0, gathered_size = 0;
+static Py_ssize_t gathered_count = 0;
+static int gathered_size = 0;
 
 static void
 gathered_clear(void)
@@ -203,19 +204,12 @@ gathered_clear(void)
 static int
 gathered_room(Py_ssize_t n)
 {
-    Py_ssize_t size = gathered_size;
-    PyObject **a;
-    if (gathered_count + n <= gathered_size)
-        return 0;
-    while (size < gathered_count + n) size = size ? size * 2 : 64;
-    a = PyMem_Realloc(gathered, size * sizeof(PyObject *));
-    if (a == NULL) {
+    if (le_grow(&gathered, &gathered_size, gathered_count + n, 64,
+                sizeof *gathered) < 0) {
         gathered_clear();
         PyErr_NoMemory();
         return -1;
     }
-    gathered = a;
-    gathered_size = size;
     return 0;
 }
 

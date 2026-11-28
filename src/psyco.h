@@ -400,6 +400,28 @@ psyco_fatal_error(char *msg, char *filename, int lineno);
 #define PyObject_TypeCheck(o, t) ((o)->ob_type == (t))
 #endif
 
+/* Room for 'need' items of 'elem' bytes in the array at '*items', which
+   has room for '*cap': the room doubles, from 'first', until they fit.
+   -1 if out of memory, leaving both as they were. */
+PSY_INLINE int
+le_grow(void *items, int *cap, long need, int first, size_t elem)
+{
+    void *p;
+    long n;
+    if (need <= *cap)
+        return 0;
+    for (n = *cap ? *cap : first; n < need;) n *= 2;
+    if (n > INT_MAX)
+        return -1;
+    memcpy(&p, items, sizeof p);
+    p = PyMem_Realloc(p, n * elem);
+    if (p == NULL)
+        return -1;
+    memcpy(items, &p, sizeof p);
+    *cap = (int)n;
+    return 0;
+}
+
 /* C API calls that some CPython versions lack: the function where
    libpython has it, else its public replacement */
 #if LE_HAS_LOOKUP_ATTR_LINKABLE

@@ -1157,14 +1157,9 @@ psyco_stub_set_release(void *closure, void (*fn)(void *))
     le_owner_t *o = (((stub_record_t *)closure) - 1)->owner;
     if (o == NULL)
         return; /* kept for good */
-    if (o->nreleases == o->releasescap) {
-        int cap = o->releasescap ? 2 * o->releasescap : 4;
-        void *n = PyMem_Realloc(o->releases, cap * sizeof(*o->releases));
-        if (n == NULL)
-            OUT_OF_MEMORY();
-        o->releases = n;
-        o->releasescap = cap;
-    }
+    if (le_grow(&o->releases, &o->releasescap, o->nreleases + 1, 4,
+                sizeof *o->releases) < 0)
+        OUT_OF_MEMORY();
     o->releases[o->nreleases].fn = fn;
     o->releases[o->nreleases].closure = closure;
     o->nreleases++;
@@ -2475,13 +2470,8 @@ psyco_forget_values(PsycoObject *po, global_entries_t *ge)
     static long *table = NULL;
     static int tablecap = 0;
     nlocals = le_code_nlocals(po->pr.co);
-    if (nlocals > tablecap) {
-        long *t = PyMem_Realloc(table, nlocals * (sizeof(long) + 1));
-        if (t == NULL)
-            OUT_OF_MEMORY();
-        table = t;
-        tablecap = nlocals;
-    }
+    if (le_grow(&table, &tablecap, nlocals, nlocals, sizeof(long) + 1) < 0)
+        OUT_OF_MEMORY();
     want = table;
     varies = (char *)(want + tablecap);
     for (i = 0; i < nlocals; i++) {
