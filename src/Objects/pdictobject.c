@@ -4,6 +4,7 @@
 #include "punicodeobject.h"
 /* LE_GC_IS_TRACKED */
 #include "../mechanisms/store_gc.h"
+#include "../initialize.h"
 
 /* ma_used is read as its low 32 bits (psyco.h's layouts) */
 #define DICT_ma_used FMUT(DEF_FIELD(PyDictObject, ma_used, OB_type))

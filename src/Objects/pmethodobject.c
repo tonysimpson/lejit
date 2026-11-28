@@ -19,6 +19,7 @@
 #include "../Python/frames.h"
 #include "../Modules/pcffi.h"
 #include "../Modules/pctypes.h"
+#include "../initialize.h"
 
 static bool
 compute_cfunction(PsycoObject *po, vinfo_t *methobj)

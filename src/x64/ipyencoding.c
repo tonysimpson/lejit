@@ -10,6 +10,7 @@
 /* PyLazyImport_Type */
 #include "../Python/pycinternal.h"
 #include "../Python/pyruntime.h"
+#include "../mechanisms/tstate.h"
 
 /* Emitted code's view of the shape of dict keys (pobject.h:le_dict_shape):
    a compare of the keys at 'rk' with an immediate, which ends the
@@ -1671,17 +1672,7 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
     END_CODE
 }
 
-/*   mov r10, globals; mov r10, [r10 + ma_keys]
-     cmp [r10 + shape], SHAPE; jne MISS
-     cmp [r10 + KEY], name; jne MISS
-     RG = [r10 + KEY + 8]
-     (where there are lazy imports: cmp [RG + ob_type], proxy type; je MISS)
-     incref RG; jmp DONE
-   MISS: rdi = arg; call miss_glue; RG = rax
-   DONE: test RG, RG
-   Hand-allocated like psyco_inline_load, RG callee-saved, so the
-   compiler's state is the same on both paths and whatever SHAPE and KEY
-   are. */
+#if LE_HAS_THREAD_LOCAL_TSTATE
 DEFINEFN
 vinfo_t *
 psyco_thread_word_load(PsycoObject *po, long offset)
@@ -1696,7 +1687,19 @@ psyco_thread_word_load(PsycoObject *po, long offset)
     REG_NUMBER(po, rg) = v;
     return v;
 }
+#endif
 
+/*   mov r10, globals; mov r10, [r10 + ma_keys]
+     cmp [r10 + shape], SHAPE; jne MISS
+     cmp [r10 + KEY], name; jne MISS
+     RG = [r10 + KEY + 8]
+     (where there are lazy imports: cmp [RG + ob_type], proxy type; je MISS)
+     incref RG; jmp DONE
+   MISS: rdi = arg; call miss_glue; RG = rax
+   DONE: test RG, RG
+   Hand-allocated like psyco_inline_load, RG callee-saved, so the
+   compiler's state is the same on both paths and whatever SHAPE and KEY
+   are. */
 DEFINEFN
 vinfo_t *
 psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,

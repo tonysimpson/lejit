@@ -17,6 +17,7 @@
 #include "punicodeobject.h"
 #include "../psyfunc.h"
 /* for plist_getitem */
+#include "../initialize.h"
 
 static vinfo_t *
 new_iter(PsycoObject *po, vinfo_t *seq, PyTypeObject *tp)

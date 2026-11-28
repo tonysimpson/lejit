@@ -17,6 +17,7 @@
 #include "punicodeobject.h"
 #include "psliceobject.h"
 #include "../pycodegen.h"
+#include "../initialize.h"
 
 /***************************************************************/
 /* virtual short lists.                                        */

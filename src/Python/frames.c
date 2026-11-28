@@ -80,6 +80,7 @@
 #include "../processor.h"
 #include "../mechanisms/recursion.h"
 #include "../segments.h"
+#include "../initialize.h"
 /* after Python.h, for _GNU_SOURCE: ucontext_t's REG_* */
 #define UNW_LOCAL_ONLY
 #include <dlfcn.h>

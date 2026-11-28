@@ -67,6 +67,7 @@
 
 #include "pycinternal.h"
 #include <ipyencoding.h>
+#include "../initialize.h"
 
 /* C API calls that some CPython versions don't export: the function where
    libpython exports it, else a copy of CPython's or a public call that

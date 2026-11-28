@@ -9,6 +9,7 @@
  * refuses constant tuples longer than CT_TUPLE_LOAD_SIZE_LIMIT).
  */
 #include "ptupleobject.h"
+#include "../initialize.h"
 
 /***************************************************************/
 /***   Virtual tuples                                        ***/

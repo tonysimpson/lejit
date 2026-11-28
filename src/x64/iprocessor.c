@@ -12,6 +12,7 @@
 #include "../processor.h"
 #include "iencoding.h"
 #include "ipyencoding.h"
+#include "iinitialize.h"
 
 typedef PyObject *(*glue_run_code_fn)(code_t *code_target, long *stack_end,
                                       long *initial_stack,
@@ -101,7 +102,7 @@ typedef char (*psyco_int_mul_ovf_fn)(long a, long b);
 
 DEFINEVAR psyco_int_mul_ovf_fn psyco_int_mul_ovf;
 
-void
+static void
 write_psyco_int_mul_ovf(PsycoObject *po)
 {
     BEGIN_CODE

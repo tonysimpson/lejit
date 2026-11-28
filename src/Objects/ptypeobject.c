@@ -34,6 +34,7 @@
 #include "ptypeobject.h"
 #include "pfuncobject.h"
 #include "ptupleobject.h"
+#include "../initialize.h"
 
 /* the slot functions, from probe_slots; NULL if not found */
 typedef struct {
