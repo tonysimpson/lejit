@@ -742,6 +742,18 @@ in_regions(code_t *p)
     return false;
 }
 
+DEFINEFN void
+le_patch_check(void *at, size_t size)
+{
+    code_t *p = (code_t *)at;
+    int k;
+    if (!in_regions(p) || !in_regions(p + size - 1))
+        Py_FatalError("psyco: patching outside code");
+    for (k = 0; k < nold; k++)
+        if (old[k].start < p + size && p < old[k].end)
+            Py_FatalError("psyco: patching an old copy of moved code");
+}
+
 #define NOTE_SIZE(x) ((x)->kind == LE_RELOC_WORD ? 8 : 4)
 
 /* the new copies, sorted */

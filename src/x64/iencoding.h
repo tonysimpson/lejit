@@ -11,8 +11,8 @@
  *  - Values are addressed relative to RSP using po->stack_depth. The
  * *_EBP_BASE names are i386 leftovers.
  *  - Any emitter that clobbers the flags must call NEED_CC* first.
- *  - ONLY_UPDATING=1 re-emits an instruction in place, writing only the
- *    UPDATABLE_* fields (this is how code is patched).
+ *  - Code already written is patched only through le_patch_rel32 and
+ *    le_patch_word.
  *  - Many macros are bare statement sequences (no do/while), and the asserts
  *    here only compile because CPython builds with -DNDEBUG.
  * Emitters marked '@asm:' are checked against GNU as by
@@ -297,7 +297,6 @@ psyco_code_far_jump(code_t *end, code_t *target);
 #define SIZE_OF_FAR_JUMP_ANYWHERE 14
 EXTERNFN code_t *
 psyco_write_far_jump(code_t *code, code_t *target);
-#define ONLY_UPDATING 0 /* redefine to 1 when updating code */
 #define REX_64_REG_RM(reg, rm) (0x48 | (reg > 7 ? 4 : 0) | (rm > 7 ? 1 : 0))
 #define MODRM_GENERAL(type_code, reg, rm) \
     (type_code | ((HW_REG(reg) & 0x7) << 3) | (HW_REG(rm) & 0x7))
@@ -308,9 +307,7 @@ psyco_write_far_jump(code_t *code, code_t *target);
             fprintf(stderr, "Bad value for 8bit %ld %s:%d\n", (long)(immed), \
                     __FILE__, __LINE__);                                     \
         }                                                                    \
-        if (!ONLY_UPDATING) {                                                \
-            *code = (code_t)(immed);                                         \
-        }                                                                    \
+        *code = (code_t)(immed);                                             \
         code += 1;                                                           \
     } while (0)
 #define WRITE_16BIT(immed)                                                    \
@@ -319,9 +316,7 @@ psyco_write_far_jump(code_t *code, code_t *target);
             fprintf(stderr, "Bad value for 16bit %ld %s:%d\n", (long)(immed), \
                     __FILE__, __LINE__);                                      \
         }                                                                     \
-        if (!ONLY_UPDATING) {                                                 \
-            *(word_t *)code = (word_t)(immed);                                \
-        }                                                                     \
+        *(word_t *)code = (word_t)(immed);                                    \
         code += sizeof(word_t);                                               \
     } while (0)
 #define WRITE_32BIT(immed)                                                    \
@@ -330,17 +325,13 @@ psyco_write_far_jump(code_t *code, code_t *target);
             fprintf(stderr, "Bad value for 32bit %ld %s:%d\n", (long)(immed), \
                     __FILE__, __LINE__);                                      \
         }                                                                     \
-        if (!ONLY_UPDATING) {                                                 \
-            *(dword_t *)code = (dword_t)(immed);                              \
-        }                                                                     \
+        *(dword_t *)code = (dword_t)(immed);                                  \
         code += sizeof(dword_t);                                              \
     } while (0)
-#define WRITE_64BIT(immed)                       \
-    do {                                         \
-        if (!ONLY_UPDATING) {                    \
-            *(qword_t *)code = (qword_t)(immed); \
-        }                                        \
-        code += sizeof(qword_t);                 \
+#define WRITE_64BIT(immed)                   \
+    do {                                     \
+        *(qword_t *)code = (qword_t)(immed); \
+        code += sizeof(qword_t);             \
     } while (0)
 #define UPDATABLE_WRITE_8BIT(immed) \
     do {                            \
@@ -357,29 +348,23 @@ psyco_write_far_jump(code_t *code, code_t *target);
         *(qword_t *)code = (qword_t)(immed); \
         code += sizeof(qword_t);             \
     } while (0)
-#define WRITE_1(b1)           \
-    do {                      \
-        if (!ONLY_UPDATING) { \
-            code[0] = b1;     \
-        }                     \
-        code += 1;            \
+#define WRITE_1(b1)   \
+    do {              \
+        code[0] = b1; \
+        code += 1;    \
     } while (0)
-#define WRITE_2(b1, b2)       \
-    do {                      \
-        if (!ONLY_UPDATING) { \
-            code[0] = b1;     \
-            code[1] = b2;     \
-        }                     \
-        code += 2;            \
+#define WRITE_2(b1, b2) \
+    do {                \
+        code[0] = b1;   \
+        code[1] = b2;   \
+        code += 2;      \
     } while (0)
 #define WRITE_4(b1, b2, b3, b4) \
     do {                        \
-        if (!ONLY_UPDATING) {   \
-            code[0] = b1;       \
-            code[1] = b2;       \
-            code[2] = b3;       \
-            code[3] = b4;       \
-        }                       \
+        code[0] = b1;           \
+        code[1] = b2;           \
+        code[2] = b3;           \
+        code[3] = b4;           \
         code += 4;              \
     } while (0)
 /* Common Instructions:
@@ -1848,11 +1833,24 @@ psyco_xmm_may_call(PsycoObject *po);
                            (code_t *)(addr));                      \
     } while (0)
 
-#define CHANGE_JUMP_TO(addr)                                              \
-    do {                                                                  \
-        le_trace_jump_cond_update((code_t *)(code - 6), (code_t *)(code), \
-                                  (code_t *)(addr));                      \
-        *(dword_t *)(code - 4) = REL32(code, addr);                       \
+/* Patching code already written: the rel32 of the jump or call ending at
+   'end' is pointed at 'target' (through a far jump where it is out of
+   reach), and the field '*at' of code (an immediate, a displacement, a
+   byte) is given 'value'. Checked builds stop at a field in no code, or in
+   an old copy of moved code, which a pointer to code not noted still
+   points to (codemanager.c:le_patch_check). */
+PSY_INLINE void
+le_patch_rel32(code_t *end, code_t *target)
+{
+    le_patch_check(end - 4, 4);
+    le_trace_patch_rel32(end, target);
+    *(dword_t *)(end - 4) = REL32(end, target);
+}
+#define le_patch_word(at, value)                          \
+    do {                                                  \
+        le_patch_check((void *)(at), sizeof(*(at)));      \
+        le_trace_patch_word((void *)(at), (long)(value)); \
+        *(at) = (value);                                  \
     } while (0)
 
 #define SIZE_OF_FAR_JUMP 5

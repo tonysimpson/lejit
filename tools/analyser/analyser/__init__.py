@@ -225,7 +225,6 @@ class SimpleExecutionTracer:
         #self.db.add_breakpoint('le_trace_jump', self._le_trace_jump)
         #self.db.add_breakpoint('le_trace_jump_reg', self._le_trace_jump_reg)
         #self.db.add_breakpoint('le_trace_jump_cond', self._le_trace_jump_cond)
-        #self.db.add_breakpoint('le_trace_jump_cond_update', self._le_trace_jump_cond)
         #self.db.add_breakpoint('le_trace_call', self._le_trace_call)
         #self.db.add_breakpoint('le_trace_call_reg', self._le_trace_call_reg)
         #self.db.add_breakpoint('le_trace_return', self._le_trace_return)

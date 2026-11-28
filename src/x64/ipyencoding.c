@@ -1616,28 +1616,26 @@ psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
     extra_assert(code == end);
     /* the start goes to the guard, over the rest of the room */
     code = patch->start;
-    if (at != code) {
-        le_trace_begin_simple_code(code);
-        if (at - code >= SIZE_OF_FAR_JUMP || end != patch->end)
-            JUMP_TO(at);
-        else if (at - code >= 2) {
-            le_trace_jump(code, at);
-            WRITE_2(0xEB, (code_t)(at - (code + 2)));
-        }
-        else
-            WRITE_1(0x90); /* nop */
-        le_trace_end_simple_code(code);
+    if (at - code >= SIZE_OF_FAR_JUMP || end != patch->end) {
+        le_patch_word(code, 0xE9); /* jmp rel32 */
+        le_patch_rel32(code + SIZE_OF_FAR_JUMP, at);
     }
+    else if (at - code >= 2) {
+        le_patch_word(code, 0xEB); /* jmp rel8 */
+        le_patch_word(code + 1, (code_t)(at - (code + 2)));
+    }
+    else if (at != code)
+        le_patch_word(code, 0x90); /* nop */
 }
 
 DEFINEFN
 void
 psyco_global_guard_move(global_patch_t *entry, long shape, long offset)
 {
-    *entry->at_shape = (shape_imm_t)shape;
-    *entry->at_key = (dword_t)offset;
+    le_patch_word(entry->at_shape, (shape_imm_t)shape);
+    le_patch_word(entry->at_key, (dword_t)offset);
     if (entry->at_value != NULL)
-        *entry->at_value = (dword_t)(offset + sizeof(PyObject *));
+        le_patch_word(entry->at_value, (dword_t)(offset + sizeof(PyObject *)));
 }
 
 /*   mov r10, globals; mov r10, [r10 + ma_keys]
