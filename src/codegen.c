@@ -1108,6 +1108,25 @@ integer_urshift_i(PsycoObject *po, vinfo_t *v1, long counter)
     }
 }
 
+DEFINEFN
+vinfo_t *
+integer_extend(PsycoObject *po, vinfo_t *v, int size, bool is_signed)
+{
+    vinfo_t *t, *r;
+    int shift = 64 - 8 * size;
+    if (size == 8) {
+        vinfo_incref(v);
+        return v;
+    }
+    t = integer_lshift_i(po, v, shift);
+    if (t == NULL)
+        return NULL;
+    r = is_signed ? integer_rshift_i(po, t, shift)
+                  : integer_urshift_i(po, t, shift);
+    vinfo_decref(t, po);
+    return r;
+}
+
 /* DEFINEFN */
 /* vinfo_t* integer_lshift(PsycoObject* po, vinfo_t* v1, vinfo_t* v2) */
 /* { */

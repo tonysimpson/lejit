@@ -525,26 +525,6 @@ data_pointer(PsycoObject *po, vinfo_t *v)
     return load_word(po, v, offsetof(le_cfuncptr_t, b_ptr), 8, true);
 }
 
-/* the low 'size' bytes of word v, sign- or zero-extended, as libffi
-   passes and returns them */
-static vinfo_t *
-extend(PsycoObject *po, vinfo_t *v, int size, bool is_signed)
-{
-    vinfo_t *t, *r;
-    int shift = 64 - 8 * size;
-    if (size == 8) {
-        vinfo_incref(v);
-        return v;
-    }
-    t = integer_lshift_i(po, v, shift);
-    if (t == NULL)
-        return NULL;
-    r = is_signed ? integer_rshift_i(po, t, shift)
-                  : integer_urshift_i(po, t, shift);
-    vinfo_decref(t, po);
-    return r;
-}
-
 static unsigned long long
 cimpl_int_mask(PyObject *o)
 {
@@ -578,14 +558,7 @@ int_word(PsycoObject *po, vinfo_t *v, bool fits, vinfo_t **pw)
 {
     vinfo_t *f;
     condition_code_t cc;
-    int r;
-    if (PsycoLong_IsVirtual(v)) {
-        /* a C long */
-        *pw = v->array->items[iLONG_VALUE];
-        vinfo_incref(*pw);
-        return 1;
-    }
-    r = PsycoLong_MediumValue(po, v, pw);
+    int r = PsycoLong_Word(po, v, pw);
     if (r != 0)
         return r;
     /* more than one digit */
@@ -741,7 +714,7 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
             r = int_word(po, v, false, &w);
             if (r != 1)
                 return r;
-            *pw = extend(po, w, t.size, t.is_signed);
+            *pw = integer_extend(po, w, t.size, t.is_signed);
             vinfo_decref(w, po);
             return *pw == NULL ? -1 : 1;
         }
@@ -767,18 +740,12 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
             /* bool_set: the int's truth; one of more than one digit is
                never 0 */
             condition_code_t cc;
-            if (PsycoLong_IsVirtual(v)) {
-                w = v->array->items[iLONG_VALUE];
-                vinfo_incref(w);
-            }
-            else {
-                r = PsycoLong_MediumValue(po, v, &w);
-                if (r < 0)
-                    return r;
-                if (r == 0) {
-                    *pw = vinfo_new(CompileTime_New(1));
-                    return 1;
-                }
+            r = PsycoLong_Word(po, v, &w);
+            if (r < 0)
+                return r;
+            if (r == 0) {
+                *pw = vinfo_new(CompileTime_New(1));
+                return 1;
             }
             cc = integer_non_null(po, w);
             vinfo_decref(w, po);
@@ -814,7 +781,7 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
         r = int_word(po, v, true, &w);
         if (r != 1)
             return r;
-        *pw = extend(po, w, 4, true);
+        *pw = integer_extend(po, w, 4, true);
         vinfo_decref(w, po);
         return *pw == NULL ? -1 : 1;
     }
@@ -1378,7 +1345,7 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
         }
         case K_BOOL: {
             /* bool_get: the byte's truth */
-            vinfo_t *x = extend(po, r, 1, false), *o;
+            vinfo_t *x = integer_extend(po, r, 1, false), *o;
             vinfo_decref(r, po);
             if (x == NULL)
                 return NULL;
@@ -1404,7 +1371,7 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
             return o;
         }
         default: {
-            vinfo_t *x = extend(po, r, rt.size, rt.is_signed);
+            vinfo_t *x = integer_extend(po, r, rt.size, rt.is_signed);
             vinfo_decref(r, po);
             if (x == NULL)
                 return NULL;

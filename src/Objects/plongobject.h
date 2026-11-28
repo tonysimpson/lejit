@@ -61,6 +61,11 @@ PsycoLong_FROM_WORD(vinfo_t *vlong)
    in *pval: 1; 0 if it isn't one digit; -1 on error or promotion */
 EXTERNFN int
 PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v, vinfo_t **pval);
+/* the value of an int known to be one as a word, a new reference in *pw:
+   a virtual int's word (any C long), or a real int's MEDIUM_VALUE. 1; 0 on
+   the path where it has more than one digit; -1 on error or promotion */
+EXTERNFN int
+PsycoLong_Word(PsycoObject *po, vinfo_t *v, vinfo_t **pw);
 /* a new reference to a word with the sign of the int: a virtual int's
    word, a real int's ob_size (or, where ints have an lv_tag, 1, 0 or -1);
    NULL on error */

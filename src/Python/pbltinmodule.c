@@ -625,29 +625,14 @@ DEFINEFN
 vinfo_t *
 PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
 {
-    vinfo_t *x;
     PyTypeObject *tp;
     int r, levels = 0;
     /* isinstance_known_c never folds for a heap type, so only a static
        type is promoted: a constant heap type would keep the class alive, and a
        class made per call would compile a new path each time */
-    if (is_compiletime(vobj->source) && !Psyco_ConstantClassMutable(vobj)) {
-        tp = Py_TYPE((PyObject *)CompileTime_Get(vobj->source)->value);
-        r = 1;
-    }
-    else {
-        x = psyco_get_const(po, vobj, OB_type);
-        if (x == NULL)
-            return NULL;
-        r = psyco_atcompiletime_static_type(po, x, (PyObject **)&tp);
-        if (r < 0)
-            return NULL;
-        /* not a static type: the load is flagged megamorphic, which would
-           keep the object's attributes from promoting its type; forgotten,
-           their next use loads it again */
-        if (r == 0 && is_runtime(vobj->source))
-            psyco_forget_field(po, vobj, OB_type);
-    }
+    r = Psyco_NeedStaticType(po, vobj, &tp);
+    if (r < 0)
+        return NULL;
     if (r == 0)
         r = -1;
     else if (!isinstance_known_v(po, tp, vcls, 0, &r, &levels))
@@ -685,11 +670,6 @@ sum_int_word(PsycoObject *po, vinfo_t *v, vinfo_t **pw)
 {
     vinfo_t *fits;
     int t;
-    if (PsycoLong_IsVirtual(v)) {
-        *pw = vinfo_getitem(v, iLONG_VALUE);
-        vinfo_incref(*pw);
-        return 1;
-    }
     if (is_compiletime(v->source)) {
         int overflow;
         long w = PyLong_AsLongAndOverflow(
@@ -699,7 +679,7 @@ sum_int_word(PsycoObject *po, vinfo_t *v, vinfo_t **pw)
         *pw = vinfo_new(CompileTime_New(w));
         return 1;
     }
-    t = PsycoLong_MediumValue(po, v, pw);
+    t = PsycoLong_Word(po, v, pw);
     if (t != 0)
         return t;
     fits = psyco_generic_call(

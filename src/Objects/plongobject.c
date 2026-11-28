@@ -130,6 +130,17 @@ PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
     return plong_medium_value(po, v, pval);
 }
 
+DEFINEFN int
+PsycoLong_Word(PsycoObject *po, vinfo_t *v, vinfo_t **pw)
+{
+    if (PsycoLong_IsVirtual(v)) {
+        *pw = v->array->items[iLONG_VALUE];
+        vinfo_incref(*pw);
+        return 1;
+    }
+    return plong_medium_value(po, v, pw);
+}
+
 DEFINEFN vinfo_t *
 PsycoLong_Sign(PsycoObject *po, vinfo_t *v)
 {

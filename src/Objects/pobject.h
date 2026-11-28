@@ -229,6 +229,11 @@ Psyco_VerifyType(PsycoObject *po, vinfo_t *vi, PyTypeObject *tp)
    (pobject.c) */
 EXTERNFN int
 Psyco_NeedTypeMega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp);
+/* The type of 'obj' in *tp if it is a static type, promoted: 1; 0 for
+   any other, so a site that meets objects of many classes doesn't compile
+   for each; -1 on error or promotion */
+EXTERNFN int
+Psyco_NeedStaticType(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp);
 /* Return the type that the object is known to be of, or NULL if unknown.
    Never fails. */
 EXTERNFN PyTypeObject *
