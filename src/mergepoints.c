@@ -396,7 +396,8 @@ _bound_blocks(const df_t *df, const uint64_t *g, const uint64_t *p,
    zero-argument super() reads it (psuper_noargs). Nor is a local that is
    also a cell, which the *_DEREF instructions read. */
 static void
-_find_dead_locals(PyCodeObject *co, co_report_t **reportp)
+_find_dead_locals(PyCodeObject *co, const le_instr_t *decoded, int ndecoded,
+                  co_report_t **reportp)
 {
     co_report_t *report = *reportp;
     le_code_t c = le_code(co);
@@ -445,9 +446,9 @@ _find_dead_locals(PyCodeObject *co, co_report_t **reportp)
         op[i] = -1;
         block_of[i] = -1;
     }
-    for (i = 0; i < n;) {
+    for (k = 0, i = 0; k < ndecoded; k++) {
         Py_ssize_t start = i;
-        le_instr_t in = le_instr(c, (int)i * LE_UNIT);
+        le_instr_t in = decoded[k];
         int o = in.op, j, f = le_op_flags(o);
         i = in.next / LE_UNIT;
         j = in.target >= 0 ? in.target / LE_UNIT : -1;
@@ -680,7 +681,8 @@ done:
 /* NULL with *bad set: a jump to no instruction's start, which LeJIT doesn't
    compile (a wrong unit would be a jump to the wrong place) */
 static co_report_t *
-_find_merge_points(PyCodeObject *co, int *bad)
+_find_merge_points(PyCodeObject *co, const le_instr_t *decoded, int ndecoded,
+                   int *bad)
 {
     le_code_t c = le_code(co);
     le_instr_t in;
@@ -689,7 +691,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     Py_ssize_t mergepoint_count = 0;
     Py_ssize_t mergepoint_index = 0;
     co_report_t *report;
-    int flags = 0;
+    int k, flags = 0;
     int weight = 0, loop_block = 0;
     Py_ssize_t entry_count_index = -1;
     Py_ssize_t entry_count_len = end_unit + 1;
@@ -706,12 +708,12 @@ _find_merge_points(PyCodeObject *co, int *bad)
     is_loop_head = is_target + entry_count_len;
 
     entry_count[0] = 2; /* start of code is always a merge point */
-    while (next_unit < end_unit) {
+    for (k = 0; k < ndecoded; k++) {
         /* an instruction with EXTENDED_ARG prefixes is one unit starting at
            the first prefix: that is where jumps land, and pycompiler.c
            handles it in one step */
         entry_count_index = next_unit;
-        in = le_instr(c, (int)next_unit * LE_UNIT);
+        in = decoded[k];
         opcode = in.op;
         next_unit = in.next / LE_UNIT;
         is_start[entry_count_index] = 1;
@@ -843,7 +845,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     }
     report->mergepoints[mergepoint_count].bytecode_position = -1;
     PyMem_Free(entry_count);
-    _find_dead_locals(co, &report);
+    _find_dead_locals(co, decoded, ndecoded, &report);
     return report;
 }
 
@@ -876,8 +878,9 @@ static PyObject *
 _build_merge_points(PyCodeObject *co)
 {
     le_code_t c;
-    int pos, opcode = -1, oparg;
+    int pos, opcode = -1, oparg, ndecoded = 0;
     co_report_t *report;
+    le_instr_t *decoded = NULL; /* each instruction, in order */
     int reads_class, resumable, bad = 0;
 
     if (le_code_prepare(co) < 0)
@@ -903,8 +906,11 @@ _build_merge_points(PyCodeObject *co)
     reads_class = psyco_class_cell(co) >= 0;
 
     c = le_code(co);
+    decoded = PyMem_Malloc((c.size / LE_UNIT + 1) * sizeof(le_instr_t));
+    if (decoded == NULL)
+        return NULL;
     for (pos = 0; pos < c.size;) {
-        le_instr_t in = le_instr(c, pos);
+        le_instr_t in = decoded[ndecoded++] = le_instr(c, pos);
         int prev = opcode;
         opcode = in.op;
         oparg = in.arg;
@@ -940,7 +946,9 @@ _build_merge_points(PyCodeObject *co)
             goto not_ok;
     }
 
-    report = _find_merge_points(co, &bad);
+    report = _find_merge_points(co, decoded, ndecoded, &bad);
+    PyMem_Free(decoded);
+    decoded = NULL;
     if (bad)
         goto not_ok;
     if (report == NULL)
@@ -969,7 +977,7 @@ _build_merge_points(PyCodeObject *co)
         return capsule;
     }
 not_ok:
-
+    PyMem_Free(decoded);
     /*printf("Unsupported bytecode %d for %s\n", opcode,
            PyUnicode_AsUTF8(co->co_name));*/
     Py_RETURN_NONE;
