@@ -1090,14 +1090,11 @@ cimpl_new_frame(PyCodeObject *code, PyObject *globals, int lasti, int lineno,
        Otherwise a new one, holding the frame's function where LeJIT knows
        it (psyco_build_pyframe), whose f_back is the entry's over it
        (psyco_frame_link_callee). */
-    PyFrameObject *result = existing_frame(code, word);
-    if (result != NULL) {
+    PyFrameObject *result = NULL;
+    if (word != NULL && psyco_running_real_frame(code) == NULL)
+        result = psyco_innermost_view(code, globals, word); /* found or made */
+    if (result == NULL && (result = existing_frame(code, word)) != NULL)
         Py_INCREF(result);
-        set_frame_place(result, lasti, lineno);
-        return result;
-    }
-    if (word != NULL)
-        result = psyco_innermost_view(code, globals, word);
     if (result == NULL)
         result =
             psyco_build_pyframe(code, globals, psyco_innermost_function(code));
