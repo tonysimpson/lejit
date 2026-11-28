@@ -378,18 +378,15 @@ PsycoCtypes_IsFunction(PyTypeObject *tp, ternaryfunc call)
         if (modules == NULL || !PyDict_Check(modules))
             return false;
         mod = PyDict_GetItemString(modules, "_ctypes");
-        if (mod == NULL)
+        if (mod == NULL || !PyModule_Check(mod))
             return false;
-        base = PyObject_GetAttrString(mod, "CFuncPtr");
-        if (base == NULL) {
-            PyErr_Clear();
-            return false;
-        }
-        candidate = PyType_Check(base) &&
+        /* from the module's dict: a getattr would leave the name, made
+           afresh on every call, in CPython's type cache */
+        base = PyDict_GetItemString(PyModule_GetDict(mod), "CFuncPtr");
+        candidate = base != NULL && PyType_Check(base) &&
                     call == ((PyTypeObject *)base)->tp_call &&
                     tp->tp_new == ((PyTypeObject *)base)->tp_new &&
                     tp->tp_init == ((PyTypeObject *)base)->tp_init;
-        Py_DECREF(base);
         if (!candidate)
             return false;
         ctypes_state = ctypes_probe(tp);
@@ -1037,13 +1034,13 @@ PsycoCtypes_Byref(PsycoObject *po, PyMethodDef *ml, vinfo_t *vargs)
         if (modules == NULL || !PyDict_Check(modules))
             return NULL;
         mod = PyDict_GetItemString(modules, "ctypes");
-        if (mod == NULL)
+        if (mod == NULL || !PyModule_Check(mod))
             return NULL;
-        f = PyObject_GetAttrString(mod, "memmove");
-        if (f == NULL) {
-            PyErr_Clear();
+        /* from the module's dict, as for CFuncPtr */
+        f = PyDict_GetItemString(PyModule_GetDict(mod), "memmove");
+        if (f == NULL)
             return NULL;
-        }
+        Py_INCREF(f); /* the probe runs Python */
         PsycoCtypes_IsFunction(Py_TYPE(f), Py_TYPE(f)->tp_call);
         Py_DECREF(f);
     }
