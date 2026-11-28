@@ -28,9 +28,6 @@ EXTERNFN int
 le_code_instrument(le_frame_t *f);
 #endif
 
-EXTERNFN PyObject *
-psyco_get_globals(void);
-
 /* called by psyco_return_barrier as a compiled callee whose frame object
    was kept returns, 'sp' one word below its slot: lets the frame go and
    gives the call's real return address */
@@ -163,7 +160,6 @@ psyco_frame_popped_from(PyObject *o, PyCodeObject *co, le_frame_t *caller);
 #endif
 EXTERNFN PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack);
-/* PyObject* psyco_get_locals(void); this one implemented in psyco.c */
 
 /* Where a compiled frame's locals (co_nlocals, then cells and frees)
    are during a call it makes that may run Python: in its slot, as a note

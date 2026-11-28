@@ -23,9 +23,3 @@ PsycoBool_FromZeroOrOne(PsycoObject *po, vinfo_t *v)
     vinfo_incref(v);
     return PsycoBool_FROM_WORD(v);
 }
-
-INITIALIZATIONFN
-void
-psy_boolobject_init(void)
-{
-}

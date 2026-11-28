@@ -172,8 +172,6 @@ msg('MAPPING_SIZE_NOT_MAPPING', "PyMapping_Size of a sequence that isn't a mappi
     [F('%.200s', 'collections.deque')])
 msg('MAPPING_NO_LEN', "PyMapping_Size of an object without a length",
     'TypeError', 'capi("PyMapping_Size", "ssize", "obj")(args[0]())', [T()])
-msg('NO_LEN', "len() of an object that hasn't one", 'TypeError',
-    'len(args[0]())', [T()])
 msg('BAD_ABS', "abs() of an object that doesn't support it", 'TypeError',
     'abs(args[0]())', [T()])
 msg('BAD_INVERT', "~ of an object that doesn't support it", 'TypeError',
@@ -201,14 +199,6 @@ msg('SEQ_NO_SET', 'PySequence_SetItem of an object without items', 'TypeError',
     [T()])
 msg('SEQ_NO_DEL', 'PySequence_DelItem of an object without items', 'TypeError',
     'capi("PySequence_DelItem", "int", "obj", "ssize")(args[0](), 0)', [T()])
-msg('SEQ_GET_SLICE', 'PySequence_GetSlice of an object without slices',
-    'TypeError',
-    'capi("PySequence_GetSlice", "obj", "obj", "ssize", "ssize")(args[0](), 0, 1)',
-    [T()])
-msg('SEQ_SET_SLICE', 'PySequence_SetSlice of an object without slices',
-    'TypeError',
-    'capi("PySequence_SetSlice", "int", "obj", "ssize", "ssize", "obj")('
-    'args[0](), 0, 1, [])', [T()])
 msg('INDEX_GET_NOT_INT', 'a sequence (no mapping) subscripted by a non-integer',
     'TypeError', 'import collections; collections.deque()[args[0]()]', [T()])
 msg('INDEX_SET_NOT_INT', 'a sequence (no mapping) assigned at a non-integer',

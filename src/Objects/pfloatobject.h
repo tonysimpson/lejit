@@ -6,17 +6,12 @@
 #define _PSY_FLOATOBJECT_H
 
 #include <iencoding.h>
-#if HAVE_FP_FN_CALLS /* disable float optimizations if functions with \
-                        float/double arguments are not implemented    \
-                        in the back-end */
 #include "pobject.h"
 #include "pabstract.h"
 
 #define FLOAT_ob_fval DEF_FIELD(PyFloatObject, ob_fval, OB_type)
 #define iFLOAT_OB_FVAL FIELD_INDEX(FLOAT_ob_fval)
 #define FLOAT_TOTAL FIELDS_TOTAL(FLOAT_ob_fval)
-
-#define PsycoFloat_Check(tp) PyType_TypeCheck(tp, &PyFloat_Type)
 
 /***************************************************************/
 /***   Virtual-time object builder                           ***/
@@ -97,7 +92,5 @@ cimpl_fp_from_long(long value, double* result);
 EXTERNFN void
 cimpl_fp_from_float(float value, double* result);
 */
-
-#endif /* HAVE_FP_FN_CALLS */
 
 #endif /* _PSY_FLOATOBJECT_H */

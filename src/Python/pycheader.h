@@ -99,7 +99,6 @@
 #define LE_BODY_FLAGS (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)
 #define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + le_code_nlocalsplus(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
-#define GENEXPR_SLOT_COMP(co) (GENEXPR_SLOT_MODE(co) + 2)
 
 #define LOC_CONTINUATION (po->vlocals.items[INDEX_LOC_CONTINUATION])
 #define LOC_GLOBALS (po->vlocals.items[INDEX_LOC_GLOBALS])

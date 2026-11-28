@@ -40,9 +40,6 @@ psyco_emit_header(PsycoObject *po, int nframelocal)
             po->stack_depth - sizeof(long) * j, false, false));
 }
 
-#define INITIAL_STACK_DEPTH_INUSE \
-    (INITIAL_STACK_DEPTH + (!NEED_STACK_FRAME_HACK) * sizeof(long))
-
 DEFINEFN
 code_t *
 psyco_finish_return(PsycoObject *po, Source retval)
@@ -60,7 +57,6 @@ psyco_finish_return(PsycoObject *po, Source retval)
 /***************************************************************/
 /*** Condition Codes (a.k.a. the processor 'flags' register) ***/
 
-#if HAVE_CCREG
 static source_virtual_t cc_functions_table[CC_TOTAL];
 
 DEFINEFN
@@ -126,13 +122,6 @@ psyco_vinfo_condition(PsycoObject *po, condition_code_t cc)
 }
 
 DEFINEFN
-VirtualTimeSource
-psyco_source_condition(condition_code_t cc)
-{
-    return VirtualTime_New(cc_functions_table + (int)cc);
-}
-
-DEFINEFN
 condition_code_t
 psyco_vsource_cc(Source source)
 {
@@ -172,12 +161,6 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true)
         }
     }
 }
-
-#else /* if !HAVE_CCREG */
-
-#error "codegen.c needs HAVE_CCREG, which the x64 backend defines"
-
-#endif /* HAVE_CCREG */
 
 /*****************************************************************/
 /***   run-time switches                                       ***/
@@ -963,18 +946,6 @@ integer_mul(PsycoObject *po, vinfo_t *v1, vinfo_t *v2, bool ovf)
 
 DEFINEFN
 vinfo_t *
-integer_mul_i(PsycoObject *po, vinfo_t *v1, long value2)
-{
-    GENERIC_BINARY_HEADER_i;
-    if (is_compiletime(v1->source)) {
-        long c = CompileTime_Get(v1->source)->value * value2;
-        return vinfo_new(CompileTime_New(c));
-    }
-    return int_mul_i(po, v1, value2, false);
-}
-
-DEFINEFN
-vinfo_t *
 integer_lshift(PsycoObject *po, vinfo_t *v1, vinfo_t *v2)
 {
     condition_code_t cc;
@@ -1137,34 +1108,11 @@ integer_urshift_i(PsycoObject *po, vinfo_t *v1, long counter)
 
 DEFINEFN
 vinfo_t *
-integer_inv(PsycoObject *po, vinfo_t *v1)
-{
-    GENERIC_UNARY_HEADER;
-    GENERIC_UNARY_CT(~a, false, false);
-    return UNARY_INSTR_INV(false, false);
-}
-
-DEFINEFN
-vinfo_t *
 integer_neg(PsycoObject *po, vinfo_t *v1, bool ovf)
 {
     GENERIC_UNARY_HEADER;
     GENERIC_UNARY_CT(-a, ovf, c == (-LONG_MAX - 1));
     return UNARY_INSTR_NEG(ovf, false);
-}
-
-DEFINEFN
-vinfo_t *
-integer_abs(PsycoObject *po, vinfo_t *v1, bool ovf)
-{
-    GENERIC_UNARY_HEADER;
-    if (is_nonneg(v1->source)) {
-        vinfo_incref(v1);
-        return v1;
-    }
-    GENERIC_UNARY_CT(a < 0 ? -a : a, ovf, c == (-LONG_MAX - 1));
-    return UNARY_INSTR_ABS(ovf, true); /* nb. result assumed to be positive,
-                                          which is false in case of overflow */
 }
 
 static condition_code_t
@@ -1387,34 +1335,15 @@ integer_cmp_i(PsycoObject *po, vinfo_t *v1, long value2, int py_op)
         return int_cmp_i(po, v1, value2, py_op);
 }
 
-DEFINEFN
-vinfo_t *
-integer_conditional(PsycoObject *po, condition_code_t cc, long immed_true,
-                    long immed_false)
-{
-    switch ((int)cc) {
-        case (int)CC_ALWAYS_FALSE:
-            return vinfo_new(CompileTime_New(immed_false));
-
-        case (int)CC_ALWAYS_TRUE:
-            return vinfo_new(CompileTime_New(immed_true));
-
-        default:
-            return BINARY_INSTR_COND(cc, immed_true, immed_false);
-    }
-}
-
 INITIALIZATIONFN
 void
 psyco_codegen_init(void)
 {
-#if HAVE_CCREG
     int i;
     for (i = 0; i < CC_TOTAL; i++) {
         /* the condition codes cannot be passed across function calls */
         INIT_SVIRTUAL_NOCALL(cc_functions_table[i], generic_computed_cc, 0);
     }
-#endif
 
     psyco_nonfixed_promotion.header.compute_fn = &computed_promotion;
     psyco_nonfixed_promotion.pflags = 0;

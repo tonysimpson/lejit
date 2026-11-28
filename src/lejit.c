@@ -66,12 +66,6 @@ le_trace_jump(code_t *location, code_t *target)
 
 DEFINEFN
 void
-le_trace_jump_update(code_t *location, code_t *target)
-{
-}
-
-DEFINEFN
-void
 le_trace_jump_reg(code_t *location, int reg_target)
 {
 }
@@ -90,12 +84,6 @@ le_trace_jump_cond_update(code_t *location, code_t *not_taken, code_t *taken)
 
 DEFINEFN
 void
-le_trace_jump_cond_reg(code_t *location, code_t *not_taken, int reg_taken)
-{
-}
-
-DEFINEFN
-void
 le_trace_call(code_t *location, code_t *call_target)
 {
 }
@@ -109,18 +97,6 @@ le_trace_call_reg(code_t *location, int reg_call_target)
 DEFINEFN
 void
 le_trace_return(code_t *location, int stack_adjust)
-{
-}
-
-DEFINEFN
-void
-le_trace_unsupported_opcode(PyCodeObject *co, int bytecode_index)
-{
-}
-
-DEFINEFN
-void
-le_trace_run_fail(PyCodeObject *co, char *reason)
 {
 }
 

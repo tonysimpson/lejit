@@ -35,16 +35,10 @@ compute_cfunction(PsycoObject *po, vinfo_t *methobj)
     if (m_ml == NULL)
         return false;
 
-    /* call PyCFunction_New() */
-#ifdef PyCFunction_New /* Python >= 2.3 introduced PyCFunction_NewEx() */
+    /* call PyCFunction_NewEx() */
     newobj = psyco_generic_call(po, PyCFunction_NewEx,
                                 CfPure | CfCommonNewRefPyObject, "vvl", m_ml,
                                 m_self, NULL);
-#else
-    newobj = psyco_generic_call(po, PyCFunction_New,
-                                CfPure | CfCommonNewRefPyObject, "vv", m_ml,
-                                m_self);
-#endif
     if (newobj == NULL)
         return false;
 

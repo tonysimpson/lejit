@@ -19,8 +19,6 @@
 
 EXTERNFN vinfo_t *
 PsycoList_New(PsycoObject *po, int size, vinfo_t **source);
-EXTERNFN vinfo_t *
-PsycoList_SingletonNew(vinfo_t *vitem);
 EXTERNFN bool
 PsycoList_Append(PsycoObject *po, vinfo_t *v, vinfo_t *vitem);
 /*EXTERNVAR vinfo_t* psyco_empty_list;*/

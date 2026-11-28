@@ -8,8 +8,6 @@
 #include "pabstract.h"
 #include "pobject.h"
 
-#define PsycoLong_Check(tp) PyType_TypeCheck(tp, &PyLong_Type)
-
 /* ob_size is the signed number of digits; ob_digit[0] is only there when
    ob_size != 0 (_PyLong_New(0) allocates no digit). Where ints have an
    lv_tag in its place, there is always a digit. */
@@ -24,7 +22,6 @@ _Static_assert(offsetof(PyLongObject, long_value.lv_tag) ==
 #endif
 #define LONG_ob_digit0 \
     DEF_ARRAY_FIELD(PyLongObject, LE_PyLongObject_digits, FIX_signed_size)
-#define iLONG_OB_DIGIT0 FIELD_INDEX(LONG_ob_digit0)
 /* the value as a machine word: a virtual int's, and a run-time int's once
    read (plongobject.c:plong_medium_value) or kept from when it was virtual;
    not a C field, so it is never read from memory (a field read the virtual

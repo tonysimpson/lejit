@@ -1239,41 +1239,6 @@ unaryinstrgrp(PsycoObject *po, int group, bool ovf, bool nonneg, vinfo_t *v1)
     return new_rtvinfo(po, rg, false, nonneg);
 }
 
-/* XXX assumes RAX is free to trash */
-DEFINEFN
-vinfo_t *
-unaryinstrabs(PsycoObject *po, bool ovf, bool nonneg, vinfo_t *v1)
-{
-    reg_t rg;
-    BEGIN_CODE
-    NEED_CC();
-    if (getreg(v1->source) == REG_NONE) {
-        LOAD_REG_FROM_EBP_BASE(REG_X64_RAX, RUNTIME_STACK(v1));
-    }
-    else {
-        MOV_R_R(REG_X64_RAX, getreg(v1->source));
-    }
-    NEED_FREE_REG_COND(rg, (rg != REG_X64_RAX && rg != REG_X64_RDX &&
-                            rg != getreg(v1->source)));
-    if (REG_NUMBER(po, REG_X64_RDX) != NULL) {
-        MOV_R_R(rg, REG_X64_RDX);
-    }
-    /* ABS RAX */
-    CQO();
-    ADD_R_R(REG_X64_RAX, REG_X64_RDX);
-    XOR_R_R(REG_X64_RAX, REG_X64_RDX);
-    /*     */
-    if (REG_NUMBER(po, REG_X64_RDX) != NULL) {
-        MOV_R_R(REG_X64_RDX, rg);
-    }
-    MOV_R_R(rg, REG_X64_RAX);
-    END_CODE
-    /* if number is negative we overflowed */
-    if (ovf && runtime_condition_f(po, CC_S))
-        return NULL;
-    return new_rtvinfo(po, rg, false, nonneg);
-}
-
 static const condition_code_t direct_results[16] = {
     /*****   signed comparison      **/
     /* Py_LT: */ CC_L,
@@ -1315,22 +1280,6 @@ bininstrcmp(PsycoObject *po, int base_py_op, vinfo_t *v1, vinfo_t *v2)
     COMMON_INSTR_FROM_RT(7, getreg(v1->source), v2->source);
     END_CODE
     return direct_results[base_py_op];
-}
-
-DEFINEFN
-vinfo_t *
-bininstrcond(PsycoObject *po, condition_code_t cc, long immed_true,
-             long immed_false)
-{
-    reg_t rg;
-    BEGIN_CODE
-    NEED_FREE_REG(rg);
-    LOAD_REG_FROM_IMMED(rg, immed_true);
-    BEGIN_SHORT_COND_JUMP(1, cc);
-    LOAD_REG_FROM_IMMED(rg, immed_false);
-    END_SHORT_JUMP(1);
-    END_CODE
-    return new_rtvinfo(po, rg, false, immed_true >= 0 && immed_false >= 0);
 }
 
 DEFINEFN

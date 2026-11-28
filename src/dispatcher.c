@@ -433,12 +433,6 @@ fz_restore_invariant(FrozenPsycoObject *fpo)
 {
 }
 
-DEFINEFN int
-psyco_top_array_count(FrozenPsycoObject *fpo) /*for psyco.c*/
-{
-    return fz_top_array_count(fpo);
-}
-
 /***************************************************************/
 
 /* A snapshot's pyc_data is shared by every snapshot whose frozen pyc_data
@@ -563,9 +557,7 @@ fpo_release(FrozenPsycoObject *fpo)
 static void
 fpo_find_regs_array(vinfo_array_t *source, PsycoObject *po)
 {
-#if HAVE_CCREG
     condition_code_t cc;
-#endif
     int i = source->count;
     while (i--) {
         vinfo_t *a = source->items[i];
@@ -576,12 +568,9 @@ fpo_find_regs_array(vinfo_array_t *source, PsycoObject *po)
                 REG_NUMBER(po, getreg(src)) = a;
             else
 #endif
-#if HAVE_CCREG
                 if ((cc = psyco_vsource_cc(src)) != CC_ALWAYS_FALSE)
                 po->ccregs[INDEX_CC(cc)] = a;
-            else
-#endif
-            { /* nothing */
+            else { /* nothing */
             }
             if (a->array != NullArray)
                 fpo_find_regs_array(a->array, po);
@@ -1518,32 +1507,6 @@ DEFINEFN
 int(runtime_NON_NULL_t)(PsycoObject *po, vinfo_t *vi)
 {
     condition_code_t cc = integer_NON_NULL(po, vi);
-    return cc == CC_ERROR ? -1 : runtime_condition_t(po, cc);
-}
-
-DEFINEFN
-int(runtime_in_bounds)(PsycoObject *po, vinfo_t *vi, long lowbound,
-                       long highbound)
-{
-    condition_code_t cc;
-    if (highbound == LONG_MAX) {
-        if (lowbound == LONG_MIN)
-            return 1;
-        cc = integer_cmp_i(po, vi, lowbound, Py_GE);
-    }
-    else if (lowbound == 0) {
-        cc = integer_cmp_i(po, vi, highbound, Py_LE | COMPARE_UNSIGNED);
-    }
-    else {
-        if (lowbound != LONG_MIN) {
-            cc = integer_cmp_i(po, vi, lowbound, Py_GE);
-            if (cc == CC_ERROR)
-                return -1;
-            if (!runtime_condition_t(po, cc))
-                return 0;
-        }
-        cc = integer_cmp_i(po, vi, highbound, Py_LE);
-    }
     return cc == CC_ERROR ? -1 : runtime_condition_t(po, cc);
 }
 
@@ -3004,19 +2967,13 @@ typedef struct { /* produced at compile time and read by the dispatcher */
 #define QUICK_LOOKUP_PROMOTION_VALUE(fs, value, result) \
     result = lookup_old_promotion_values(fs, value)
 
-#if PROMOTION_FAST_COMMON_CASE
-static
-#else
-PSY_INLINE
-#endif
-    code_t *
-    lookup_old_promotion_values(rt_promotion_t *fs, long value)
+static code_t *
+lookup_old_promotion_values(rt_promotion_t *fs, long value)
 {
     rt_local_buf_t *prevbuf;
     if (fs->local_chained_list == NULL)
         return NULL; /* not found (list is empty) */
 
-#if PROMOTION_FAST_COMMON_CASE
     /* 'fs->local_chained_list' points to the current head
        of the list, which we know is not what we are looking
        for because otherwise the CMP/JE instructions
@@ -3026,11 +2983,6 @@ PSY_INLINE
        cache was somehow out of date.  To cope for that case, see
        the XXX below... */
     /*extra_assert(fs->local_chained_list->key != value);*/
-#else
-    if (fs->local_chained_list->key == value)
-        return (code_t *)(fs->local_chained_list +
-                          1); /* it is the head of the list */
-#endif
 
     prevbuf = fs->local_chained_list;
     while (1) {
@@ -3049,16 +3001,13 @@ PSY_INLINE
         }
         prevbuf = buf;
     }
-#if PROMOTION_FAST_COMMON_CASE
     /* XXX the following condition is normally impossible,
        but see the XXX above. */
     if (fs->local_chained_list->key == value)
         return (code_t *)(fs->local_chained_list + 1);
-#endif
     return NULL;
 }
 
-#if PROMOTION_FAST_COMMON_CASE
 static int quick_lookup_counter = 0;
 #undef QUICK_LOOKUP_PROMOTION_VALUE
 #define QUICK_LOOKUP_PROMOTION_VALUE(fs, value, res)              \
@@ -3085,7 +3034,6 @@ static int quick_lookup_counter = 0;
             res = lookup_old_promotion_values(fs, value);         \
         }                                                         \
     } while (0)
-#endif
 
 /* the values compiled at the site, freed or not; the megamorphic version
    (marker -1) is not one: at a static-type site it is made for the first
@@ -3276,7 +3224,6 @@ detected_megamorphic_body(rt_promotion_t *fs, bool interpret)
     return result;
 }
 
-#if PROMOTION_FAST_COMMON_CASE
 /* The polymorphic inline cache (idispatcher.h). */
 #define CHAIN_ENTRY(fs, i) ((fs)->chain + (i) * PROMOTION_ENTRY_SIZE)
 #define CHAIN_COUNT(fs) ((fs)->ncached > 0 ? (fs)->ncached - 1 : 0)
@@ -3436,17 +3383,6 @@ promotion_cache_forget(rt_promotion_t *fs, long key)
     if (fs->chain != NULL)
         promotion_chain_end(fs);
 }
-#else
-#define promotion_cache_add(fs, value, target) \
-    do {                                       \
-    } while (0)
-#define promotion_cache_forget(fs, key) \
-    do {                                \
-    } while (0)
-#define promotion_cache_fallback(fs, mega) \
-    do {                                   \
-    } while (0)
-#endif
 
 /* NOTE: the following two functions must be as fast as possible, because
    they are called from the run-time code even during normal (non-compiling)
