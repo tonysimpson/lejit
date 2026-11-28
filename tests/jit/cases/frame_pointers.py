@@ -1,11 +1,12 @@
 # Frame-pointer unwinding (perf --call-graph fp, and profilers on CPython
 # builds that keep frame pointers) through compiled code: a C function
-# called from compiled code walks the chain of saved RBP values. Compiled
-# code never changes the RBP its glue from C set, so the walk goes from the
-# compiled code that called it straight into LeJIT's C that ran it, and,
-# where the interpreter's C keeps frame pointers, on into CPython's own
-# frames. Each case gives (whether the C function was called from
-# compiled code, whether the walk got where it should).
+# called from compiled code walks the chain of saved RBP values. Where the
+# interpreter's C keeps frame pointers, compiled code never changes the RBP
+# its glue from C set, so the walk goes from the compiled code that called
+# it straight into LeJIT's C that ran it, and on into CPython's own frames.
+# Elsewhere compiled code allocates RBP and the cases are skipped. Each
+# case gives (whether the C function was called from compiled code,
+# whether the walk got where it should).
 import ctypes
 import hashlib
 import os
@@ -138,6 +139,7 @@ def _build():
 
 
 def _keeps_frame_pointers():
+    # as setup.py:cpython_keeps_frame_pointers decides it
     flags = (sysconfig.get_config_var('CFLAGS') or '').split()
     keep = [f for f in flags if f in ('-fno-omit-frame-pointer',
                                       '-fomit-frame-pointer')]
@@ -145,7 +147,7 @@ def _keeps_frame_pointers():
 
 
 # tests/jit/run.py reads every file here for its CASES, with no __file__
-if '__file__' in globals():
+if '__file__' in globals() and _keeps_frame_pointers():
     _lib = _build()
     _interpreter = _lib.object_of(ctypes.cast(
         ctypes.pythonapi.PyEval_EvalCode, ctypes.c_void_p))
@@ -156,7 +158,7 @@ def _verdict():
     if not _files_set:
         core = sys.modules.get('lejit._core')
         _lib.set_files(core.__file__.encode() if core is not None else None,
-                       _interpreter if _keeps_frame_pointers() else None)
+                       _interpreter)
         _files_set.append(True)
     r = _lib.fp_verdict()
     return (r & 1) != 0, (r & 2) != 0
@@ -192,3 +194,7 @@ CASES = [
     ('walk_in_loop', [(50,)], {'expected': [(True, True)]}),
     ('walk_in_generator', [()], {'expected': [[(True, True), (True, True)]]}),
 ]
+if not _keeps_frame_pointers():
+    for _case in CASES:
+        _case[2]['skip'] = ("CPython's C is built without frame pointers, so"
+                            " compiled code allocates RBP")

@@ -21,13 +21,15 @@
 #include "../vcompiler.h"
 #include "ipyencoding.h"
 
+/* RBP is allocated only where CPython's C doesn't keep it as the frame
+   pointer (LE_KEEPS_FRAME_POINTERS, from setup.py) */
 DEFINEVAR reg_t RegistersLoop[REG_TOTAL] = {
     /* RAX > */ REG_NONE,
     /* RCX > */ REG_NONE,
     /* RDX > */ REG_NONE,
-    /* RBX > */ REG_LOOP_START,
+    /* RBX > */ LE_KEEPS_FRAME_POINTERS ? REG_LOOP_START : REG_X64_RBP,
     /* RSP > */ REG_NONE,
-    /* RBP > */ REG_NONE,
+    /* RBP > */ LE_KEEPS_FRAME_POINTERS ? REG_NONE : REG_LOOP_START,
     /* RSI > */ REG_NONE,
     /* RDI > */ REG_NONE,
     /* R8  > */ REG_NONE,
