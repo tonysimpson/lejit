@@ -26,7 +26,7 @@
  *    compiles a specialised continuation, kept in a move-to-front list and
  *    in the site's polymorphic inline cache (idispatcher.h), with a
  *    megamorphic cut-off after MEGAMORPHIC_MAX values. A promoted value is
- *    held until the code's owner dies; do_promotion_static_type only
+ *    held until the code's owner dies; a static-type site only
  *    specialises on static types and sends anything else to the
  *    megamorphic version.
  *  - Parked states: the state a coding pause or a promotion site compiles
@@ -2977,7 +2977,8 @@ typedef struct { /* produced at compile time and read by the dispatcher */
     parked_state_t state; /* before promotion, and the variable to promote */
 
     rt_local_buf_t *local_chained_list;
-    int forgotten; /* values whose groups were freed (codemanager.h) */
+    int forgotten;        /* values whose groups were freed (codemanager.h) */
+    unsigned char pflags; /* PFlag..., which do_promotion switches on */
 #if LE_CODESTATS
     int cs_site; /* pycompiler.c, psyco_cs_promo_site */
 #endif
@@ -3431,156 +3432,56 @@ promotion_cache_forget(rt_promotion_t *fs, long key)
     } while (0)
 #endif
 
-/* NOTE: the following two functions must be as fast as possible, because
-   they are called from the run-time code even during normal (non-compiling)
-   execution. */
+/* a value the site's inline cache doesn't hold: its code, compiled now if
+   the list has none, unless the site's flags (PFlag...) send it to the
+   megamorphic version. At a static-type site a value that is not a static
+   type goes there without being made a constant; that version is valid for
+   any value, so the cache may point to it even if the object dies and its
+   address is reused. At a fused site a value past MEGAMORPHIC_MAX stops the
+   generator expression's fusing. */
 static code_t *
-do_promotion_long(rt_promotion_t *fs, long value)
+do_promotion(rt_promotion_t *fs, long key)
 {
+    int pflags = fs->pflags;
+    code_t *result;
 #if LE_CODESTATS
     psyco_cs_promo_miss(fs->cs_site);
 #endif
-    /* need a PyObject* key for the local cache dictionary */
-    code_t *result;
-    long key1 = value;
-
-    /* have we already seen this value? */
-    QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
-    if (result == NULL) {
-        /* no -> we must build new code */
-        result = do_promotion_internal(fs, key1, SkFlagFixed);
-    }
-    /* done -> jump to the codebuf */
-    promotion_cache_add(fs, value, result);
-    return result;
-}
-
-static code_t *
-do_promotion_pyobj(rt_promotion_t *fs, PyObject *key)
-{
-#if LE_CODESTATS
-    psyco_cs_promo_miss(fs->cs_site);
-#endif
-    code_t *result;
-    long key1 = (long)key;
-
-    /* have we already seen this value? */
-    QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
-    if (result == NULL) {
-        /* no -> we must build new code */
-        result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
-    }
-    /* done -> jump to the codebuf */
-    promotion_cache_add(fs, key1, result);
-    return result;
-}
-
-PSY_INLINE code_t *
-promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key, bool interpret)
-{
-#if LE_CODESTATS
-    psyco_cs_promo_miss(fs->cs_site);
-#endif
-    code_t *result;
-    long key1 = (long)key;
-
-    /* have we already seen this value? */
-    QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
-    if (result == NULL) {
-        /* no -> did we already promote many objects here? */
-        rt_local_buf_t *megabuf = NULL;
-        if (lookup_count_previous_values(fs, &megabuf) >= MEGAMORPHIC_MAX) {
-            /* yes -> stop specializing */
-            if (megabuf == NULL)
-                result = detected_megamorphic_pyobj_site(fs, interpret);
-            else
-                result = (code_t *)(megabuf +
-                                    1); /* mega version already compiled */
-            promotion_cache_fallback(fs, result);
-            return result;
-        }
-        /* no -> we must build new code */
-        result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
-    }
-    /* done -> jump to the codebuf */
-    promotion_cache_add(fs, key1, result);
-    return result;
-}
-
-/* psyco_fused_pyobj_promotion: as do_promotion_pyobj, and a value past
-   MEGAMORPHIC_MAX stops the generator expression's fusing */
-static code_t *
-do_promotion_pyobj_fused(rt_promotion_t *fs, PyObject *key)
-{
-#if LE_CODESTATS
-    psyco_cs_promo_miss(fs->cs_site);
-#endif
-    code_t *result;
-    long key1 = (long)key;
-
-    QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
+    QUICK_LOOKUP_PROMOTION_VALUE(fs, key, result);
     if (result == NULL) {
         rt_local_buf_t *megabuf = NULL;
-        if (lookup_count_previous_values(fs, &megabuf) >= MEGAMORPHIC_MAX) {
+        bool past_max =
+            (pflags & (PFlagMegamorphic | PFlagFused)) &&
+            lookup_count_previous_values(fs, &megabuf) >= MEGAMORPHIC_MAX;
+        bool not_static_type =
+            (pflags & PFlagStaticType) &&
+            (!PyType_Check((PyObject *)key) ||
+             (((PyTypeObject *)key)->tp_flags & Py_TPFLAGS_HEAPTYPE));
+        if (past_max && (pflags & PFlagFused)) {
             parked_state_t *ps = &fs->state;
             PyObject *mps = ps->live != NULL ? ps->live->pr.merge_points
                                              : ps->merge_points;
             *psyco_fuse_stopped(mps) = 1;
         }
-        result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
-    }
-    promotion_cache_add(fs, key1, result);
-    return result;
-}
-
-static code_t *
-do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key)
-{
-    return promotion_pyobj_mega(fs, key, false);
-}
-
-static code_t *
-do_promotion_pyobj_interp(rt_promotion_t *fs, PyObject *key)
-{
-    return promotion_pyobj_mega(fs, key, true);
-}
-
-/* psyco_static_type_promotion: as above, but a value that is not a static
-   type goes to the megamorphic version without being made a constant.
-   That version is valid for any value, so the inline fast case may point
-   to it even if the object dies and its address is reused. */
-static code_t *
-do_promotion_static_type(rt_promotion_t *fs, PyObject *key)
-{
-#if LE_CODESTATS
-    psyco_cs_promo_miss(fs->cs_site);
-#endif
-    code_t *result;
-    long key1 = (long)key;
-
-    QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
-    if (result == NULL) {
-        rt_local_buf_t *megabuf = NULL;
-        int count = lookup_count_previous_values(fs, &megabuf);
-        if (!PyType_Check(key) ||
-            (((PyTypeObject *)key)->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
-            count >= MEGAMORPHIC_MAX) {
-            if (megabuf == NULL)
-                result = detected_megamorphic_pyobj_site(fs, false);
-            else
+        if ((pflags & PFlagMegamorphic) && (past_max || not_static_type)) {
+            if (megabuf != NULL)
                 result = (code_t *)(megabuf + 1);
-            if (count >= MEGAMORPHIC_MAX) {
+            else
+                result = detected_megamorphic_pyobj_site(
+                    fs, (pflags & PFlagInterpret) != 0);
+            if (past_max) {
                 /* from now on every new value goes there */
                 promotion_cache_fallback(fs, result);
                 return result;
             }
         }
-        else {
-            result =
-                do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
-        }
+        else
+            result = do_promotion_internal(fs, key,
+                                           (pflags & PFlagPyObj)
+                                               ? SkFlagFixed | SkFlagPyObj
+                                               : SkFlagFixed);
     }
-    promotion_cache_add(fs, key1, result);
+    promotion_cache_add(fs, key, result);
     return result;
 }
 
@@ -3611,7 +3512,6 @@ code_t *
 psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags)
 {
     rt_promotion_t *fs;
-    void *do_promotion;
     code_t *code;
 
     /* a promotion ends the block, so a replay stops before one; were it not
@@ -3620,26 +3520,13 @@ psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags)
     /* we remove the non-compile-time array values from 'fix' */
     if (fix->array != NullArray)
         remove_non_compiletime(fix, po);
-    /* write the code that calls the proxy 'do_promotion' */
     switch (pflags) {
         case 0:
-            do_promotion = &do_promotion_long;
-            break;
         case PFlagPyObj:
-            do_promotion = &do_promotion_pyobj;
-            break;
-        /*case PFlagMegamorphic: ... */
         case PFlagPyObj | PFlagMegamorphic:
-            do_promotion = &do_promotion_pyobj_mega;
-            break;
         case PFlagPyObj | PFlagMegamorphic | PFlagStaticType:
-            do_promotion = &do_promotion_static_type;
-            break;
         case PFlagPyObj | PFlagMegamorphic | PFlagInterpret:
-            do_promotion = &do_promotion_pyobj_interp;
-            break;
         case PFlagPyObj | PFlagFused:
-            do_promotion = &do_promotion_pyobj_fused;
             break;
         default:
             psyco_fatal_msg("bad pflags");
@@ -3648,7 +3535,7 @@ psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags)
 #if LE_CODESTATS
     code_t *cs_start = po->code;
 #endif
-    fs = (rt_promotion_t *)ipromotion_finish(po, fix, do_promotion,
+    fs = (rt_promotion_t *)ipromotion_finish(po, fix, &do_promotion,
                                              sizeof(rt_promotion_t));
 #if LE_CODESTATS
     fs->cs_site = psyco_cs_promo_site(po, pflags, po->code - cs_start);
@@ -3660,6 +3547,7 @@ psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags)
     psyco_assert_coherent(po);
     fs->local_chained_list = NULL;
     fs->forgotten = 0;
+    fs->pflags = pflags;
     psyco_stub_set_release(fs, &promotion_release);
     code = po->code;
     psyco_park(&fs->state, po, fix);
