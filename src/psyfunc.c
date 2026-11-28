@@ -3040,8 +3040,10 @@ gen_inlinable(PsycoObject *po, vinfo_t *vgen)
         return false;
     co = pending_code(vgen);
     mps = psyco_get_merge_points(co);
+    /* records make it real (psyco_gen_inline_compute) */
     if (!(co->co_flags & CO_GENERATOR) || mps == Py_None ||
-        !(psyco_mp_flags(mps) & MP_FLAGS_GEN_INLINABLE))
+        !(psyco_mp_flags(mps) & MP_FLAGS_GEN_INLINABLE) ||
+        !le_gen_record_ready())
         return false;
     if (takes_iter_at_call(co)) {
         vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
@@ -3064,26 +3066,24 @@ gen_inline_start(PsycoObject *po, vinfo_t *vgen)
 {
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     PyCodeObject *co = pending_code(vgen);
-    vinfo_t *acc = psyco_vi_Zero(), *func, *v;
+    vinfo_t *acc = psyco_vi_Zero(), *v;
     /* zeroed: gcc can't see that psyco_fatal_msg doesn't return */
     struct fncall_arg_s fncall = {0};
     int r = genexpr_bind(po, vgen, GENEXPR_INLINED, acc, NULL, &fncall);
     vinfo_decref(acc, po);
     if (r < 0)
         return -1;
-    func = vinfo_new(
-        CompileTime_NewSk(sk_new(inline_func_item(po, vfunc), SkFlagFixed)));
     v = vinfo_new(SOURCE_NOT_IMPORTANT);
     v->array = array_new(TOTAL_LOC_INLINE + fncall.po_size);
     v->array->items[LOC_INLINE_CO] =
         vinfo_new(CompileTime_NewSk(sk_new((long)co, SkFlagFixed)));
-    vinfo_incref(func);
-    v->array->items[LOC_INLINE_FUNC] = func;
+    v->array->items[LOC_INLINE_FUNC] = vinfo_new(
+        CompileTime_NewSk(sk_new(inline_func_item(po, vfunc), SkFlagFixed)));
     fncall_store_arguments(&fncall, v->array->items + TOTAL_LOC_INLINE);
     array_release(fncall.inputvinfos);
     /* blocks compiled in its frame are listed at its join points */
     psyco_owner_pin((PyObject *)co);
-    PsycoInlineGen_FromPending(po, vgen, func, fncall.po_size);
+    PsycoInlineGen_FromPending(po, vgen, fncall.po_size);
     PycException_Raise(po, vinfo_new(VirtualTime_New(&EInline)), v);
     return -1;
 }
@@ -3101,8 +3101,8 @@ gen_inline_resume(PsycoObject *po, vinfo_t *vgen)
         vinfo_new(CompileTime_NewSk(sk_new((long)co, SkFlagFixed)));
     v->array->items[LOC_INLINE_NEXT_INSTR] = vinfo_new(
         CompileTime_NewSk(sk_new(PsycoInlineGen_Place(vgen), SkFlagFixed)));
-    v->array->items[LOC_INLINE_FUNC] = vgen->array->items[iINLGEN_FUNC];
-    vinfo_incref(v->array->items[LOC_INLINE_FUNC]);
+    v->array->items[LOC_INLINE_FUNC] = vinfo_new(CompileTime_NewSk(sk_new(
+        inline_func_item(po, vgen->array->items[iINLGEN_FUNC]), SkFlagFixed)));
     words = vgen->array->items + iINLGEN_WORDS;
     for (k = 0; k < n; k++) {
         v->array->items[TOTAL_LOC_INLINE + k] = words[inlgen_word(co, k)];
@@ -3173,6 +3173,8 @@ psyco_gen_inline_yield(PsycoObject *po, vinfo_t *value)
     vinfo_t *parent = LOC_INLINING, *vgen;
     int n = po->vlocals.count, k;
     long place = le_instr(le_code(co), po->pr.next_instr).next;
+    /* under the value sent, which the instruction after the yield pops */
+    long depth = po->pr.stack_level - 1;
     vinfo_array_t *words = array_new(n);
     LOC_INLINING = NULL;
     for (k = 0; k < n; k++) {
@@ -3190,8 +3192,119 @@ psyco_gen_inline_yield(PsycoObject *po, vinfo_t *value)
             words->items[k];
     array_release(words);
     PsycoInlineGen_SetPlace(po, vgen, place);
+    vinfo_decref(vgen->array->items[iINLGEN_DEPTH], po);
+    vgen->array->items[iINLGEN_DEPTH] =
+        vinfo_new(CompileTime_NewSk(sk_new(depth, SkFlagFixed)));
     LOC_INLINING = value;
     return po;
+}
+
+/* The paused generator 'vgen''s frame as CPython has it: its locals, then
+   its stack under the value it yielded, all real (NULL for none); its
+   yield's place in '*pos' and its stack's depth in '*depth'. NULL with an
+   exception. */
+static vinfo_array_t *
+inlgen_frame_words(PsycoObject *po, vinfo_t *vgen, int *pos, int *depth)
+{
+    PyCodeObject *co = inlgen_code(vgen);
+    le_code_t c = le_code(co);
+    long place = PsycoInlineGen_Place(vgen);
+    int nplus = le_code_nlocalsplus(co), k, at;
+    int locals = INDEX_LOC_LOCALS_PLUS;
+    int stack = locals + nplus + GENEXPR_SLOTS;
+    vinfo_array_t *words;
+    psyco_assert(place >= 0);
+    *depth =
+        (int)CompileTime_Get(vgen->array->items[iINLGEN_DEPTH]->source)->value;
+    for (at = 0; le_instr(c, at).next != place;) at = le_instr(c, at).next;
+    *pos = at;
+    words = array_new(nplus + *depth);
+    for (k = 0; k < nplus + *depth; k++) {
+        vinfo_t *w =
+            vgen->array->items[iINLGEN_WORDS +
+                               inlgen_word(co, k < nplus ? locals + k
+                                                         : stack + k - nplus)];
+        if (w == NULL)
+            w = psyco_vi_Zero();
+        else {
+            if (is_virtualtime(w->source) && !compute_vinfo(w, po)) {
+                array_delete(words, po);
+                return NULL;
+            }
+            vinfo_incref(w);
+        }
+        words->items[k] = w;
+    }
+    return words;
+}
+
+/* what is known of 'vgen' goes but its type, as it becomes the run-time
+   generator 'g' (a reference it takes) */
+static void
+inlgen_becomes(PsycoObject *po, vinfo_t *vgen, vinfo_t *g)
+{
+    int i;
+    for (i = iOB_TYPE + 1; i < vgen->array->count; i++) {
+        vinfo_xdecref(vgen->array->items[i], po);
+        vgen->array->items[i] = NULL;
+    }
+    vinfo_move(po, vgen, g);
+}
+
+/* the topmost generator compiled into a loop of the frame being compiled,
+   paused, on its stack: the one just stepped */
+static vinfo_t *
+inlgen_paused_on_stack(PsycoObject *po)
+{
+    int i = po->pr.stack_level;
+    while (i-- > 0) {
+        vinfo_t *v = po->vlocals.items[po->pr.stack_base + i];
+        if (v != NULL && PsycoInlineGen_Check(v))
+            return PsycoInlineGen_Place(v) >= 0 ? v : NULL;
+    }
+    return NULL;
+}
+
+DEFINEFN bool
+psyco_gen_inline_became_real(PsycoObject *po, vinfo_t *g)
+{
+    vinfo_t *vgen = inlgen_paused_on_stack(po), *ok;
+    vinfo_array_t *words;
+    int pos, depth;
+    psyco_assert(vgen != NULL);
+    words = inlgen_frame_words(po, vgen, &pos, &depth);
+    if (words == NULL)
+        return false;
+    /* releasing what its frame held before may run Python */
+    ok = psyco_generic_call(po, psyco_inline_gen_pause, CfNoReturnValue,
+                            "vlli", g, (long)pos, (long)depth, words);
+    array_delete(words, po);
+    if (ok == NULL)
+        return false;
+    g->source = add_rtref(g->source);
+    inlgen_becomes(po, vgen, g);
+    return true;
+}
+
+DEFINEFN bool
+psyco_gen_inline_compute(PsycoObject *po, vinfo_t *vgen)
+{
+    vinfo_array_t *words;
+    vinfo_t *g;
+    int pos, depth;
+    /* paused: running or ended, no instruction makes it real
+       (pycompiler.c:psyco_can_go_interpreted) */
+    words = inlgen_frame_words(po, vgen, &pos, &depth);
+    if (words == NULL)
+        return false;
+    g = psyco_generic_call(po, psyco_inline_gen_new, CfCommonNewRefPyObject,
+                           "vlli", vgen->array->items[iINLGEN_FUNC], (long)pos,
+                           (long)depth, words);
+    array_delete(words, po);
+    if (g == NULL)
+        return false;
+    inlgen_becomes(po, vgen, g);
+    return true;
 }
 
 /* the generator compiled into the loop of the frame being compiled, whose

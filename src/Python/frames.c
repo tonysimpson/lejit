@@ -1780,16 +1780,146 @@ inline_kept_at(stack_frame_info_t **slot, FrameRuntime *run, PyCodeObject *co)
     return a;
 }
 
-DEFINEFN int
-psyco_inline_frame_left(void)
+static void
+coro_set_running(PyObject *coro, int on);
+static void
+coro_finish(PyObject *coro);
+static PyFunctionObject *
+record_function(stack_frame_info_t **slot, long entry);
+
+DEFINEFN PyObject *
+psyco_inline_frame_left(long paused)
 {
     FrameRuntime *run;
     stack_frame_info_t **slot = innermost_slot(&run), **own;
     activation_t *a;
+    PyObject *gen = NULL;
     own = innermost_own(slot, run);
-    if (own != NULL && (a = act_find(INLINE_KEY(own))) != NULL)
+    if (own != NULL && (a = act_find(INLINE_KEY(own))) != NULL) {
+        gen = a->coro;
+        a->coro = NULL;
+        if (gen != NULL && !paused) {
+            /* its body returned or raised: closed as gen_send_ex closes
+               it */
+            coro_finish(gen);
+            gen = NULL;
+        }
         drop_activation(a);
-    return 0;
+    }
+    return gen;
+}
+
+/* The generator CPython would have of a generator's body inlined in its
+   consumer's loop (psyfunc.c:psyco_gen_inline_next), made around its kept
+   frame 'f' as coro_realise makes a coroutine, running, so that the frame
+   is its frame. Only while the body makes a call that may run Python:
+   the code leaving the body then asks for it (psyco_inline_frame_left),
+   and at the yield goes on with it. Its names are its code's where the
+   function isn't known. */
+static void
+inline_gen_realise(stack_frame_info_t **slot, long entry, PyFrameObject *f)
+{
+    activation_t *a = act_find(INLINE_KEY(slot));
+    PyObject *gen, *t, *v, *tb;
+    if (a == NULL || a->frame != f || a->coro != NULL || a->resumed ||
+        (entry == 0 && (*slot)->own_lasti < 0))
+        return;
+    PyErr_Fetch(&t, &v, &tb);
+    Py_INCREF(f);
+    Py_CLEAR(f->f_back); /* found by f_back's getter while it runs */
+    gen = le_gen_of_frame(f, record_function(slot, entry));
+    if (gen == NULL)
+        PyErr_Clear();
+    else {
+        coro_set_running(gen, 1);
+        a->coro = gen;
+    }
+    PyErr_Restore(t, v, tb);
+}
+
+#if !LE_HAS_INTERPRETER_FRAME
+/* the blocks of a frame of code 'co' paused at its yield at 'pos': the
+   loops around it (SETUP_LOOP), each over the iterators of the for loops
+   around it. No others: the body has no handlers
+   (mergepoints.c:inlinable_generator). */
+static int
+yield_blocks(PyCodeObject *co, int pos, PyTryBlock *blocks)
+{
+    le_code_t c = le_code(co);
+    int at, q, n = 0;
+    for (at = 0; at < pos;) {
+        le_instr_t in = le_instr(c, at);
+        if (in.op == SETUP_LOOP && in.target > pos && n < CO_MAXBLOCKS) {
+            blocks[n].b_type = SETUP_LOOP;
+            blocks[n].b_handler = le_lasti_of(in.target);
+            blocks[n].b_level = 0;
+            for (q = 0; q < at;) {
+                le_instr_t it = le_instr(c, q);
+                if (it.op == FOR_ITER && it.target > pos)
+                    blocks[n].b_level++;
+                q = it.next;
+            }
+            n++;
+        }
+        at = in.next;
+    }
+    return n;
+}
+#endif
+
+/* The generator's frame 'f' paused at its yield at 'pos', as CPython
+   leaves it, with the words of its body compiled into its consumer's
+   loop: its locals, then the 'nstack' stack items under the value
+   yielded. They are borrowed: the code lets its own go. */
+static void
+gen_frame_fill(le_frame_t *f, int pos, int nstack, PyObject **words)
+{
+    PyCodeObject *co = le_frame_code(f);
+    int nplus = le_code_nlocalsplus(co), k;
+    for (k = 0; k < nplus; k++) {
+        Py_XINCREF(words[k]);
+        le_frame_word_set(f, k, words[k]);
+    }
+    for (k = 0; k < nstack; k++) {
+        Py_XINCREF(words[nplus + k]);
+        le_frame_word_put(f, nplus + k, words[nplus + k]);
+    }
+#if LE_HAS_INTERPRETER_FRAME
+    if (f->frame_obj != NULL)
+        Py_CLEAR(f->frame_obj->f_back);
+    le_gen_frame_pause(f, le_lasti_of(pos), nstack);
+#else
+    {
+        PyTryBlock blocks[CO_MAXBLOCKS];
+        int n = yield_blocks(co, pos, blocks);
+        Py_CLEAR(f->f_back);
+#if !LE_HAS_FRAME_STATE
+        f->f_executing = 0;
+#endif
+        le_gen_frame_pause(f, le_lasti_of(pos), nstack, n, blocks);
+    }
+#endif
+}
+
+DEFINEFN void
+psyco_inline_gen_pause(PyObject *gen, long pos, long nstack, PyObject **words)
+{
+    coro_set_running(gen, 0);
+    gen_frame_fill(le_record_frame((le_gen_record_t *)gen), (int)pos,
+                   (int)nstack, words);
+}
+
+DEFINEFN PyObject *
+psyco_inline_gen_new(PyObject *func, long pos, long nstack, PyObject **words)
+{
+    PyObject *rec = le_gen_record_new(func, 0, nstack), *gen;
+    if (rec == NULL)
+        return NULL;
+    gen_frame_fill(le_record_frame((le_gen_record_t *)rec), (int)pos,
+                   (int)nstack, words);
+    gen = le_gen_record_escape(rec, func);
+    Py_DECREF(rec);
+    return gen;
 }
 
 /* The traceback entries' frames catching callees hold on this thread
@@ -2030,11 +2160,16 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     if ((entry == 1 && rec->nargs >= 0 && finfo_last(rec) == rec + 1 &&
          (rec + 1)->co == (PyCodeObject *)co) ||
         (entry == 0 && rec->link_stack_depth == 0 &&
-         rec->co == (PyCodeObject *)co))
+         rec->co == (PyCodeObject *)co)) {
         /* an inlined frame, in the compiled call it makes or in its own
            record: its parent's slot is the one holding them */
-        return keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals,
-                          record_function(slot, entry), lasti);
+        PyFrameObject *f =
+            keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals,
+                       record_function(slot, entry), lasti);
+        if (f != NULL && (((PyCodeObject *)co)->co_flags & CO_GENERATOR))
+            inline_gen_realise(slot, entry, f);
+        return f;
+    }
     return NULL;
 }
 
@@ -2048,7 +2183,9 @@ DEFINEFN PyObject *
 le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
 {
 #if LE_HAS_GEN_NEW_AROUND_FRAME
-    int flags = ((PyCodeObject *)func->func_code)->co_flags;
+    int flags = le_pyframe_code(f)->co_flags;
+    PyObject *name = func != NULL ? func->func_name : NULL;
+    PyObject *qualname = func != NULL ? func->func_qualname : NULL;
     PyObject *gen;
 #if LE_HAS_INTERPRETER_FRAME
     /* what the constructor checks: f->f_frame owned by f and not yet
@@ -2076,11 +2213,11 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
     Py_INCREF(f);
 #endif
     if (flags & CO_COROUTINE)
-        gen = PyCoro_New(f, func->func_name, func->func_qualname);
+        gen = PyCoro_New(f, name, qualname);
     else if (flags & CO_ASYNC_GENERATOR)
-        gen = PyAsyncGen_New(f, func->func_name, func->func_qualname);
+        gen = PyAsyncGen_New(f, name, qualname);
     else
-        gen = PyGen_NewWithQualName(f, func->func_name, func->func_qualname);
+        gen = PyGen_NewWithQualName(f, name, qualname);
 #if LE_HAS_INTERPRETER_FRAME
     if (gen == NULL) {
         f->f_frame = own;

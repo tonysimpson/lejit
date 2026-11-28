@@ -235,27 +235,22 @@ static source_virtual_t psyco_inline_gen;
 static bool
 compute_inline_gen(PsycoObject *po, vinfo_t *v)
 {
-    /* psyfunc.c:gen_inlinable keeps it where nothing can */
-    (void)po;
-    (void)v;
-    psyco_fatal_msg("an inlined generator made real");
-    return false;
+    return psyco_gen_inline_compute(po, v);
 }
 
 DEFINEFN void
-PsycoInlineGen_FromPending(PsycoObject *po, vinfo_t *v, vinfo_t *func,
-                           int nwords)
+PsycoInlineGen_FromPending(PsycoObject *po, vinfo_t *v, int nwords)
 {
     vinfo_array_t *old = v->array;
-    int i;
     v->array = array_new(iINLGEN_WORDS + nwords);
     v->array->items[iOB_TYPE] = old->items[iOB_TYPE];
     v->array->items[iINLGEN_CODE] = old->items[iGENEXPR_CODE];
     v->array->items[iINLGEN_PLACE] =
         vinfo_new(CompileTime_NewSk(sk_new(INLGEN_RUNNING, SkFlagFixed)));
-    v->array->items[iINLGEN_FUNC] = func;
-    for (i = iGENEXPR_FUNC; i <= iGENEXPR_GLOBALS; i++)
-        vinfo_xdecref(old->items[i], po);
+    v->array->items[iINLGEN_FUNC] = old->items[iGENEXPR_FUNC];
+    v->array->items[iINLGEN_DEPTH] = psyco_vi_Zero();
+    vinfo_xdecref(old->items[iGENEXPR_ARGS], po);
+    vinfo_xdecref(old->items[iGENEXPR_GLOBALS], po);
     array_release(old);
     v->source = VirtualTime_New(&psyco_inline_gen);
 }

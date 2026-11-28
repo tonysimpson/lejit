@@ -4,6 +4,7 @@
 # values, the return value dropped, exceptions and tracebacks raised in
 # the body (PEP 479's RuntimeError included), frames asked for in it, and
 # the order objects die in when the generator ends, stops early or raises.
+import inspect
 import sys
 
 LOG = []
@@ -200,6 +201,158 @@ def traced(n):
     return out, seen
 
 
+# frames of the body asked for while it runs, through a helper, kept
+# across its steps: the generator's own frame, as in CPython
+FRAMES = []
+
+
+def grab(x):
+    FRAMES.append(sys._getframe(1))
+    return x
+
+
+def grabbing(xs):
+    for x in xs:
+        yield grab(x) + 1
+
+
+def place(f):
+    return f.f_lineno - f.f_code.co_firstlineno
+
+
+def kept_across_steps(n):
+    FRAMES.clear()
+    out = []
+    for y in grabbing(range(n)):
+        f = FRAMES[-1]
+        out.append((y, f is FRAMES[0], place(f), sorted(f.f_locals.items()),
+                    f.f_back is None, f.f_code.co_name))
+    f = FRAMES[0]
+    out.append((len(FRAMES), all(g is f for g in FRAMES), f.f_back is None))
+    FRAMES.clear()
+    # a generator expression's
+    ys = [y for y in (grab(x) * 2 for x in range(n))]
+    out.append((ys, all(g is FRAMES[0] for g in FRAMES),
+                FRAMES[0].f_code.co_name))
+    FRAMES.clear()
+    return out
+
+
+def current(xs):
+    for x in xs:
+        yield inspect.currentframe(), x
+
+
+def generator_seen(f):
+    """the generator whose frame f is, by f_generator where frames have
+    it, else among f's referrers"""
+    if hasattr(f, 'f_generator'):
+        g = f.f_generator
+    else:
+        import gc
+        gens = [r for r in gc.get_referrers(f) if inspect.isgenerator(r)]
+        g = gens[0] if len(gens) == 1 else None
+    if g is None:
+        return None
+    return (g.gi_frame is f, g.gi_running, g.__name__, g.__qualname__,
+            inspect.getgeneratorstate(g))
+
+
+def running_seen(x):
+    return generator_seen(sys._getframe(1)), x
+
+
+def asks_running(xs):
+    for x in xs:
+        yield running_seen(x)
+
+
+def via_inspect(n):
+    out = []
+    first = None
+    for f, x in current(range(n)):
+        if first is None:
+            first = f
+        out.append((x, f is first, f.f_code.co_name, place(f),
+                     f.f_locals.get('x'), generator_seen(f)))
+    out.append([y for y in asks_running(range(n))])
+    return out
+
+
+def holding(xs):
+    a = Noted('a')
+    for x in xs:
+        b = Noted('b%d' % x)
+        yield grab(x)
+
+
+def keeps_alive(n):
+    out = []
+    LOG.clear()
+    FRAMES.clear()
+    for y in holding(range(n)):
+        out.append((y, sorted(FRAMES[-1].f_locals), list(LOG)))
+    out.append(list(LOG))
+    del FRAMES[:]
+    out.append(list(LOG))
+    # dropped paused, its frame held
+    LOG.clear()
+    for y in holding(range(n)):
+        if y == 1:
+            break
+    out.append(list(LOG))
+    f = FRAMES[-1]
+    FRAMES.clear()
+    out.append((sorted(f.f_locals), f.f_back is None, list(LOG)))
+    del f
+    out.append(list(LOG))
+    return out
+
+
+def grab_raise(xs):
+    for x in xs:
+        yield 1 // (grab(x) - 1)
+
+
+def frame_then_raise(n):
+    FRAMES.clear()
+    out = []
+    try:
+        for y in grab_raise(range(n)):
+            out.append(y)
+    except ZeroDivisionError as e:
+        tb = e.__traceback__
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+        out.append((tb_names(e), tb.tb_frame is FRAMES[-1],
+                    all(g is FRAMES[0] for g in FRAMES)))
+    f = FRAMES[0]
+    out.append((f.f_back is None, place(f)))
+    FRAMES.clear()
+    return out
+
+
+# tracing started in the loop's body, as pdb.set_trace() starts it
+def trace_in_body(n):
+    seen = []
+
+    def tracer(frame, event, arg):
+        if frame.f_code.co_name in ('add', 'trace_in_body'):
+            seen.append((frame.f_code.co_name, event, place(frame)))
+        return tracer
+    old = sys.gettrace()
+    out = []
+    try:
+        for y in add(range(n), 1):
+            if y == 2:
+                sys.settrace(tracer)
+                sys._getframe().f_trace = tracer
+            out.append(y)
+    finally:
+        sys.settrace(old)
+    return out, seen
+
+
 CASES = [
     ('loops', [(0,), (1,), (4,)], {}),
     ('raises', [(4,)], {}),
@@ -208,4 +361,9 @@ CASES = [
     ('consumer_side', [(4,)], {}),
     ('many_kinds', [(3,)], {}),
     ('traced', [(3,)], {}),
+    ('kept_across_steps', [(3,)], {}),
+    ('via_inspect', [(3,)], {}),
+    ('keeps_alive', [(3,)], {}),
+    ('frame_then_raise', [(3,)], {}),
+    ('trace_in_body', [(4,)], {}),
 ]

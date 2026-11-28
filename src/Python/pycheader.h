@@ -91,6 +91,8 @@
    gives the loop's FOR_ITER the value; its return ends it. acc is
    unused. */
 #define GENEXPR_INLINED 13
+/* pr.inline_left for a generator compiled into its loop left at its yield */
+#define INLINE_LEFT_PAUSED 2
 #define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)
 /* the code whose body may run compiled on its own frame, with the slots
    above (psyco_generator_mode) */
@@ -132,9 +134,11 @@ typedef struct {
     char inline_ran_python; /* the inlined frame made a call that may run
                                Python, which may have written its caller's
                                locals through a proxy */
-    char inline_left;       /* an inlined frame that ran Python returned: the
-                               instruction that called it lets its kept frame
-                               go (pycompiler.c:let_inline_frame_go) */
+    char inline_left;       /* an inlined frame that ran Python returned, or
+                               a generator compiled into a loop paused
+                               (INLINE_LEFT_PAUSED): the instruction that
+                               called it lets its kept frame go
+                               (pycompiler.c:let_inline_frame_go) */
     char go_interpreted;    /* the frame goes on in ceval from the next
                                instruction: a type-promotion site's
                                megamorphic version (Psyco_NeedType) */

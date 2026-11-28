@@ -6046,23 +6046,32 @@ may_write_locals_proxy(vinfo_t *container)
 }
 
 /* the frame object kept for an inlined frame being left, if any, goes
-   (frames.c:psyco_inline_frame_left): 'test' first whether any is kept */
+   (frames.c:psyco_inline_frame_left): 'test' first whether any is kept.
+   A generator compiled into the loop, 'paused' at its yield, whose
+   generator was made with its frame, is that generator from then on. */
 static bool
-let_inline_frame_go(PsycoObject *po, bool test)
+let_inline_frame_go(PsycoObject *po, bool test, bool paused)
 {
     vinfo_t *v;
+    condition_code_t cc;
     if (test) {
-        condition_code_t cc =
-            psyco_int32_nonzero_at(po, &psyco_inline_frames_kept);
+        cc = psyco_int32_nonzero_at(po, &psyco_inline_frames_kept);
         if (cc == CC_ERROR)
             return false;
         if (!runtime_condition_f(po, cc))
             return true;
     }
     v = psyco_generic_call(po, psyco_inline_frame_left,
-                           CfReturnTypeInt | CfNoPython, "");
+                           CfReturnTypePtr | CfNoPython, "l", (long)paused);
     if (v == NULL)
         return false;
+    cc = paused ? integer_non_null(po, v) : CC_ALWAYS_FALSE;
+    if (cc == CC_ERROR) {
+        vinfo_decref(v, po);
+        return false;
+    }
+    if (runtime_condition_f(po, cc))
+        return psyco_gen_inline_became_real(po, v);
     vinfo_decref(v, po);
     return true;
 }
@@ -6118,11 +6127,14 @@ psyco_can_go_interpreted(PsycoObject *po)
     if ((po->pr.co->co_flags & LE_BODY_FLAGS) && mode != GENEXPR_RESUMABLE &&
         mode != GENEXPR_DIRECT)
         return false;
-    /* nor with a generator compiled into its loop paused, which can't be
-       made real (psyfunc.c:gen_inlinable) */
+    /* nor with a generator compiled into its loop that has ended, still on
+       the stack until the loop's end pops it: one paused is made real as
+       CPython's generator paused there (psyfunc.c:psyco_gen_inline_compute)
+       */
     for (i = 0; i < nstack; i++)
         if (is_pseudo_exception_tuple(stack_a[i]) ||
-            PsycoInlineGen_Check(stack_a[i]))
+            (PsycoInlineGen_Check(stack_a[i]) &&
+             PsycoInlineGen_Place(stack_a[i]) < 0))
             return false;
     return true;
 }
@@ -10424,8 +10436,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 if (po->pr.is_inlining && po->pr.python_call)
                     po->pr.inline_ran_python = 1;
                 if (po->pr.inline_left) {
+                    bool paused = po->pr.inline_left == INLINE_LEFT_PAUSED;
                     po->pr.inline_left = 0;
-                    if (!let_inline_frame_go(po, true))
+                    if (!let_inline_frame_go(po, true, paused))
                         break;
                 }
                 po->pr.resume_pending = 0;
@@ -10585,7 +10598,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 po->pr.is_inlining = false;
                 if (po->pr.inline_ran_python) {
                     po->pr.resume_pending = 1;
-                    po->pr.inline_left = 1;
+                    po->pr.inline_left = INLINE_LEFT_PAUSED;
                 }
                 po->pr.inline_ran_python = 0;
                 need_reference(po, LOC_INLINING);
@@ -10616,7 +10629,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             if (po->pr.inline_ran_python) {
                 if (returned)
                     po->pr.inline_left = 1;
-                else if (!let_inline_frame_go(po, false))
+                else if (!let_inline_frame_go(po, false, false))
                     break;
             }
             po->pr.inline_ran_python = 0;
