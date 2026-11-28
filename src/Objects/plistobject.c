@@ -126,16 +126,6 @@ PsycoList_New(PsycoObject *po, int size, vinfo_t **source)
 }
 
 DEFINEFN
-vinfo_t *
-PsycoList_SingletonNew(vinfo_t *vitem)
-{
-    vinfo_t *r = PsycoList_NEW(1);
-    vinfo_incref(vitem);
-    r->array->items[VLIST_ITEMS + 0] = vitem;
-    return r;
-}
-
-DEFINEFN
 int
 PsycoList_Load(vinfo_t *list)
 {

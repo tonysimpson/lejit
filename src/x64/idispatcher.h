@@ -18,8 +18,6 @@
 #include "../codegen.h"
 #include "iencoding.h"
 
-#define NEED_STACK_FRAME_HACK 1
-
 /***************************************************************/
 /***   Unification                                           ***/
 
@@ -34,10 +32,6 @@ fz_find_runtimes(vinfo_array_t *aa, FrozenPsycoObject *fpo,
 
 /***************************************************************/
 /***   Promotion                                             ***/
-
-/* Define to 1 to emit a "compare/jump-if-equal" pair of instructions
-   that checks for the first value seen, followed by a chain of more. */
-#define PROMOTION_FAST_COMMON_CASE 1
 
 /* A site's inline cache holds the first value seen. The next
    PROMOTION_CHAIN_MAX values go in a chain of compare/je entries (the
@@ -70,7 +64,6 @@ psyco_promotion_slot(code_t *at);
 #define PROMOTION_CHAIN_SIZE(n) \
     ((n) * PROMOTION_ENTRY_SIZE + PROMOTION_MISS_SIZE_MAX)
 
-#if PROMOTION_FAST_COMMON_CASE
 #define INTERNAL_PROMOTION_FIELDS                                    \
     code_t *jump_if_equal_code; /* the inline entry */               \
     code_t *chain;              /* NULL until the second value */    \
@@ -78,9 +71,6 @@ psyco_promotion_slot(code_t *at);
     unsigned char ncached;      /* values inline and in the chain */ \
     unsigned char chaincap;     /* entries the chain has room for */ \
     code_t *fallback;           /* NULL, or where the chain ends */
-#else
-#define INTERNAL_PROMOTION_FIELDS /* nothing */
-#endif
 
 struct ipromotion_s {
     INTERNAL_PROMOTION_FIELDS
@@ -206,13 +196,10 @@ ipromotion_finish(PsycoObject *po, vinfo_t *fix, void *do_promotion,
                   size_t block_size)
 {
     struct ipromotion_s *fs;
-#if PROMOTION_FAST_COMMON_CASE
     code_t *start_jump, *end_jump, *slot;
-#endif
     BEGIN_CODE
     NEED_CC();
     RTVINFO_IN_REG(fix);
-#if PROMOTION_FAST_COMMON_CASE
     start_jump = code;
     if (po->respawn_cnt >= 0 && (slot = psyco_promotion_slot(code)) != NULL) {
         CMP_R_RIP(getreg(fix->source), (long)slot - ((long)code + 7));
@@ -223,12 +210,10 @@ ipromotion_finish(PsycoObject *po, vinfo_t *fix, void *do_promotion,
     }
     end_jump = code;
     ipromotion_update_entry(start_jump, 0, end_jump); /* jump to end of jump */
-#endif
     MOV_R_R(REG_X64_RSI, getreg(fix->source));
     fs = (struct ipromotion_s *)psyco_new_stub_at(do_promotion, block_size,
                                                   &code);
     END_CODE
-#if PROMOTION_FAST_COMMON_CASE
     fs->jump_if_equal_code = start_jump;
     LE_RELOC_SLOT(&fs->jump_if_equal_code);
     fs->chain = NULL;
@@ -236,7 +221,6 @@ ipromotion_finish(PsycoObject *po, vinfo_t *fix, void *do_promotion,
     fs->ncached = 0;
     fs->chaincap = 0;
     fs->fallback = NULL;
-#endif
     return fs;
 }
 

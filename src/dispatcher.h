@@ -419,11 +419,6 @@ runtime_NON_NULL_f(PsycoObject *po, vinfo_t *vi);
 EXTERNFN int
 runtime_NON_NULL_t(PsycoObject *po, vinfo_t *vi);
 
-/* check if an integer is between the given *inclusive* bounds.
-   Same return values as above.  Does not consume a ref. */
-EXTERNFN int
-runtime_in_bounds(PsycoObject *po, vinfo_t *vi, long lowbound, long highbound);
-
 #if ALL_CHECKS
 /* the replay check (dispatcher.c) records where each respawn point was made:
    the outermost of these calls, as file and line */
@@ -447,8 +442,6 @@ EXTERNVAR int psyco_respawn_line;
 #define runtime_condition_t(po, c) LE_RESPAWN_SITE(runtime_condition_t(po, c))
 #define runtime_NON_NULL_f(po, v) LE_RESPAWN_SITE(runtime_NON_NULL_f(po, v))
 #define runtime_NON_NULL_t(po, v) LE_RESPAWN_SITE(runtime_NON_NULL_t(po, v))
-#define runtime_in_bounds(po, v, lo, hi) \
-    LE_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
 #endif
 
 /* for codemanager.c, as an owner is freed: its release records run, and

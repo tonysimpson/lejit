@@ -1,62 +1,13 @@
-/*
- * OS-specific utilities.
- *
- * The rationale is that #include <windows.h> cannot be put anywhere else
- * because it messes up things like default alignments; if included in the
- * body of Psyco, we get crashes at run-time.
- *
- * This file is compiled separated.
- */
-
-/************************************************************/
-#ifdef _WIN32
-/************************************************************/
-
-#include <windows.h>
-
-long
-psyco_allocate_executable_buffer(long size, char **result)
-{
-    DWORD old;
-    char *p = (char *)VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE,
-                                   PAGE_EXECUTE_READWRITE);
-    if (p == NULL)
-        return 0;
-    VirtualProtect(p, size, PAGE_EXECUTE_READWRITE, &old);
-    /* ignore errors, just try */
-    *result = p;
-    return size;
-}
-
-void
-psyco_release_pages(void *p, long size)
-{
-    (void)p;
-    (void)size;
-}
-
-long
-psyco_page_size(void)
-{
-    return 4096;
-}
-
-/************************************************************/
-#else /* Assume UNIX */
-/************************************************************/
+/* Memory for compiled code, from the OS. */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#if defined(MAP_ANON) && !defined(MAP_ANONYMOUS)
-#define MAP_ANONYMOUS MAP_ANON
-#endif
 
 long
 psyco_allocate_executable_buffer(long size, char **result)
 {
-#if defined(MAP_ANONYMOUS) && defined(MAP_PRIVATE)
     static int first = 1;
     char *p = (char *)mmap(*result, size, PROT_EXEC | PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -72,12 +23,6 @@ psyco_allocate_executable_buffer(long size, char **result)
     first = 0;
     *result = p;
     return size;
-
-#else
-
-    return 0;
-
-#endif
 }
 
 void *
@@ -110,7 +55,3 @@ psyco_page_size(void)
         size = sysconf(_SC_PAGESIZE);
     return size;
 }
-
-/************************************************************/
-#endif /* !MS_WINDOWS */
-/************************************************************/

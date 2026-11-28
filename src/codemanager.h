@@ -261,9 +261,6 @@ sk_mark_used(PsycoObject *po, source_known_t *sk)
 
 EXTERNVAR PyTypeObject CodeBuffer_Type, CodeBufferShort_Type,
     CodeBufferSummary_Type;
-#define CodeBuffer_Check(v)                                                   \
-    (Py_TYPE(v) == &CodeBuffer_Type || Py_TYPE(v) == &CodeBufferShort_Type || \
-     Py_TYPE(v) == &CodeBufferSummary_Type)
 #if ALL_CHECKS
 /* extents opened by psyco_code_open, and blocks freed: lejit._core._stats()'s
    code_buffers and code_buffers_freed */

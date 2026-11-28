@@ -528,16 +528,6 @@ LeSequence_GetItem(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
     return m->sq_item(s, i);
 }
 
-/* PySequence_GetSlice once the slice is made: mp is s's tp_as_mapping */
-static PyObject *
-LeSequence_GetSlice(PyObject *s, PyMappingMethods *mp, PyObject *slice)
-{
-    Py_INCREF(slice);
-    PyObject *res = mp->mp_subscript(s, slice);
-    Py_DECREF(slice);
-    return res;
-}
-
 /* PySequence_SetItem once a negative i has had the length added */
 static int
 LeSequence_SetItem(PyObject *s, Py_ssize_t i, PyObject *o,
@@ -551,17 +541,6 @@ static int
 LeSequence_DelItem(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
 {
     return m->sq_ass_item(s, i, (PyObject *)NULL);
-}
-
-/* PySequence_SetSlice once the slice is made */
-static int
-LeSequence_SetSlice(PyObject *s, PyObject *o, PyMappingMethods *mp,
-                    PyObject *slice)
-{
-    Py_INCREF(slice);
-    int res = mp->mp_ass_subscript(s, slice, o);
-    Py_DECREF(slice);
-    return res;
 }
 
 /* the metas translated from abstract.c */
@@ -1691,55 +1670,6 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
     return type_error(po, LE_MSG_SEQ_NO_GET, s);
 }
 
-DEFINEFN vinfo_t *
-PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
-{
-    PyTypeObject *tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL)
-        return NULL;
-
-    PyMappingMethods *mp = tp_s->tp_as_mapping;
-    binaryfunc mp_subscript = NULL;
-    if (mp != NULL) {
-        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_subscript,
-                               (void **)&mp_subscript)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_GetSlice,
-                                          CfCommonNewRefPyObject, "vvv", s, i1,
-                                          i2);
-            default:
-                return NULL;
-        }
-    }
-    if (mp_subscript != NULL) {
-        vinfo_t *slice = psyco_generic_call(
-            po, _PySlice_FromIndices, CfCommonNewRefPyObject, "vv", i1, i2);
-        if (slice == NULL)
-            return NULL;
-        vinfo_t *res;
-        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_subscript,
-                               (void **)&mp_subscript)) {
-            case 1:
-                res = Psyco_META2(po, mp_subscript, CfCommonNewRefPyObject,
-                                  "vv", s, slice);
-                break;
-            case 0:
-                res = psyco_generic_call(po, LeSequence_GetSlice,
-                                         CfCommonNewRefPyObject, "vlv", s,
-                                         (long)mp, slice);
-                break;
-            default:
-                res = NULL;
-        }
-        vinfo_decref(slice, po);
-        return res;
-    }
-
-    return type_error(po, LE_MSG_SEQ_GET_SLICE, s);
-}
-
 DEFINEFN bool
 PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
 {
@@ -1938,94 +1868,6 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
     return false;
 }
 
-DEFINEFN bool
-PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2,
-                       vinfo_t *o)
-{
-    PyTypeObject *tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL)
-        return false;
-
-    PyMappingMethods *mp = tp_s->tp_as_mapping;
-    objobjargproc mp_ass_subscript = NULL;
-    if (mp != NULL) {
-        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_ass_subscript,
-                               (void **)&mp_ass_subscript)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_SetSlice,
-                                          CfCommonIntZeroOk, "vvvv", s, i1, i2,
-                                          o) != NULL;
-            default:
-                return false;
-        }
-    }
-    if (mp_ass_subscript != NULL) {
-        vinfo_t *slice = psyco_generic_call(
-            po, _PySlice_FromIndices, CfCommonNewRefPyObject, "vv", i1, i2);
-        if (slice == NULL)
-            return false;
-        vinfo_t *res;
-        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_ass_subscript,
-                               (void **)&mp_ass_subscript)) {
-            case 1:
-                res = Psyco_META3(po, mp_ass_subscript, CfCommonIntZeroOk,
-                                  "vvv", s, slice, o);
-                break;
-            case 0:
-                res = psyco_generic_call(po, LeSequence_SetSlice,
-                                         CfCommonIntZeroOk, "vvlv", s, o,
-                                         (long)mp, slice);
-                break;
-            default:
-                res = NULL;
-        }
-        vinfo_decref(slice, po);
-        return res != NULL;
-    }
-
-    type_error(po, LE_MSG_SEQ_SET_SLICE, s);
-    return false;
-}
-
-DEFINEFN vinfo_t *
-PsycoSequence_Tuple(PsycoObject *po, vinfo_t *v)
-{
-    PyTypeObject *tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL)
-        return NULL;
-
-    /* Special-case the common tuple and list cases, for efficiency. */
-    if (tp_v == &PyTuple_Type) {
-        vinfo_incref(v);
-        return v;
-    }
-    vinfo_t *result;
-    if (tp_v == &PyList_Type) {
-        result = psyco_generic_call(
-            po, PyList_AsTuple,
-            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", v);
-    }
-    else {
-        result = psyco_generic_call(po, PySequence_Tuple,
-                                    CfCommonNewRefPyObject, "v", v);
-    }
-    if (result != NULL)
-        Psyco_AssertType(po, result, &PyTuple_Type);
-    return result;
-}
-
-DEFINEFN vinfo_t *
-PsycoSequence_List(PsycoObject *po, vinfo_t *v)
-{
-    vinfo_t *result = psyco_generic_call(po, PySequence_List,
-                                         CfCommonNewRefPyObject, "v", v);
-    if (result != NULL)
-        Psyco_AssertType(po, result, &PyList_Type);
-    return result;
-}
-
 DEFINEFN vinfo_t *
 PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
 {
@@ -2108,31 +1950,6 @@ PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
 /* Iterators */
 
 #if LE_HAS_ITER_CHECK_FUNCTION
-DEFINEFN vinfo_t *
-PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
-{
-    PyTypeObject *tp = Psyco_NeedType(po, obj);
-    if (tp == NULL)
-        return NULL;
-    iternextfunc tp_iternext;
-    switch (Psyco_TypeSlot(po, tp, &tp->tp_iternext, (void **)&tp_iternext)) {
-        case 1:
-            break;
-        case 0:
-            return psyco_generic_call(
-                po, PyIter_Check,
-                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "v", obj);
-        default:
-            return NULL;
-    }
-    /* the test against _PyObject_NextNotImplemented is left to run time */
-    if (tp_iternext != NULL) {
-        return psyco_generic_call(
-            po, PyIter_Check, CfCommonIntBoolOrError | CfNoPython | CfNoBlock,
-            "v", obj);
-    }
-    return vinfo_new(CompileTime_New(0));
-}
 #endif
 
 /* PyObject_GetIter's end: its result 'res' for 'o' if an iterator, else

@@ -27,17 +27,6 @@
 
 #include "../Python/pycheader.h"
 #include "../psyco.h"
-#define MACHINE_CODE_FORMAT "86x64"
-/* XXX hack remove float support - add back by fixing c/Object/pfloatobject.*
- */
-#define HAVE_FP_FN_CALLS 1
-
-/* set to 0 to emit code that runs on 386 and 486 */
-#ifndef PENTIUM_INSNS
-#define PENTIUM_INSNS 1
-#endif
-
-#define COMPACT_ENCODING 1
 
 /* everything before args, including finfo which is the last thing before args
  */
@@ -177,7 +166,6 @@ typedef enum {
 #define INIT_CODE_EMISSION(code) \
     do { /* nothing */           \
     } while (0)
-#define POST_CODEBUFFER_SIZE 0
 #define insn_code_label(code) ((code_t *)(code))
 
 #define CHECK_STACK_SPACE() \
@@ -198,7 +186,6 @@ typedef enum {
 #define RSOURCE_REG_IS_NONE(src) is_reg_none(src)
 #define RSOURCE_STACK(src) getstack(src)
 
-#define RUNTIME_STACK_MAX RunTime_StackMax
 #define RUNTIME_STACK_NONE RunTime_StackNone
 #define RUNTIME_REG(vi) RSOURCE_REG(((vinfo_t *)(vi))->source)
 #define RUNTIME_REG_IS_NONE(vi) RSOURCE_REG_IS_NONE(((vinfo_t *)(vi))->source)
@@ -216,7 +203,6 @@ typedef enum {
          set_rtstack_to_none(((vinfo_t *)(vi))->source))
 
 #define KSOURCE_SOURCE(src) CompileTime_Get(src)
-#define KNOWN_SOURCE(vi) KSOURCE_SOURCE(((vinfo_t *)(vi))->source)
 
 #define NEXT_FREE_REG() next_free_reg(po)
 #define REG_NUMBER(po, rg) ((po)->reg_array[(int)(rg)])
@@ -312,18 +298,9 @@ psyco_code_far_jump(code_t *end, code_t *target);
 EXTERNFN code_t *
 psyco_write_far_jump(code_t *code, code_t *target);
 #define ONLY_UPDATING 0 /* redefine to 1 when updating code */
-#define REX_64 0x48
-#define REX_64_REG(reg) (REX_64 | (reg > 7 ? 4 : 0))
-#define REX_64_RM(rm) (REX_64 | (rm > 7 ? 1 : 0))
 #define REX_64_REG_RM(reg, rm) (0x48 | (reg > 7 ? 4 : 0) | (rm > 7 ? 1 : 0))
-#define REX_64_REG_X_B(reg, index, base) \
-    (REX_64_REG_RM(reg, base) | (index > 7 ? 2 : 0))
-#define REG_IN_OPCODE(opcode, reg) (opcode | (HW_REG(reg) & 0x7))
 #define MODRM_GENERAL(type_code, reg, rm) \
     (type_code | ((HW_REG(reg) & 0x7) << 3) | (HW_REG(rm) & 0x7))
-#define MODRM_REG_A(reg, rm) MODRM_GENERAL(0x0, reg, rm)
-#define MODRM_REG_O8(reg, rm) MODRM_GENERAL(0x40, reg, rm)
-#define MODRM_REG_O32(reg, rm) MODRM_GENERAL(0x80, reg, rm)
 #define MODRM_REG_RM(reg, rm) MODRM_GENERAL(0xC0, reg, rm)
 #define WRITE_8BIT(immed)                                                    \
     do {                                                                     \
@@ -370,11 +347,6 @@ psyco_write_far_jump(code_t *code, code_t *target);
         *code = (code_t)(immed);    \
         code += 1;                  \
     } while (0)
-#define UPDATABLE_WRITE_16BIT(immed)       \
-    do {                                   \
-        *(word_t *)code = (word_t)(immed); \
-        code += sizeof(word_t);            \
-    } while (0)
 #define UPDATABLE_WRITE_32BIT(immed)         \
     do {                                     \
         *(dword_t *)code = (dword_t)(immed); \
@@ -400,15 +372,6 @@ psyco_write_far_jump(code_t *code, code_t *target);
         }                     \
         code += 2;            \
     } while (0)
-#define WRITE_3(b1, b2, b3)   \
-    do {                      \
-        if (!ONLY_UPDATING) { \
-            code[0] = b1;     \
-            code[1] = b2;     \
-            code[2] = b3;     \
-        }                     \
-        code += 3;            \
-    } while (0)
 #define WRITE_4(b1, b2, b3, b4) \
     do {                        \
         if (!ONLY_UPDATING) {   \
@@ -418,45 +381,6 @@ psyco_write_far_jump(code_t *code, code_t *target);
             code[3] = b4;       \
         }                       \
         code += 4;              \
-    } while (0)
-#define WRITE_5(b1, b2, b3, b4, b5) \
-    do {                            \
-        if (!ONLY_UPDATING) {       \
-            code[0] = b1;           \
-            code[1] = b2;           \
-            code[2] = b3;           \
-            code[3] = b4;           \
-            code[4] = b5;           \
-        }                           \
-        code += 5;                  \
-    } while (0)
-#define OP_REX_64_RM(opcode, reg) \
-    WRITE_2(REX_64_RM(reg), REG_IN_OPCODE(opcode, reg))
-#define OP_REX_64_RM_I64(opcode, reg, immed)                 \
-    do {                                                     \
-        WRITE_2(REX_64_RM(reg), REG_IN_OPCODE(opcode, reg)); \
-        WRITE_64BIT(immed);                                  \
-    } while (0)
-#define OP_REX_64_RM_UI64(opcode, reg, immed)                \
-    do {                                                     \
-        WRITE_2(REX_64_RM(reg), REG_IN_OPCODE(opcode, reg)); \
-        UPDATABLE_WRITE_64BIT(immed);                        \
-    } while (0)
-#define OP_REX_64_MODRM_REG_RM(opcode, reg, rm) \
-    WRITE_3(REX_64_REG_RM(reg, rm), opcode, MODRM_REG_RM(reg, rm))
-#define OP_REX_64_MODRM_REG_A(opcode, reg, rm) \
-    WRITE_3(REX_64_REG_RM(reg, rm), opcode, MODRM_REG_A(reg, rm))
-#define OP_REX_64_MODRM_REG_O8(opcode, reg, rm, offset) \
-    WRITE_4(REX_64_REG_RM(reg, rm), opcode, MODRM_REG_O8(reg, rm), offset)
-#define OP_REX_64_MODRM_REG_O32(opcode, reg, rm, offset)                 \
-    do {                                                                 \
-        WRITE_3(REX_64_REG_RM(reg, rm), opcode, MODRM_REG_O32(reg, rm)); \
-        WRITE_32BIT(offset);                                             \
-    } while (0)
-#define OP_REX_64_MODRM_REG_UO32(opcode, reg, rm, offset)                \
-    do {                                                                 \
-        WRITE_3(REX_64_REG_RM(reg, rm), opcode, MODRM_REG_O32(reg, rm)); \
-        UPDATABLE_WRITE_32BIT(offset);                                   \
     } while (0)
 /* Common Instructions:
  * U - Prefix for updatable fields
@@ -615,7 +539,6 @@ psyco_write_far_jump(code_t *code, code_t *target);
                               REG_TRANSIENT_2);                               \
         }                                                                     \
     } while (0)
-#define BRKP() WRITE_1(0xCC)
 /* @asm: mov {r}, {rm} */
 #define MOV_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x8B, 0, 0, 0, r, rm)
 /* @asm: mov {r:d}, {rm:d} */
@@ -692,9 +615,6 @@ psyco_write_far_jump(code_t *code, code_t *target);
 /* @asm: mov qword ptr [{rm}{o}], {r} */
 #define MOV_O_R(rm, o, r) \
     OFFSET_ENCODING(false, true, 1, 0x89, 0, 0, 0, 0, r, rm, o)
-/* @asm: lea {r}, [{rm}{o:d8}] */
-#define LEA_R_O8(r, rm, o) \
-    OFFSET_ENCODING(false, true, 1, 0x8D, 0, 0, 0, 8, r, rm, o)
 /* @asm: lea {r}, [{rm}{o}] */
 #define LEA_R_O(r, rm, o) \
     OFFSET_ENCODING(false, true, 1, 0x8D, 0, 0, 0, 0, r, rm, o)
@@ -762,10 +682,6 @@ psyco_write_far_jump(code_t *code, code_t *target);
 /* @asm: mov {r}, qword ptr [{base}+{index}*{scale}{offset:d8}] */
 #define MOV_R_X8(r, base, offset, index, scale)                            \
     SIB_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 8, r, base, offset, index, \
-                 scale)
-/* @asm: mov {r}, qword ptr [{base}+{index}*{scale}{offset:d32}] */
-#define MOV_R_X32(r, base, offset, index, scale)                            \
-    SIB_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 32, r, base, offset, index, \
                  scale)
 /* @asm: mov qword ptr [{base}+{index}*{scale}{offset:d8}], {r} */
 #define MOV_X8_R(base, offset, index, scale, r)                            \
@@ -906,9 +822,6 @@ psyco_write_far_jump(code_t *code, code_t *target);
 #define CMP_I8_DR(i, rm)                                \
     DIRECT_ENCODING(false, 1, 0x83, 0, 0, 0xF8, 0, rm); \
     WRITE_8BIT(i)
-/* @asm: cmp qword ptr [{rm}{o:d32}], {r} */
-#define CMP_R_UO32(r, rm, o) \
-    OFFSET_ENCODING(true, true, 1, 0x39, 0, 0, 0, 32, r, rm, o)
 #define CMP_I_R(i1, r2)                                        \
     do {                                                       \
         if (FITS_IN_8BITS(i1)) {                               \
@@ -1092,9 +1005,6 @@ psyco_clobber_xmm(code_t *code);
         POP_R(r);                                \
         psyco_dec_stackdepth(po);                \
     } while (0)
-/* @asm: pop qword ptr [{rm}{o}] */
-#define POP_O(rm, o) \
-    OFFSET_ENCODING(false, false, 1, 0x8F, 0, 0, 0, 0, 0, rm, o)
 #define RET()                                 \
     do {                                      \
         le_trace_return((code_t *)(code), 0); \
@@ -1132,27 +1042,16 @@ psyco_clobber_xmm(code_t *code);
             WRITE_8BIT(count);                               \
         }                                                    \
     } while (0)
-/* @asm: cqo */
-#define CQO()                  \
-    do {                       \
-        WRITE_2(REX_64, 0x99); \
-    } while (0)
 #define SHIFT_COUNTER REG_X64_RCX
 #define SHIFT_BY_RCX_ENCODING(r, mod) \
     DIRECT_ENCODING(true, 1, 0xD3, 0, 0, mod, 0, r)
 
 /* @asm: shl {rg}, {cnt:sh} */
 #define SHIFT_LEFT_BY(rg, cnt) SHIFT_BY_COUNT_ENCODING(rg, 0x20, cnt)
-/* @asm: shl {rg}, cl */
-#define SHIFT_LEFT_CL(rg) SHIFT_BY_RCX_ENCODING(rg, 0x20)
 /* @asm: shr {rg}, {cnt:sh} */
 #define SHIFT_RIGHT_BY(rg, cnt) SHIFT_BY_COUNT_ENCODING(rg, 0x28, cnt)
-/* @asm: shr {rg}, cl */
-#define SHIFT_RIGHT_CL(rg) SHIFT_BY_RCX_ENCODING(rg, 0x28)
 /* @asm: sar {rg}, {cnt:sh} */
 #define SHIFT_SIGNED_RIGHT_BY(rg, cnt) SHIFT_BY_COUNT_ENCODING(rg, 0x38, cnt)
-/* @asm: sar {rg}, cl */
-#define SHIFT_SIGNED_RIGHT_CL(rg) SHIFT_BY_RCX_ENCODING(rg, 0x38)
 
 /* XXX get rid of this ?? */
 #define SHIFT_GENERICCL(rg, group) SHIFT_BY_RCX_ENCODING(rg, (group << 3))
@@ -1228,8 +1127,6 @@ typedef enum {
     } while (0)
 /* @asm: cmp {r}, qword ptr [rip{o:d32}] */
 #define CMP_R_RIP(r, o) COMMON_INSTR_R_RIP(CMP, r, o)
-/* @asm: sub {r}, qword ptr [rip{o:d32}] */
-#define SUB_R_RIP(r, o) COMMON_INSTR_R_RIP(SUB, r, o)
 
 #define DIRECT_OR_RSP_OFFSET_ENCODING(rex_w, op_len, b1, b2, b3, mod, r, \
                                       source)                            \
@@ -1286,15 +1183,6 @@ typedef enum {
 */
 #define UNARY_INSTR_ON_REG(instr, rm) \
     DIRECT_ENCODING(true, 1, 0xF7, 0, 0, _ENCODE_COMMON_INSTR(instr), 0, rm)
-
-/* Encodes "INSTR source" for the same instructions as above */
-#define UNARY_INSTR_FROM_RT(instr, source)             \
-    DIRECT_OR_RSP_OFFSET_ENCODING(true, 1, 0xF7, 0, 0, \
-                                  _ENCODE_COMMON_INSTR(instr), 0, source)
-
-/* Encodes "INC rg" and "DEC rg" */
-#define INCREASE_REG(rg) ADD_R_I8(rg, 1)
-#define DECREASE_REG(rg) SUB_R_I8(rg, 1)
 
 /* Encodes a check (zero/non-zero) on the given 'source' */
 #define CHECK_NONZERO_FROM_RT(source, rcc)                     \
@@ -1358,12 +1246,7 @@ bininstrshift(PsycoObject *po, int group, bool nonneg, vinfo_t *v1,
 EXTERNFN condition_code_t
 bininstrcmp(PsycoObject *po, int base_py_op, vinfo_t *v1, vinfo_t *v2);
 EXTERNFN vinfo_t *
-bininstrcond(PsycoObject *po, condition_code_t cc, long immed_true,
-             long immed_false);
-EXTERNFN vinfo_t *
 unaryinstrgrp(PsycoObject *po, int group, bool ovf, bool nonneg, vinfo_t *v1);
-EXTERNFN vinfo_t *
-unaryinstrabs(PsycoObject *po, bool ovf, bool nonneg, vinfo_t *v1);
 
 #define BINARY_INSTR_ADD(ovf, nonneg) bininstrgrp(po, 0, ovf, nonneg, v1, v2)
 #define BINARY_INSTR_OR(ovf, nonneg) bininstrgrp(po, 1, ovf, nonneg, v1, v2)
@@ -1374,10 +1257,7 @@ unaryinstrabs(PsycoObject *po, bool ovf, bool nonneg, vinfo_t *v1);
 #define BINARY_INSTR_LSHIFT(nonneg) bininstrshift(po, 4, nonneg, v1, v2)
 #define BINARY_INSTR_RSHIFT(nonneg) bininstrshift(po, 7, nonneg, v1, v2)
 #define BINARY_INSTR_CMP(base_py_op) bininstrcmp(po, base_py_op, v1, v2)
-#define BINARY_INSTR_COND(cc, i1, i2) bininstrcond(po, cc, i1, i2)
-#define UNARY_INSTR_INV(ovf, nonneg) unaryinstrgrp(po, 2, ovf, nonneg, v1)
 #define UNARY_INSTR_NEG(ovf, nonneg) unaryinstrgrp(po, 3, ovf, nonneg, v1)
-#define UNARY_INSTR_ABS(ovf, nonneg) unaryinstrabs(po, ovf, nonneg, v1)
 
 EXTERNFN vinfo_t *
 bint_add_i(PsycoObject *po, vinfo_t *rt1, long value2, bool unsafe);
@@ -1391,24 +1271,6 @@ EXTERNFN vinfo_t *
 bint_urshift_i(PsycoObject *po, vinfo_t *v1, int counter);
 EXTERNFN condition_code_t
 bint_cmp_i(PsycoObject *po, int base_py_op, vinfo_t *rt1, long immed2);
-EXTERNFN vinfo_t *
-bfunction_result(PsycoObject *po, bool ref);
-
-#define PUSH_FROM_RT(source)                      \
-    do {                                          \
-        if (RSOURCE_REG_IS_NONE(source))          \
-            PUSH_EBP_BASE(RSOURCE_STACK(source)); \
-        else                                      \
-            PUSH_R(RSOURCE_REG(source));          \
-    } while (0)
-
-#define PUSH_FROM(source)                              \
-    do {                                               \
-        if (((source) & TimeMask) == RunTime)          \
-            PUSH_FROM_RT(source);                      \
-        else                                           \
-            PUSH_IMMED(KSOURCE_SOURCE(source)->value); \
-    } while (0)
 
 /*****************************************************************/
 /***   Some basic management instructions...                   ***/
@@ -1440,10 +1302,6 @@ bfunction_result(PsycoObject *po, bool ref);
     } while (0)
 #define SAVE_IMM8_TO_EBP_BASE(imm8, stack_pos) \
     MOV_O_I32(REG_X64_RSP, (STACK_POS_OFFSET(stack_pos)), imm8)
-#define SAVE_REG_TO_RT(source, src) \
-    DIRECT_OR_RSP_OFFSET_ENCODING(true, 1, 0x89, 0, 0, 0, src, source)
-#define PUSH_EBP_BASE(ofs) PUSH_O(REG_X64_RSP, STACK_POS_OFFSET(ofs))
-#define POP_EBP_BASE(ofs) POP_O(REG_X64_RSP, STACK_POS_OFFSET(ofs))
 #define PUSH_IMMED(immed) PUSH_I(immed)
 
 /******************************************************************/
@@ -1841,7 +1699,6 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
 /* like NEED_REGISTER but 'targ' is an output argument which will
    receive the number of a now-free register */
 #define NEED_FREE_REG(targ) NEED_FREE_REG_COND(targ, 1)
-#define IS_BYTE_REG(rg) (1) /* all registers are byte registers */
 #define NEED_FREE_BYTE_REG(targ, resrv1, resrv2)                        \
     do {                                                                \
         NEED_FREE_REG_COND(targ, targ != (resrv1) && targ != (resrv2)); \
@@ -1918,14 +1775,6 @@ psyco_xmm_may_call(PsycoObject *po);
             NEXT_FREE_REG();                                \
     } while (0)
 
-/* the same for two registers */
-#define DELAY_USE_OF_2(rg1, rg2) \
-    do {                         \
-        DELAY_USE_OF(rg1);       \
-        DELAY_USE_OF(rg2);       \
-        DELAY_USE_OF(rg1);       \
-    } while (0)
-
 /*****************************************************************/
 /***   vinfo_t restoring                                       ***/
 
@@ -1951,20 +1800,6 @@ psyco_xmm_may_call(PsycoObject *po);
             SET_RUNTIME_REG_TO(vi, _rg);                             \
             LOAD_REG_FROM_EBP_BASE(_rg, _stack);                     \
         }                                                            \
-    } while (0)
-
-#define RTVINFO_IN_BYTE_REG(vi, resrv1, resrv2)      \
-    do {                                             \
-        reg_t _currg = RUNTIME_REG(vi);              \
-        if (!IS_BYTE_REG(_currg)) {                  \
-            reg_t _rg;                               \
-            NEED_FREE_BYTE_REG(_rg, resrv1, resrv2); \
-            if (_currg != REG_NONE)                  \
-                REG_NUMBER(po, _currg) = NULL;       \
-            REG_NUMBER(po, _rg) = (vi);              \
-            LOAD_REG_FROM_RT((vi)->source, _rg);     \
-            SET_RUNTIME_REG_TO(vi, _rg);             \
-        }                                            \
     } while (0)
 
 /* load register 'dst' from the given non-virtual source vinfo */
@@ -2161,10 +1996,6 @@ psyco_xmm_may_call(PsycoObject *po);
                 *code++ = byte;                                            \
             } while ((((long)code) & 15) != 0);                            \
     } while (0)
-
-/* XXX in the GNU 'as' padding is more subtle: it inserts only one or two
-     instructions that do nothing but take more space than a single NOP */
-#define ALIGN_WITH_NOP() ALIGN_WITH_BYTE(0x90)
 
 #if ALL_CHECKS
 #define ALIGN_NO_FILL() ALIGN_WITH_BYTE(0xCC) /* INT 03  (debugging) */

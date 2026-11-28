@@ -277,51 +277,6 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
         PUSH_IMMED(0); /* the catcher word (pycompiler.c:catcher_word) */ \
     } while (0)
 
-#define WRITE_FRAME_EPILOGUE(retval, nframelocal)                             \
-    do {                                                                      \
-        /* load the return value into EAX for regular functions, EBX for      \
-           functions with a prologue */                                       \
-        if (retval != SOURCE_DUMMY) {                                         \
-            reg_t rg = nframelocal > 0 ? REG_ANY_CALLEE_SAVED                 \
-                                       : REG_FUNCTIONS_RETURN;                \
-            LOAD_REG_FROM(retval, rg);                                        \
-        }                                                                     \
-                                                                              \
-        if (nframelocal > 0) {                                                \
-            /* psyco_emit_header() was used; first clear the stack only up to \
-               and not including the frame-local data */                      \
-            int framelocpos =                                                 \
-                getstack(LOC_CONTINUATION->array->items[0]->source);          \
-            STACK_CORRECTION(framelocpos - po->stack_depth);                  \
-            po->stack_depth = framelocpos;                                    \
-                                                                              \
-            MOV_R_R(REG_FUNCTIONS_RETURN, REG_ANY_CALLEE_SAVED);              \
-        }                                                                     \
-    } while (0)
-
-/* retpos is position in stack of the return address pushed by call */
-/* the stack must be cleared up this */
-#define FUNCTION_RET(retpos)                                        \
-    do {                                                            \
-        int post_return_stack_depth = 0;                            \
-        int pre_return_stack_correction = retpos - po->stack_depth; \
-        int return_depth = sizeof(long) + INITIAL_STACK_DEPTH;      \
-        STACK_CORRECTION(pre_return_stack_correction);              \
-        po->stack_depth += pre_return_stack_correction;             \
-        post_return_stack_depth = po->stack_depth - return_depth;   \
-        if (post_return_stack_depth >= 0x8000) {                    \
-            POP_R(REG_TRANSIENT_1);                                 \
-            STACK_CORRECTION(-post_return_stack_depth);             \
-            PUSH_R(REG_TRANSIENT_1);                                \
-            po->stack_depth = return_depth;                         \
-            RET();                                                  \
-        }                                                           \
-        else {                                                      \
-            RET_N(post_return_stack_depth);                         \
-        }                                                           \
-        po->stack_depth = 0;                                        \
-    } while (0)
-
 /* The inline attribute store into a split instance dict, or into a
    managed dict's values, behind a type guard emitted before it. Hand-allocated
    in the caller-saved registers, which hold no tracked values, so the

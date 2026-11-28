@@ -295,15 +295,7 @@ typedef int8_t byte_t;
 typedef int16_t word_t;
 typedef int32_t dword_t;
 typedef int64_t qword_t;
-
-#if INTPTR_MAX == INT32_MAX
-typedef dword_t stackitem_t;
-#elif INTPTR_MAX == INT64_MAX
-typedef int64_t qword_t;
 typedef qword_t stackitem_t;
-#else
-#error "Environment not 32 or 64-bit."
-#endif
 
 /*****************************************************************/
 /***   Various customizable parameters (use your compilers'    ***/
@@ -328,12 +320,6 @@ typedef qword_t stackitem_t;
 #define LE_STAT(x) (x)
 #else
 #define LE_STAT(x) ((void)0)
-#endif
-
-/*  define to inline the most common functions in the produced code
-    (should be enabled unless you want to trade code size for speed) */
-#ifndef INLINE_COMMON_FUNCTIONS
-#define INLINE_COMMON_FUNCTIONS 1
 #endif
 
 /*****************************************************************/
@@ -367,7 +353,6 @@ EXTERNFN int
 psyco_fatal_error(char *msg, char *filename, int lineno);
 
 #if ALL_CHECKS
-#define MALLOC_CHECK_ 2 /* GCC malloc() checks */
 #define extra_assert(x) psyco_assert(x)
 #else
 #define extra_assert(x) (void)0 /* nothing */
@@ -390,15 +375,7 @@ psyco_fatal_error(char *msg, char *filename, int lineno);
 #define LE_LSAN_ROOT(p, n) ((void)0)
 #endif
 
-#if INLINE_COMMON_FUNCTIONS
 #define PSY_INLINE __inline static
-#else
-#define PSY_INLINE static
-#endif
-
-#ifndef PyObject_TypeCheck
-#define PyObject_TypeCheck(o, t) ((o)->ob_type == (t))
-#endif
 
 /* C API calls that some CPython versions lack: the function where
    libpython has it, else its public replacement */
@@ -695,10 +672,6 @@ typedef struct {
         po->stack_depth -= sizeof(stackitem_t); \
     } while (0)
 
-/* to display code object names */
-#define PyCodeObject_NAME(co) \
-    (co->co_name ? PyUnicode_AsUTF8(co->co_name) : "<anonymous code object>")
-
 /* defined in pycompiler.c */
 #define GLOBAL_ENTRY_POINT psyco_pycompiler_mainloop
 EXTERNFN code_t *
@@ -731,10 +704,6 @@ EXTERNVAR long psyco_fail_after[LE_FAIL_SITES];
 #define LE_FAIL(site) 0
 #endif
 
-/* Getting data from the _psyco module */
-EXTERNFN PyObject *
-need_cpsyco_obj(char *name);
-
 /* defined in dispatcher.c */
 EXTERNFN void
 PsycoObject_EmergencyCodeRoom(PsycoObject *po);
@@ -752,25 +721,17 @@ le_trace_end_code(PsycoObject *po);
 EXTERNFN void
 le_trace_jump(code_t *location, code_t *target);
 EXTERNFN void
-le_trace_jump_update(code_t *location, code_t *target);
-EXTERNFN void
 le_trace_jump_reg(code_t *location, int reg_target);
 EXTERNFN void
 le_trace_jump_cond(code_t *location, code_t *not_taken, code_t *taken);
 EXTERNFN void
 le_trace_jump_cond_update(code_t *location, code_t *not_taken, code_t *taken);
 EXTERNFN void
-le_trace_jump_cond_reg(code_t *location, code_t *not_taken, int reg_taken);
-EXTERNFN void
 le_trace_call(code_t *location, code_t *call_target);
 EXTERNFN void
 le_trace_call_reg(code_t *location, int reg_call_target);
 EXTERNFN void
 le_trace_return(code_t *location, int stack_adjust);
-EXTERNFN void
-le_trace_unsupported_opcode(PyCodeObject *co, int bytecode_index);
-EXTERNFN void
-le_trace_run_fail(PyCodeObject *co, char *reason);
 EXTERNFN void
 le_trace_unify(PsycoObject *po, CodeBufferObject *match);
 #else
@@ -789,9 +750,6 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match);
 #define le_trace_jump(location, target) \
     do {                                \
     } while (0)
-#define le_trace_jump_update(location, target) \
-    do {                                       \
-    } while (0)
 #define le_trace_jump_reg(location, target) \
     do {                                    \
     } while (0)
@@ -801,9 +759,6 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match);
 #define le_trace_jump_cond_update(location, not_taken, taken) \
     do {                                                      \
     } while (0)
-#define le_trace_jump_cond_reg(location, not_taken, taken) \
-    do {                                                   \
-    } while (0)
 #define le_trace_call(location, call_target) \
     do {                                     \
     } while (0)
@@ -812,12 +767,6 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match);
     } while (0)
 #define le_trace_return(location, stack_adjust) \
     do {                                        \
-    } while (0)
-#define le_trace_unsupported_opcode(co, bytecode_index) \
-    do {                                                \
-    } while (0)
-#define le_trace_run_fail(co, reason) \
-    do {                              \
     } while (0)
 #define le_trace_unify(po, match) \
     do {                          \

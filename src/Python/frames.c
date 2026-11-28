@@ -2804,25 +2804,6 @@ done:
     return result;
 }
 
-static PyObject *
-visit_get_globals(const visited_frame_t *v, void *ignored)
-{
-    if (v->code == NULL)
-        return le_frame_globals(v->frame);
-    else
-        return v->globals;
-}
-
-DEFINEFN
-PyObject *
-psyco_get_globals(void)
-{
-    PyObject *result = pvisitframes(visit_get_globals, NULL);
-    if (result == NULL)
-        psyco_fatal_msg("sorry, don't know what to do with no globals");
-    return result;
-}
-
 /* sys._getframe, replaced (as upstream's support.py did) by a version that
    also counts compiled frames, which have no real frame object: they are
    emulated, and kept while their call runs (kept_frame). */

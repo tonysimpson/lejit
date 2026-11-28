@@ -223,11 +223,9 @@ class SimpleExecutionTracer:
         self.db.add_breakpoint('le_trace_begin_simple_code', self._le_trace_begin_simple_code)
         self.db.add_breakpoint('le_trace_end_simple_code', self._le_trace_end_simple_code)
         #self.db.add_breakpoint('le_trace_jump', self._le_trace_jump)
-        #self.db.add_breakpoint('le_trace_jump_update', self._le_trace_jump)
         #self.db.add_breakpoint('le_trace_jump_reg', self._le_trace_jump_reg)
         #self.db.add_breakpoint('le_trace_jump_cond', self._le_trace_jump_cond)
         #self.db.add_breakpoint('le_trace_jump_cond_update', self._le_trace_jump_cond)
-        #self.db.add_breakpoint('le_trace_jump_cond_reg', self._le_trace_jump_cond_reg)
         #self.db.add_breakpoint('le_trace_call', self._le_trace_call)
         #self.db.add_breakpoint('le_trace_call_reg', self._le_trace_call_reg)
         #self.db.add_breakpoint('le_trace_return', self._le_trace_return)
@@ -294,25 +292,6 @@ class SimpleExecutionTracer:
         def location_func(db, trace):
             def taken_func(db):
                 trace.jump('jumpc', location, taken)
-                db.remove_breakpoint(taken_func.other_breakpoint)
-                return False
-            def not_taken_func(db):
-                db.remove_breakpoint(not_taken_func.other_breakpoint)
-                return False
-            taken_func.other_breakpoint = db.add_breakpoint(not_taken, not_taken_func, immediately=True)
-            not_taken_func.other_breakpoint = db.add_breakpoint(taken, taken_func, immediately=True)
-            return True
-        self._trace_points[location] = location_func
-        return True
-
-    def _le_trace_jump_cond_reg(self, db):
-        location = db.registers.rdi
-        not_taken = db.registers.rsi
-        taken_reg = db.registers.rdx
-        def location_func(db, trace):
-            taken = getattr(db.registers, REG_NUM_MAP[target_reg])
-            def taken_func(db):
-                trace.jump('jumpcr', location, taken)
                 db.remove_breakpoint(taken_func.other_breakpoint)
                 return False
             def not_taken_func(db):

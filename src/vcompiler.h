@@ -95,7 +95,6 @@ gettime(Source s)
 #define RunTime_NonNeg 0x0000000004000000
 #define RunTime_Megamorphic 0x0000000002000000
 #define RunTime_MaybeNull 0x0000000001000000
-#define RunTime_FlagsMask RunTime_NoRef
 
 /* construction */
 PSY_INLINE RunTimeSource
@@ -381,11 +380,6 @@ set_ct_value(CompileTimeSource s, long v)
 /* forced: a tuple passed to a compiled callee and given back must be the
    same object */
 #define NW_TUPLES_FUNCALL NW_FORCE
-#define NW_STRSLICES_NORMAL 5
-#define NW_STRSLICES_FUNCALL 9
-#define NW_CATSTRS_NORMAL 4 /* catstrs also have a vlist internally */
-#define NW_CATSTRS_FUNCALL 7
-#define NW_BUFSTRS_NORMAL 5
 #define NW_FORCE NESTED_WEIGHT_END /* always force */
 
 /* construction */
@@ -408,8 +402,6 @@ EXTERNVAR source_virtual_t psyco_vsource_not_important;
 
 #define SOURCE_NOT_IMPORTANT VirtualTime_New(&psyco_vsource_not_important)
 #define SOURCE_DUMMY RunTime_NewStack(RunTime_StackNone, false, false)
-#define SOURCE_DUMMY_WITH_REF RunTime_NewStack(RunTime_StackNone, true, false)
-#define SOURCE_ERROR ((Source) - 1)
 
 /***************************************************************/
 /***      Definition of the fundamental vinfo_t structure      ***/
@@ -831,12 +823,6 @@ psyco_put_field_offset(PsycoObject *po, vinfo_t *vi, defield_t df, long offset,
 EXTERNFN bool
 psyco_put_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
                       vinfo_t *vindex, vinfo_t *value);
-
-/* fields of size 8 (like those of type 'double') are accessed as two
-   vinfo_t's, for the second of which we use the following macro */
-#define FIELD_PART2(df)                                               \
-    ((defield_t)((long)(df) + 1 +                    /* next index */ \
-                 (sizeof(long) << FIELD_OFS_SHIFT))) /* next ofs */
 
 /* these special-case convenient functions do not return a new
    vinfo_t* reference that you have to worry about and eventually release;

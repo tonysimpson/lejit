@@ -78,7 +78,6 @@ static PyCFunction cfunc_unicode_strip;
 
 #define LEFTSTRIP 0
 #define RIGHTSTRIP 1
-#define BOTHSTRIP 2
 
 static vinfo_t *
 PsycoUnicode_Concat(PsycoObject *po, vinfo_t *left, vinfo_t *right)

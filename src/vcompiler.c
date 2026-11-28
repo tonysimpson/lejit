@@ -146,7 +146,6 @@ vinfo_release(vinfo_t *vi, PsycoObject *po)
             sk_decref(CompileTime_Get(vi->source));
             break;
 
-#if HAVE_CCREG
         case VirtualTime:
             if (po != NULL) {
                 int i;
@@ -155,7 +154,6 @@ vinfo_release(vinfo_t *vi, PsycoObject *po)
                         po->ccregs[i] = NULL;
             }
             break;
-#endif
     }
 
     /* must be after the switch because psyco_decref_rt() did use the
@@ -166,7 +164,7 @@ vinfo_release(vinfo_t *vi, PsycoObject *po)
     if (vi->type_hint != NULL)
         sk_decref(vi->type_hint);
 
-#if HAVE_CCREG && ALL_CHECKS
+#if ALL_CHECKS
     /* only virtual-time vinfos are allowed in po->ccreg */
     if (po != NULL) {
         int i;
@@ -301,13 +299,11 @@ coherent_array(vinfo_array_t *source, PsycoObject *po, int found[],
                 default:
                     psyco_fatal_msg("gettime() corrupted");
             }
-#if HAVE_CCREG
             if (psyco_vsource_cc(src) != CC_ALWAYS_FALSE) {
                 int index = INDEX_CC(psyco_vsource_cc(src));
                 extra_assert(po->ccregs[index] == source->items[i]);
                 found[REG_TOTAL + index] = 1;
             }
-#endif
             if (source->items[i]->array != NullArray)
                 coherent_array(source->items[i]->array, po, found,
                                !is_compiletime(src));
@@ -375,11 +371,9 @@ psyco_assert_coherent1(PsycoObject *po, bool full)
     coherent_array(debug_extra_refs, po, found, true);
     if (full) {
         RTVINFO_CHECKED(po, found);
-#if HAVE_CCREG
         for (i = 0; i < HAVE_CCREG; i++)
             if (!found[REG_TOTAL + i])
                 extra_assert(po->ccregs[i] == NULL);
-#endif
         hack_refcounts(&po->vlocals, -1, 0);
         hack_refcounts(debug_extra_refs, -1, 0);
         err = nonnull_refcount(&po->vlocals);

@@ -15,17 +15,6 @@
 #include "pboolobject.h"
 #include "plongobject.h"
 
-#if HAVE_FP_FN_CALLS
-
-#define CF_NONPURE_FP_HELPER \
-    (CfPure | CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNonNull)
-#ifdef WANT_SIGFPE_HANDLER
-#define CF_PURE_FP_HELPER \
-    (CfPure | CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNonNull)
-#else
-#define CF_PURE_FP_HELPER (CfPure | CfNoReturnValue)
-#endif
-
 static int
 cimpl_fp_eq_fp(double a, double b)
 {
@@ -965,11 +954,3 @@ psy_floatobject_init(void)
     INIT_SVIRTUAL(psyco_computed_float, compute_float, direct_compute_float, 0,
                   0, 0);
 }
-
-#else  /* !HAVE_FP_FN_CALLS */
-INITIALIZATIONFN
-void
-psy_floatobject_init(void)
-{
-}
-#endif /* !HAVE_FP_FN_CALLS */

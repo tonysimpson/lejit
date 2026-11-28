@@ -8,12 +8,6 @@
 #include "vcompiler.h"
 #include <iencoding.h>
 
-#if SIZEOF_LONG == 4
-#define SIZE_OF_LONG_BITS 2
-#else
-#define SIZE_OF_LONG_BITS 2
-#endif
-
 /***************************************************************/
 /*** Condition Codes (a.k.a. the processor 'flags' register) ***/
 
@@ -22,12 +16,9 @@
    if cc is CC_ALWAYS_TRUE/FALSE, and virtual-time otherwise. */
 EXTERNFN vinfo_t *
 psyco_vinfo_condition(PsycoObject *po, condition_code_t cc);
-EXTERNFN VirtualTimeSource
-psyco_source_condition(condition_code_t cc);
 
 /* if 'source' comes from psyco_vinfo_condition(), return its <cc>;
    otherwise return CC_ALWAYS_FALSE. */
-#if HAVE_CCREG
 EXTERNFN condition_code_t
 psyco_vsource_cc(Source source);
 EXTERNFN void
@@ -35,9 +26,6 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
 /* the <cc> of a source from psyco_vinfo_condition (iencoding.c, NEED_CC) */
 EXTERNFN condition_code_t
 cc_from_vsource(Source source);
-#else
-#define psyco_vsource_cc(src) CC_ALWAYS_FALSE
-#endif
 
 /*****************************************************************/
 /***   Calling C functions                                     ***/
@@ -260,9 +248,6 @@ vinfo_t *
 integer_mul(PsycoObject *po, vinfo_t *v1, vinfo_t *v2, bool ovf);
 EXTERNFN
 vinfo_t *
-integer_mul_i(PsycoObject *po, vinfo_t *v1, long value2);
-EXTERNFN
-vinfo_t *
 integer_or(PsycoObject *po, vinfo_t *v1, vinfo_t *v2);
 EXTERNFN
 vinfo_t *
@@ -289,13 +274,7 @@ EXTERNFN /* unsigned */
     integer_urshift_i(PsycoObject *po, vinfo_t *v1, long counter);
 EXTERNFN
 vinfo_t *
-integer_inv(PsycoObject *po, vinfo_t *v1);
-EXTERNFN
-vinfo_t *
 integer_neg(PsycoObject *po, vinfo_t *v1, bool ovf);
-EXTERNFN
-vinfo_t *
-integer_abs(PsycoObject *po, vinfo_t *v1, bool ovf);
 /* Comparison: 'py_op' is one of Python's rich comparison numbers
    Py_LT, Py_LE, Py_EQ, Py_NE, Py_GT, Py_GE
    optionally together with COMPARE_UNSIGNED, CHEAT_MAXINT. */
@@ -309,11 +288,6 @@ integer_cmp_i(PsycoObject *po, vinfo_t *v1, long value2, int py_op);
           LONG_MIN or LONG_MAX */
 #define COMPARE_BASE_MASK 7
 #define COMPARE_OP_MASK 15
-
-/* Return one of two constants, depending on the condition code */
-EXTERNFN vinfo_t *
-integer_conditional(PsycoObject *po, condition_code_t cc, long immed_true,
-                    long immed_false);
 
 /* make a run-time copy of a vinfo_t */
 EXTERNFN vinfo_t *

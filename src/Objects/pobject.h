@@ -12,7 +12,6 @@
 #define FIX_size NONNEG_FIELD(PyVarObject, ob_size, OB_type)
 #define VAR_size FMUT(FIX_size)
 #define FIX_signed_size DEF_FIELD(PyVarObject, ob_size, OB_type)
-#define VAR_signed_size FMUT(FIX_signed_size)
 
 #define iOB_TYPE FIELD_INDEX(OB_type)
 #define iFIX_SIZE FIELD_INDEX(FIX_size)
@@ -191,9 +190,6 @@ EXTERNFN int
 Psyco_TypeIsSubtype(PsycoObject *po, PyTypeObject *a, PyTypeObject *b,
                     bool *result);
 
-#define PsycoSequence_Check(tp) \
-    ((tp)->tp_as_sequence && (tp)->tp_as_sequence->sq_item != NULL)
-
 /* Return the type of an object, or NULL in case of exception (typically
    a promotion exception). */
 EXTERNFN PyTypeObject *
@@ -304,35 +300,6 @@ PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op);
 /* a quick way to specify the type of the object returned by an operation
    when it is known, without having to go into all the details of the
    operation itself (be careful, you must be *sure* of the return type): */
-
-#define DEF_KNOWN_RET_TYPE_1(cname, op, flags, knowntype)         \
-    DEF_KNOWN_RET_TYPE_internal(cname, knowntype,                 \
-                                (PsycoObject * po, vinfo_t * v1), \
-                                (po, op, flags, "v", v1))
-#define DEF_KNOWN_RET_TYPE_2(cname, op, flags, knowntype)                 \
-    DEF_KNOWN_RET_TYPE_internal(                                          \
-        cname, knowntype, (PsycoObject * po, vinfo_t * v1, vinfo_t * v2), \
-        (po, op, flags, "vv", v1, v2))
-#define DEF_KNOWN_RET_TYPE_3(cname, op, flags, knowntype)             \
-    DEF_KNOWN_RET_TYPE_internal(                                      \
-        cname, knowntype,                                             \
-        (PsycoObject * po, vinfo_t * v1, vinfo_t * v2, vinfo_t * v3), \
-        (po, op, flags, "vvv", v1, v2, v3))
-#define DEF_KNOWN_RET_TYPE_4(cname, op, flags, knowntype)                   \
-    DEF_KNOWN_RET_TYPE_internal(cname, knowntype,                           \
-                                (PsycoObject * po, vinfo_t * v1,            \
-                                 vinfo_t * v2, vinfo_t * v3, vinfo_t * v4), \
-                                (po, op, flags, "vvvv", v1, v2, v3, v4))
-
-#define DEF_KNOWN_RET_TYPE_internal(cname, knowntype, fargs, gargs) \
-    static vinfo_t *cname fargs                                     \
-    {                                                               \
-        vinfo_t *result = psyco_generic_call gargs;                 \
-        if (result != NULL && !IS_NOTIMPLEMENTED(result)) {         \
-            Psyco_AssertType(po, result, knowntype);                \
-        }                                                           \
-        return result;                                              \
-    }
 
 /* 'true' unless 'x' is exactly the special 'not implemented' value
    built by psyco_generic_call with CfPyErrNotImplemented */

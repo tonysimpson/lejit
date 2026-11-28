@@ -332,9 +332,6 @@ psyco_cs_promo_stats(void)
 }
 #endif
 
-#define KNOWN_VAR(type, varname, loc) \
-    type varname = (type)(CompileTime_Get(loc->source)->value)
-
 /*****************************************************************/
 /***   Meta functions                                          ***/
 
@@ -499,23 +496,6 @@ Psyco_DefineModuleFast(PyObject *module, char *meth_name, int *meth_flags,
         *meth_flags = METH_FASTCALL;
     Py_XDECREF(fobj);
     return Psyco_DefineModuleFn(module, meth_name, *meth_flags, meta_fn);
-}
-
-DEFINEFN
-PyCFunction
-Psyco_DefineModuleC(PyObject *module, char *meth_name, int meth_flags,
-                    void *meta_fn, void *meta_type_new)
-{
-    PyObject *o = Psyco_GetModuleObject(module, meth_name, NULL);
-    if (o == NULL)
-        return NULL;
-    if (PyType_Check(o) && ((PyTypeObject *)o)->tp_new != NULL) {
-        /* maps a callable type */
-        Psyco_DefineMeta(((PyTypeObject *)o)->tp_new, meta_type_new);
-        return NULL;
-    }
-    else
-        return Psyco_DefineModuleFn(module, meth_name, meth_flags, meta_fn);
 }
 
 DEFINEFN

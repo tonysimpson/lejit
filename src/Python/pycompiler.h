@@ -404,11 +404,6 @@ Psyco_DefineModuleFast(PyObject *module, char *meth_name, int *meth_flags,
 EXTERNFN PyCFunction
 Psyco_DefineMethodFn(PyTypeObject *tp, char *meth_name, int meth_flags,
                      void *meta_fn);
-/* Same as above, but also alternatively accepts a callable type object
-   and maps it to meta_type_new. Returns NULL in this case. */
-EXTERNFN PyCFunction
-Psyco_DefineModuleC(PyObject *module, char *meth_name, int meth_flags,
-                    void *meta_fn, void *meta_type_new);
 
 /* the general-purpose calling routine: it looks for a meta implementation of
    'c_function' and call it if found; if not found, it encode a run-time call
@@ -427,10 +422,6 @@ Psyco_DefineModuleC(PyObject *module, char *meth_name, int meth_flags,
 #define Psyco_META3(po, c_function, flags, arguments, a1, a2, a3)          \
     Psyco_Meta3x(po, c_function, flags, arguments, (long)(a1), (long)(a2), \
                  (long)(a3))
-
-#define Psyco_flag_META1 (condition_code_t) Psyco_META1
-#define Psyco_flag_META2 (condition_code_t) Psyco_META2
-#define Psyco_flag_META3 (condition_code_t) Psyco_META3
 
 EXTERNFN vinfo_t *
 Psyco_Meta1x(PsycoObject *po, void *c_function, int flags,

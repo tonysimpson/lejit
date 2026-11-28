@@ -44,9 +44,6 @@ Psyco_DefineCallMeta(PyTypeObject *tp, call_meta_fn meta);
 
 EXTERNFN vinfo_t *
 PsycoObject_Size(PsycoObject *po, vinfo_t *vi);
-/* where the source's PyIter_Check is a function */
-EXTERNFN vinfo_t *
-PsycoIter_Check(PsycoObject *po, vinfo_t *obj);
 EXTERNFN vinfo_t *
 PsycoMapping_Size(PsycoObject *po, vinfo_t *vi);
 EXTERNFN vinfo_t *
@@ -63,16 +60,7 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i, vinfo_t *value);
 EXTERNFN bool
 PsycoSequence_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *i);
 EXTERNFN vinfo_t *
-PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *o, vinfo_t *i1, vinfo_t *i2);
-EXTERNFN bool
-PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *o, vinfo_t *ilow,
-                       vinfo_t *ihigh, vinfo_t *value);
-EXTERNFN vinfo_t *
 PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob);
-EXTERNFN vinfo_t *
-PsycoSequence_Tuple(PsycoObject *po, vinfo_t *seq);
-EXTERNFN vinfo_t *
-PsycoSequence_List(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *
 PsycoSequence_Fast(PsycoObject *po, vinfo_t *v, const char *m);
 
