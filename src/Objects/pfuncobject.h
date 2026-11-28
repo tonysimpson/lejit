@@ -80,6 +80,32 @@ PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple, vinfo_t *vglobals,
                  PyCodeObject *co);
 EXTERNFN bool
 PsycoGenexpr_Check(vinfo_t *v);
+/* A generator compiled into the for loop that steps it
+   (psyfunc.c:psyco_gen_inline_next): its code (a fixed constant), where
+   it is (a fixed constant: where it paused, INLGEN_RUNNING while its code
+   is compiled into the loop, or INLGEN_ENDED), its function, how many
+   stack items it paused with under the value yielded (a fixed constant),
+   then, while it is paused, its frame's values, laid out by
+   psyfunc.c:inlgen_word. Only the loop's stack holds it. Made real
+   paused, it is the generator CPython has paused there
+   (psyfunc.c:psyco_gen_inline_compute). A pending generator becomes one
+   in place. */
+#define iINLGEN_CODE (iOB_TYPE + 1)
+#define iINLGEN_PLACE (iOB_TYPE + 2)
+#define iINLGEN_FUNC (iOB_TYPE + 3)
+#define iINLGEN_DEPTH (iOB_TYPE + 4)
+#define iINLGEN_WORDS (iOB_TYPE + 5)
+#define INLGEN_RUNNING (-1)
+#define INLGEN_ENDED (-2)
+EXTERNFN void
+PsycoInlineGen_FromPending(PsycoObject *po, vinfo_t *v, int nwords);
+EXTERNFN bool
+PsycoInlineGen_Check(vinfo_t *v);
+EXTERNFN long
+PsycoInlineGen_Place(vinfo_t *v);
+EXTERNFN void
+PsycoInlineGen_SetPlace(PsycoObject *po, vinfo_t *v, long place);
+
 /* A virtual generator: one compiled code has started stepping
    (psyfunc.c:gen_send), its paused state in a record (Python/genrecord.c,
    a run-time reference) in place of the arguments. Anything else makes it

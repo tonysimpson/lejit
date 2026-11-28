@@ -796,6 +796,17 @@ record_type_ready(void)
     return PyType_Ready(&le_gen_record_type);
 }
 
+DEFINEFN bool
+le_gen_record_ready(void)
+{
+    if (!(le_gen_record_type.tp_flags & Py_TPFLAGS_READY) &&
+        record_type_ready() < 0) {
+        PyErr_Clear();
+        return false;
+    }
+    return true;
+}
+
 #if LE_HAS_INTERPRETER_FRAME
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
    it has none or something before it a record's start doesn't do

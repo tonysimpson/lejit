@@ -61,6 +61,10 @@ le_gen_record_start_unit(PyCodeObject *co, bool *takes_iter);
    gone, gives None. */
 EXTERNFN PyObject *
 le_gen_record_real(PyObject *rec);
+/* the record's type made ready, if it isn't: false if it can't be. Done
+   as code that makes records is first compiled. */
+EXTERNFN bool
+le_gen_record_ready(void);
 /* whether 'o' is a record */
 EXTERNFN bool
 le_gen_record_check(PyObject *o);

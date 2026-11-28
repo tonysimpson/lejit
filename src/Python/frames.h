@@ -46,10 +46,22 @@ EXTERNFN PyFunctionObject *
 psyco_innermost_function(PyCodeObject *co);
 /* how many frame objects of inlined frames are kept: compiled code
    leaving an inlined frame that ran Python then calls
-   psyco_inline_frame_left, which lets its own go */
+   psyco_inline_frame_left, which lets its own go. A generator's body
+   compiled into its consumer's loop has its generator made with its frame
+   (inline_gen_realise): left 'paused' at its yield, the generator is
+   returned (a new reference) for psyco_inline_gen_pause, else closed. */
 EXTERNVAR int psyco_inline_frames_kept;
-EXTERNFN int
-psyco_inline_frame_left(void);
+EXTERNFN PyObject *
+psyco_inline_frame_left(long paused);
+/* the generator 'gen' paused at its yield at 'pos', with its 'nstack'
+   stack items under the value yielded, with the words (borrowed) of its
+   body compiled into its consumer's loop: its locals, then its stack */
+EXTERNFN void
+psyco_inline_gen_pause(PyObject *gen, long pos, long nstack, PyObject **words);
+/* the same for a new generator of the function 'func', made so: a new
+   reference, or NULL with an exception */
+EXTERNFN PyObject *
+psyco_inline_gen_new(PyObject *func, long pos, long nstack, PyObject **words);
 
 /* A compiled frame going on interpreted: psyco_resume_begin, then each of
    its f_localsplus and value stack items in order (psyco_resume_value) and
@@ -94,7 +106,7 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
    the function 'func', whose frame is the frame object 'f''s own frame,
    with its words, stack and place: f's reference is taken. Its state is
    FRAME_CREATED where it has one, and it has no origin recorded. NULL with
-   an exception. */
+   an exception. Where 'func' is NULL, its names are its code's. */
 EXTERNFN PyObject *
 le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
 #if LE_HAS_INTERPRETER_FRAME

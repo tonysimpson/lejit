@@ -55,6 +55,24 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *
 psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
                    vinfo_t *comp);
+/* generators compiled into the for loop that steps them (GENEXPR_INLINED):
+   FOR_ITER's step, the yield, and the end of the generator's frame by a
+   return or an exception */
+EXTERNFN int
+psyco_gen_inline_next(PsycoObject *po, vinfo_t *vgen, vinfo_t **out);
+EXTERNFN PsycoObject *
+psyco_gen_inline_yield(PsycoObject *po, vinfo_t *value);
+EXTERNFN void
+psyco_gen_inline_ended(PsycoObject *po);
+/* The generator compiled into a loop of the frame being compiled that
+   has just paused becomes 'g', the generator made with its frame while
+   its body ran (frames.c:psyco_inline_frame_left), a run-time pointer
+   it takes, given its frame. False with an exception. */
+EXTERNFN bool
+psyco_gen_inline_became_real(PsycoObject *po, vinfo_t *g);
+/* 'vgen', paused, made real: the generator CPython has paused there */
+EXTERNFN bool
+psyco_gen_inline_compute(PsycoObject *po, vinfo_t *vgen);
 /* compiled code's step of the generator 'vgen', as a for loop's */
 EXTERNFN vinfo_t *
 psyco_gen_step(PsycoObject *po, vinfo_t *vgen);

@@ -112,6 +112,9 @@ gen_direct.send_tracing                            3.12,3.13                    
 gen_functions.arguments_freed                      3.7,3.8,3.9,3.10,3.11,3.12,3.13,3.14,3.15 not looked at yet
 gen_functions.early_stop                           3.14,3.15                          not looked at yet
 gen_iters.nexts                                    3.12                               not looked at yet
+gen_loops_inlined.keeps_alive                      3.11,3.14,3.15                     an inlined frame asked for has its caller's frame made with it (frames.c:visit_link_frame), where CPython makes that when f_back is read
+gen_loops_inlined.many_kinds                       3.11,3.12,3.13,3.14,3.15           not looked at yet
+gen_loops_inlined.via_inspect                      3.14,3.15                          an inlined frame asked for has its caller's frame made with it (frames.c:visit_link_frame), where CPython makes that when f_back is read
 gen_virtual.closes                                 3.14                               not looked at yet
 gen_virtual.dropped_in_yield_from                  3.14,3.15                          not looked at yet
 gen_virtual.escapes_held                           3.12,3.13,3.14,3.15                not looked at yet

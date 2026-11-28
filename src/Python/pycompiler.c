@@ -618,6 +618,12 @@ pyc_data_build(PsycoObject *po, PyObject *merge_points)
             break;
     po->pr.stack_base = stack_base;
     po->pr.stack_level = i - stack_base;
+    /* a generator compiled into its consumer's loop has no merge points */
+    if ((co->co_flags & LE_BODY_FLAGS) &&
+        GENEXPR_SLOT_MODE(co) < po->vlocals.count &&
+        po->vlocals.items[GENEXPR_SLOT_MODE(co)] != NULL &&
+        psyco_generator_mode(po) == GENEXPR_INLINED)
+        merge_points = psyco_inline_merge_points(merge_points);
     po->pr.merge_points = merge_points;
 }
 
@@ -651,6 +657,8 @@ DEFINEVAR source_virtual_t EReturn;   /* 'return' statement */
 DEFINEVAR source_virtual_t EBreak;    /* 'break' statement */
 DEFINEVAR source_virtual_t EContinue; /* 'continue' statement */
 DEFINEVAR source_virtual_t EInline;   /* request to inline a function */
+DEFINEVAR source_virtual_t EYield;    /* yield of a generator compiled
+                                         into its consumer's loop */
 
 DEFINEFN
 void
@@ -2211,6 +2219,7 @@ psyco_pycompiler_init(void)
     EContinue = psyco_vsource_not_important;
     EBreak = psyco_vsource_not_important;
     EInline = psyco_vsource_not_important;
+    EYield = psyco_vsource_not_important;
     INIT_SVIRTUAL_NOCALL(pending_super, compute_pending_super, 1);
 }
 
@@ -6037,23 +6046,32 @@ may_write_locals_proxy(vinfo_t *container)
 }
 
 /* the frame object kept for an inlined frame being left, if any, goes
-   (frames.c:psyco_inline_frame_left): 'test' first whether any is kept */
+   (frames.c:psyco_inline_frame_left): 'test' first whether any is kept.
+   A generator compiled into the loop, 'paused' at its yield, whose
+   generator was made with its frame, is that generator from then on. */
 static bool
-let_inline_frame_go(PsycoObject *po, bool test)
+let_inline_frame_go(PsycoObject *po, bool test, bool paused)
 {
     vinfo_t *v;
+    condition_code_t cc;
     if (test) {
-        condition_code_t cc =
-            psyco_int32_nonzero_at(po, &psyco_inline_frames_kept);
+        cc = psyco_int32_nonzero_at(po, &psyco_inline_frames_kept);
         if (cc == CC_ERROR)
             return false;
         if (!runtime_condition_f(po, cc))
             return true;
     }
     v = psyco_generic_call(po, psyco_inline_frame_left,
-                           CfReturnTypeInt | CfNoPython, "");
+                           CfReturnTypePtr | CfNoPython, "l", (long)paused);
     if (v == NULL)
         return false;
+    cc = paused ? integer_non_null(po, v) : CC_ALWAYS_FALSE;
+    if (cc == CC_ERROR) {
+        vinfo_decref(v, po);
+        return false;
+    }
+    if (runtime_condition_f(po, cc))
+        return psyco_gen_inline_became_real(po, v);
     vinfo_decref(v, po);
     return true;
 }
@@ -6109,8 +6127,14 @@ psyco_can_go_interpreted(PsycoObject *po)
     if ((po->pr.co->co_flags & LE_BODY_FLAGS) && mode != GENEXPR_RESUMABLE &&
         mode != GENEXPR_DIRECT)
         return false;
+    /* nor with a generator compiled into its loop that has ended, still on
+       the stack until the loop's end pops it: one paused is made real as
+       CPython's generator paused there (psyfunc.c:psyco_gen_inline_compute)
+       */
     for (i = 0; i < nstack; i++)
-        if (is_pseudo_exception_tuple(stack_a[i]))
+        if (is_pseudo_exception_tuple(stack_a[i]) ||
+            (PsycoInlineGen_Check(stack_a[i]) &&
+             PsycoInlineGen_Place(stack_a[i]) < 0))
             return false;
     return true;
 }
@@ -8423,31 +8447,37 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
                 POP_DECREF();
             goto fine;
 
-        case FOR_ITER:
-            v = PsycoIter_Next(po, LE_HAS_GET_ITER_INDEX ? NTOP(2) : TOP());
-            if (v != NULL) {
+        case FOR_ITER: {
+            /* a generator compiled into the loop */
+            int inlined = psyco_gen_inline_next(
+                po, LE_HAS_GET_ITER_INDEX ? NTOP(2) : TOP(), &v);
+            if (inlined < 0)
+                break;
+            if (inlined == 0)
+                v = PsycoIter_Next(po,
+                                   LE_HAS_GET_ITER_INDEX ? NTOP(2) : TOP());
+            if (inlined == 1 || (inlined == 0 && v != NULL)) {
                 /* iterator not exhausted */
                 PUSH(v);
             }
             else {
-                extra_assert(PycException_Occurred(po));
-
-                /* catch PyExc_StopIteration */
-                v = PycException_Matches(po, PyExc_StopIteration);
-                if (runtime_NON_NULL_t(po, v) == true) {
-                    /* iterator ended normally */
+                if (inlined == 0) {
+                    extra_assert(PycException_Occurred(po));
+                    /* catch PyExc_StopIteration */
+                    v = PycException_Matches(po, PyExc_StopIteration);
+                    if (runtime_NON_NULL_t(po, v) != true)
+                        break; /* any other exception, or error in
+                                  runtime_NON_NULL_t() */
                     PycException_Clear(po);
-                    if (!LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
-                        POP_DECREF();
-                    JUMPTO(target);
-                    mp = psyco_next_merge_point(po->pr.merge_points,
-                                                next_instr);
                 }
-                else
-                    break; /* any other exception, or error in
-                              runtime_NON_NULL_t() */
+                /* iterator ended normally */
+                if (!LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
+                    POP_DECREF();
+                JUMPTO(target);
+                mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
             }
             goto fine;
+        }
 
         default:
             return OPCODE_ELSEWHERE;
@@ -9143,7 +9173,8 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             /* a resumable generator returns its value, which gen_send_ex
                makes StopIteration's */
             if ((co->co_flags & CO_GENERATOR) &&
-                psyco_generator_mode(po) != GENEXPR_RESUMABLE) {
+                psyco_generator_mode(po) != GENEXPR_RESUMABLE &&
+                psyco_generator_mode(po) != GENEXPR_INLINED) {
                 /* a fused generator: return the consumer's result; the
                  * generator's own return value is dropped, as the
                  * consumers drop StopIteration's value */
@@ -9216,6 +9247,15 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 PUSH(x);
             }
 #endif
+            /* compiled into its consumer's loop: the frame is left, with
+               the value send() would have pushed for the POP_TOP after,
+               for FOR_ITER (psyfunc.c:psyco_gen_inline_yield) */
+            if (mode == GENEXPR_INLINED) {
+                POP(v);
+                PUSH(psyco_vi_None());
+                PycException_Raise(po, vinfo_new(VirtualTime_New(&EYield)), v);
+                break;
+            }
             v = TOP();
             if (mode == GENEXPR_RESUMABLE) {
                 yield_resumable(po, next_instr - LE_UNIT, false);
@@ -9647,7 +9687,10 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             break;
 
         case POP_BLOCK: {
-            le_block_t *b = block_pop(po);
+            le_block_t *b;
+            if (psyco_generator_mode(po) == GENEXPR_INLINED)
+                goto fine; /* SETUP_LOOP's */
+            b = block_pop(po);
             if (LE_HAS_POP_BLOCK_UNWINDS) {
                 while (STACK_LEVEL() > b->b_level) {
                     POP(v);
@@ -9876,6 +9919,12 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
         case SETUP_LOOP:
         case SETUP_EXCEPT:
         case SETUP_FINALLY:
+            /* a generator compiled into its consumer's loop keeps no
+               blocks, and has only loops with no break or continue
+               (mergepoints.c:inlinable_generator) */
+            if (opcode == SETUP_LOOP &&
+                psyco_generator_mode(po) == GENEXPR_INLINED)
+                goto fine;
             block_setup(po, opcode, INSTR_OFFSET() + LE_JUMP_BYTES(oparg),
                         STACK_LEVEL());
             goto fine;
@@ -10229,8 +10278,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     saved_rec_limit = Py_GetRecursionLimit();
     Py_SetRecursionLimit(saved_rec_limit + 50);
 
-    /* a frame with handlers has its catcher word (catcher_word) */
-    if ((psyco_mp_flags(po->pr.merge_points) &
+    /* a frame with handlers has its catcher word (catcher_word); an
+       inlined generator's only handler, PEP 479's, runs as it is left */
+    if (!po->pr.is_inlining &&
+        (psyco_mp_flags(po->pr.merge_points) &
          (MP_FLAGS_HAS_EXCEPT | MP_FLAGS_HAS_FINALLY)) != 0 &&
         (LOC_CONTINUATION->array == NullArray))
         psyco_emit_header(po, 1);
@@ -10385,8 +10436,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 if (po->pr.is_inlining && po->pr.python_call)
                     po->pr.inline_ran_python = 1;
                 if (po->pr.inline_left) {
+                    bool paused = po->pr.inline_left == INLINE_LEFT_PAUSED;
                     po->pr.inline_left = 0;
-                    if (!let_inline_frame_go(po, true))
+                    if (!let_inline_frame_go(po, true, paused))
                         break;
                 }
                 po->pr.resume_pending = 0;
@@ -10530,6 +10582,28 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             /* unwind the inlined frame by restoring the parent one */
             vinfo_t *v = LOC_INLINING;
             bool returned = PycException_Is(po, &EReturn);
+            /* a generator compiled into its consumer's loop */
+            bool gen = psyco_generator_mode(po) == GENEXPR_INLINED;
+            if (PycException_Is(po, &EYield)) {
+                /* it yielded: its frame is kept in the loop's generator,
+                   and FOR_ITER restarts with the value, as an inlined
+                   call's instruction does with its result below */
+                vinfo_t *value = po->pr.val;
+                po->pr.val = NULL;
+                clear_pseudo_exception(po);
+                if (po->pr.python_call)
+                    po->pr.inline_ran_python = 1;
+                po = psyco_gen_inline_yield(po, value);
+                stack_a = po->vlocals.items + po->pr.stack_base;
+                po->pr.is_inlining = false;
+                if (po->pr.inline_ran_python) {
+                    po->pr.resume_pending = 1;
+                    po->pr.inline_left = INLINE_LEFT_PAUSED;
+                }
+                po->pr.inline_ran_python = 0;
+                need_reference(po, LOC_INLINING);
+                continue;
+            }
             /* the instruction left by an exception may have run Python */
             if (po->pr.python_call)
                 po->pr.inline_ran_python = 1;
@@ -10542,6 +10616,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             stack_a = po->vlocals.items + po->pr.stack_base;
             vinfo_decref(v, po);
             po->pr.is_inlining = false;
+            if (gen)
+                psyco_gen_inline_ended(po);
             if (!returned)
                 psyco_inline_exit(po);
             /* the inlined frame went on interpreted, or ran Python that may
@@ -10553,12 +10629,21 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             if (po->pr.inline_ran_python) {
                 if (returned)
                     po->pr.inline_left = 1;
-                else if (!let_inline_frame_go(po, false))
+                else if (!let_inline_frame_go(po, false, false))
                     break;
             }
             po->pr.inline_ran_python = 0;
             resumed = 0; /* the caller's handlers are still to run */
 
+            if (gen && returned) {
+                /* the generator's return value, which FOR_ITER drops with
+                   StopIteration's, goes after its frame, and FOR_ITER
+                   restarts to end the loop */
+                vinfo_decref(po->pr.val, po);
+                po->pr.val = NULL;
+                clear_pseudo_exception(po);
+                continue;
+            }
             if (PycException_Is(po, &EReturn)) {
                 /* caught EReturn from the inlined frame */
 
@@ -10588,6 +10673,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 clear_pseudo_exception(po);
                 PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)),
                                    NULL);
+                /* PEP 479, as gen_send_ex, for a generator */
+                if (gen && !psyco_generic_call(po, cimpl_generator_stop,
+                                               CfNoReturnValue, "l", 0L))
+                    break;
                 PsycoTraceBack_Here(po, po->pr.next_instr);
             }
             raised_again = 0;

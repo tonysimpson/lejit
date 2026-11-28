@@ -66,6 +66,7 @@ EXTERNVAR source_virtual_t EReturn;   /* 'return' statement */
 EXTERNVAR source_virtual_t EBreak;    /* 'break' statement */
 EXTERNVAR source_virtual_t EContinue; /* 'continue' statement */
 EXTERNVAR source_virtual_t EInline; /* inline a frame inside a parent frame */
+EXTERNVAR source_virtual_t EYield;  /* psyfunc.c:psyco_gen_inline_yield */
 
 /* Check whether a pseudo-exception is currently set */
 PSY_INLINE bool
@@ -143,6 +144,7 @@ PycException_IsPython(PsycoObject *po)
     Source src = po->pr.exc->source;
     if (is_virtualtime(src)) {
         return !(src == VirtualTime_New(&EReturn) ||
+                 src == VirtualTime_New(&EYield) ||
                  src == VirtualTime_New(&EBreak) ||
                  src == VirtualTime_New(&EContinue) ||
                  psyco_vsource_is_promotion(src));

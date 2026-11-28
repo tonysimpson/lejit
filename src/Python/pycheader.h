@@ -85,6 +85,14 @@
 #define GENEXPR_SUM_FLOAT 10   /* acc a float, the compensation a double */
 #define GENEXPR_SUM_COMPLEX 11 /* acc the complex sum's state */
 #define GENEXPR_SUM_GENERIC 12 /* plain +, for good */
+/* A generator compiled into the for loop that steps it
+   (psyfunc.c:psyco_gen_inline_next), inlined there from where it paused to
+   its yield, which leaves it paused in the loop's virtual generator and
+   gives the loop's FOR_ITER the value; its return ends it. acc is
+   unused. */
+#define GENEXPR_INLINED 13
+/* pr.inline_left for a generator compiled into its loop left at its yield */
+#define INLINE_LEFT_PAUSED 2
 #define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)
 /* the code whose body may run compiled on its own frame, with the slots
    above (psyco_generator_mode) */
@@ -126,9 +134,11 @@ typedef struct {
     char inline_ran_python; /* the inlined frame made a call that may run
                                Python, which may have written its caller's
                                locals through a proxy */
-    char inline_left;       /* an inlined frame that ran Python returned: the
-                               instruction that called it lets its kept frame
-                               go (pycompiler.c:let_inline_frame_go) */
+    char inline_left;       /* an inlined frame that ran Python returned, or
+                               a generator compiled into a loop paused
+                               (INLINE_LEFT_PAUSED): the instruction that
+                               called it lets its kept frame go
+                               (pycompiler.c:let_inline_frame_go) */
     char go_interpreted;    /* the frame goes on in ceval from the next
                                instruction: a type-promotion site's
                                megamorphic version (Psyco_NeedType) */
