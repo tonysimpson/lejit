@@ -271,10 +271,10 @@ EXTERNFN bool
 decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
 
 /* called by psyco_emit_header() */
-#define INITIALIZE_FRAME_LOCALS(nframelocal)                              \
-    do {                                                                  \
-        STACK_CORRECTION(sizeof(long) * ((nframelocal) - 1));             \
-        PUSH_IMMED(0); /* the catcher word (pycompiler.c:catcher_word) */ \
+#define INITIALIZE_FRAME_LOCALS(nframelocal)                      \
+    do {                                                          \
+        STACK_CORRECTION(sizeof(long) * ((nframelocal) - 1));     \
+        PUSH_IMMED(0); /* the end word (pycompiler.c:end_word) */ \
     } while (0)
 
 /* The inline attribute store into a split instance dict, or into a

@@ -32,10 +32,10 @@
  * pseudo-exception (EReturn, EBreak, EContinue) differs from ceval: it
  * gets a single 3-tuple, which END_FINALLY tells apart from an exception
  * type. The one word psyco_emit_header reserves for a function with
- * handlers is its catcher word: the traceback frame of the exception it
- * last caught, or a frame object made for the call while it runs, held
- * while something else may read that frame's locals (catcher_flush,
- * frames.c psyco_frame_catch and stand_in_word).
+ * handlers is its end word: the frame object standing for the call (its
+ * kept frame, which is the traceback frame of an exception it catches, or
+ * the real one), held so that it gets the locals the call ends with
+ * (end_flush, frames.c psyco_frame_catch and stand_in_word).
  */
 #include "pycompiler.h"
 #include "../codemanager.h"
@@ -835,13 +835,12 @@ cimpl_pyerr_fetch(PyObject *target[])
    target[] gets the six objects ceval pushes, bottom first: old tb, value,
    type, then new tb, value, type (new references). ceval may push NULL for
    the old tb/value; LeJIT's stack can't hold NULL, and None means the same
-   to exc_info readers. 'word' is the catching frame's catcher word, which
-   takes the frame of the entry made for it (frames.c:psyco_frame_catch),
-   and 'own' its slot; not where making the exception failed, as the
-   traceback is then the failure's. */
+   to exc_info readers. 'word' is the catching frame's end word, which
+   takes the frame of the entry made for it (frames.c:psyco_frame_catch);
+   not where making the exception failed, as the traceback is then the
+   failure's. */
 static void
-cimpl_push_exc_info(PyObject *target[], PyObject **word,
-                    stack_frame_info_t **own)
+cimpl_push_exc_info(PyObject *target[], PyObject **word)
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyObject *otype, *ovalue, *otb;
@@ -872,13 +871,13 @@ cimpl_push_exc_info(PyObject *target[], PyObject **word,
     target[4] = val;
     target[5] = exc;
     if (word != NULL && tb == raised_tb && PyTraceBack_Check(tb))
-        psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word, own);
+        psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word);
 }
 
 /* The restoring half (ceval's UNWIND_EXCEPT_HANDLER), for POP_EXCEPT and for
    unwinding through an EXCEPT_HANDLER block. Doesn't consume its arguments
    (psyco_generic_call can't express that); the caller decrefs them. The
-   frame in the catcher word stays until the call ends, as CPython's frame
+   frame in the end word stays until the call ends, as CPython's frame
    object does, for the call's next traceback entries. */
 static void
 cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb)
@@ -900,16 +899,16 @@ cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb)
    ceval.c's exception_unwind: the exception being raised is taken
    (exc.h:le_exc_take), and its value returned for the handler's stack (a
    new reference). The handled exception changes only at the handler's
-   PUSH_EXC_INFO. 'word' and 'own' as for cimpl_push_exc_info. */
+   PUSH_EXC_INFO. 'word' as for cimpl_push_exc_info. */
 static PyObject *
-cimpl_catch(PyObject **word, stack_frame_info_t **own)
+cimpl_catch(PyObject **word)
 {
     PyObject *val, *tb;
     extra_assert(PyErr_Occurred());
     val = le_exc_take(PyThreadState_GET());
     tb = ((PyBaseExceptionObject *)val)->traceback;
     if (word != NULL && tb != NULL && PyTraceBack_Check(tb))
-        psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word, own);
+        psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word);
     return val;
 }
 
@@ -1057,7 +1056,7 @@ set_frame_place(PyFrameObject *f, int lasti, int lineno)
 }
 
 /* the frame object that already stands for a compiled frame running code:
-   the real one, one asked for, or its catcher word's; NULL if none */
+   the real one, one asked for, or its end word's; NULL if none */
 static PyFrameObject *
 existing_frame(PyCodeObject *code, PyObject **word)
 {
@@ -1080,37 +1079,27 @@ cimpl_reraise_place(PyCodeObject *code, int pos, int lineno, PyObject **word)
 }
 
 static PyFrameObject *
-cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
-                int lasti, int lineno, PyObject **word)
+cimpl_new_frame(PyCodeObject *code, PyObject *globals, int lasti, int lineno,
+                PyObject **word)
 {
     /* The real frame if the code has one (run by LeCode_Run), the one asked
-       for, or the one that stood for the call when it caught an exception
-       (its catcher word's, 'word'), so that the call's entries share one
-       frame, as CPython's do. Otherwise a new one, holding the frame's
-       function where LeJIT knows it (le_pyframe_new). Its f_back is the
-       entry's over it (psyco_frame_link_callee), or for the frame that
-       catches the exception its caller, when read
-       (frames.c:catcher_caller). */
-    PyFrameObject *result = existing_frame(code, word);
-    le_frame_t *back = le_frame_current(tstate);
-    PyFunctionObject *func;
-    if (result != NULL) {
+       for, or the one in its end word, so that the call's entries share
+       one frame, as CPython's do. A frame that catches the exception (it
+       gives its end word, 'word') takes its kept frame, which reads its
+       locals and caller while it runs and gets its locals at its end.
+       Otherwise a new one, holding the frame's function where LeJIT knows
+       it (psyco_build_pyframe), whose f_back is the entry's over it
+       (psyco_frame_link_callee). */
+    PyFrameObject *result = NULL;
+    if (word != NULL && psyco_running_real_frame(code) == NULL)
+        result = psyco_innermost_view(code, globals, word); /* found or made */
+    if (result == NULL && (result = existing_frame(code, word)) != NULL)
         Py_INCREF(result);
+    if (result == NULL)
+        result =
+            psyco_build_pyframe(code, globals, psyco_innermost_function(code));
+    if (result != NULL)
         set_frame_place(result, lasti, lineno);
-        return result;
-    }
-    /* frame objects are not created in stack order with Psyco, so it's
-       probably better not to create plain wrong chained lists */
-    func = psyco_innermost_function(code);
-    le_frame_set_current(tstate, NULL);
-    result = le_pyframe_new(tstate, code, globals, func);
-    le_frame_set_current(tstate, back);
-    if (result != NULL) {
-        /* a frame reused from the code's free one may hold a note */
-        if (code->co_stacksize >= 3)
-            le_pyframe_stack(result)[0] = NULL;
-        set_frame_place(result, lasti, lineno);
-    }
     return result;
 }
 
@@ -1119,8 +1108,7 @@ cimpl_rt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
                    int lineno, PyObject **word)
 {
     PyThreadState *tstate = PyThreadState_GET();
-    PyFrameObject *f =
-        cimpl_new_frame(tstate, code, globals, lasti, lineno, word);
+    PyFrameObject *f = cimpl_new_frame(code, globals, lasti, lineno, word);
     /* an out-of-memory error just replaces the current exception */
     if (f != NULL) {
         /* the exception came out of the frame of the last entry: if that is an
@@ -1158,8 +1146,7 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
     PyObject *oldtb;
     PyObject *newtb;
     PyThreadState *tstate = PyThreadState_GET();
-    PyFrameObject *f =
-        cimpl_new_frame(tstate, code, globals, lasti, lineno, word);
+    PyFrameObject *f = cimpl_new_frame(code, globals, lasti, lineno, word);
     if (f == NULL)
         return NULL;
     if (LE_FAIL(LE_FAIL_TRACEBACK)) {
@@ -1858,45 +1845,37 @@ traceback_locals(PsycoObject *po, vinfo_t *tb)
     }
 }
 
-/* A frame with handlers keeps a catcher word in its stack, the first
-   word its header reserves (psyco_emit_header), NULL at entry. When the
-   frame catches an exception, the word takes a reference to the frame of
-   the entry made for it (frames.c:psyco_frame_catch): a frame reads its
-   locals from while the call runs, which stands for the call in its later
-   entries too (cimpl_new_frame). So the locals are written when Python
-   reads them, as they are then, not as the exception passes, and once
-   more as the call ends, while something besides the word holds the frame
-   (catcher_flush). A frame object made for the call while it runs, its
-   kept frame or the real one, goes in a free word too
-   (frames.c:stand_in_word), so that it keeps the locals the call ends
-   with. NULL in an inlined frame, which has no handlers: its
-   calls map its parent's locals too (codegen.c:psyco_note_call_site). */
+/* A frame with handlers keeps an end word in its stack, the first word
+   its header reserves (psyco_emit_header), NULL at entry. A frame object
+   made for the call while it runs, its kept frame or the real one, goes
+   in it while it is free (frames.c:stand_in_word), so that it keeps the
+   locals the call ends with: they are written as the call ends, while
+   something besides the word holds the frame (end_flush). When the frame
+   catches an exception, the entry made for it takes the kept frame
+   (cimpl_new_frame), which the word then holds
+   (frames.c:psyco_frame_catch); its locals are written when Python reads
+   them, as they are then, not as the exception passes. NULL in an
+   inlined frame, which has no handlers: its calls map its parent's locals
+   too (codegen.c:psyco_note_call_site). */
 static vinfo_t *
-catcher_word(PsycoObject *po)
+end_word(PsycoObject *po)
 {
     if (po->pr.is_inlining || LOC_CONTINUATION->array->count == 0)
         return NULL;
     return LOC_CONTINUATION->array->items[0];
 }
 
-/* A frame with handlers may hold the frame of an exception it caught,
-   whose locals Python reads from this frame's maps while it runs
-   (frames.c:frame_sync_locals). A virtual value no map can give (a list,
+/* A frame with handlers may be the frame of an exception it caught, whose
+   locals Python reads from this frame's maps while it runs
+   (frames.c:view_sync). A virtual value no map can give (a list,
    which is mutable) is made real as it becomes a local, so that a read
    finds it, as CPython's frame holds the object. */
 static bool
-catcher_local_readable(PsycoObject *po, vinfo_t *v)
+end_local_readable(PsycoObject *po, vinfo_t *v)
 {
-    if (catcher_word(po) == NULL || psyco_locals_map_reads(v, 0))
+    if (end_word(po) == NULL || psyco_locals_map_reads(v, 0))
         return true;
     return compute_vinfo(v, po);
-}
-
-/* the catching frame's own slot, as a stack position for 'r' */
-static vinfo_t *
-own_slot(void)
-{
-    return vinfo_new(RunTime_NewStack(INITIAL_STACK_DEPTH, false, false));
 }
 
 /* an exception raised now is caught in this frame, which has a word */
@@ -1905,11 +1884,11 @@ caught_here(PsycoObject *po)
 {
 #if LE_HAS_EXCEPTION_TABLE
     le_handler_t h;
-    return catcher_word(po) != NULL &&
+    return end_word(po) != NULL &&
            le_handler_find(po->pr.co, po->pr.next_instr, &h);
 #else
     int i;
-    if (catcher_word(po) == NULL)
+    if (end_word(po) == NULL)
         return false;
     for (i = po->pr.iblock; i-- > 0;) {
         int type = po->pr.blockstack[i].b_type;
@@ -1921,11 +1900,11 @@ caught_here(PsycoObject *po)
 #endif
 }
 
-/* five of the frame's locals, from 'start', into the frame its catcher
-   word holds, if any */
+/* five of the frame's locals, from 'start', into the frame its end word
+   holds, if any */
 static void
-cimpl_catcher_locals(PyObject **word, long start, PyObject *v0, PyObject *v1,
-                     PyObject *v2, PyObject *v3, PyObject *v4)
+cimpl_end_locals(PyObject **word, long start, PyObject *v0, PyObject *v1,
+                 PyObject *v2, PyObject *v3, PyObject *v4)
 {
     PyObject *values[5] = {v0, v1, v2, v3, v4};
     if (*word != NULL)
@@ -1933,13 +1912,13 @@ cimpl_catcher_locals(PyObject **word, long start, PyObject *v0, PyObject *v1,
                                  5);
 }
 
-/* If the catcher word holds a frame something else holds too, it gets
+/* If the end word holds a frame something else holds too, it gets
    the locals now, and is let go after; one nothing else holds is let
    go. The tests are compiled out of line when first taken. */
 static bool
-catcher_flush(PsycoObject *po)
+end_flush(PsycoObject *po)
 {
-    vinfo_t *word = catcher_word(po), *now, *shared, *held = NULL;
+    vinfo_t *word = end_word(po), *now, *shared, *held = NULL;
     int on;
     if (word == NULL)
         return true;
@@ -1948,8 +1927,8 @@ catcher_flush(PsycoObject *po)
     on = runtime_NON_NULL_f(po, now);
     if (on <= 0)
         return on == 0;
-    shared = psyco_generic_call(po, psyco_frame_catcher_shared,
-                                CfReturnTypeLong, "r", word);
+    shared = psyco_generic_call(po, psyco_end_word_shared, CfReturnTypeLong,
+                                "r", word);
     if (shared == NULL)
         return false;
     on = runtime_NON_NULL_t(po, shared);
@@ -1963,7 +1942,7 @@ catcher_flush(PsycoObject *po)
         if (held == NULL)
             return false;
     }
-    on = locals_calls(po, (void *)cimpl_catcher_locals, 'r', (long)word);
+    on = locals_calls(po, (void *)cimpl_end_locals, 'r', (long)word);
     if (held != NULL) {
         if (on)
             psyco_generic_call(po, cimpl_exc_restore,
@@ -1971,7 +1950,7 @@ catcher_flush(PsycoObject *po)
         vinfo_decref(held, po);
     }
     if (on)
-        on = psyco_generic_call(po, psyco_frame_catcher_end, CfNoReturnValue,
+        on = psyco_generic_call(po, psyco_end_word_release, CfNoReturnValue,
                                 "r", word) != NULL;
     return on;
 }
@@ -2031,7 +2010,7 @@ handler_drops_exception(PyCodeObject *co, int handler)
 }
 
 /* Whether an exception raised now puts the frame's locals in its entry's
-   frame now: not if this frame catches it (catcher_word), nor for an
+   frame now: not if this frame catches it (end_word), nor for an
    inlined frame whose caller drops it unseen. A frame it leaves has them
    as they are when it leaves. */
 static bool
@@ -2093,7 +2072,7 @@ PycException_Reraise(PsycoObject *po, vinfo_t *exc, vinfo_t *val, vinfo_t *tb)
 static void
 reraise_place(PsycoObject *po, int pos)
 {
-    vinfo_t *word = catcher_word(po);
+    vinfo_t *word = end_word(po);
     psyco_generic_call(po, cimpl_reraise_place, CfNoReturnValue,
                        word != NULL ? "lllr" : "llll", (long)po->pr.co,
                        (long)pos, (long)PyCode_Addr2Line(po->pr.co, pos),
@@ -2106,7 +2085,9 @@ PsycoTraceBack_Here(PsycoObject *po, int pos)
 {
     int lasti = le_place(le_code(po->pr.co), pos);
     int lineno = PyCode_Addr2Line(po->pr.co, lasti);
-    vinfo_t *word = catcher_word(po);
+    /* the end word, given when this frame catches the exception, so that
+       the entry's frame is the frame's kept frame (cimpl_new_frame) */
+    vinfo_t *word = caught_here(po) ? end_word(po) : NULL;
     const char *tags = word != NULL ? "lvllr" : "lvlll";
 
     if (PycException_Is(po, &ERtPython)) {
@@ -5013,11 +4994,10 @@ cimpl_unpack_list(PyObject *listobject, long argcnt, PyObject **sp)
    for no active exception gets its entry here instead (ceval's error:).
    A handler takes no frame from an exception raised again
    (psyco_pycompiler_mainloop), so 'word', given when one in this frame will
-   catch it, takes the RuntimeError's frame here ('own' as for
-   cimpl_push_exc_info). */
+   catch it, takes the RuntimeError's frame here. */
 static void
 cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti, int lineno,
-              PyObject **word, stack_frame_info_t **own)
+              PyObject **word)
 {
     PyObject *type, *value, *tb;
     PyThreadState *tstate = PyThreadState_GET();
@@ -5027,7 +5007,7 @@ cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti, int lineno,
         cimpl_rt_traceback(code, globals, lasti, lineno, word);
         tb = le_exc_traceback(tstate);
         if (word != NULL && tb != NULL && PyTraceBack_Check(tb))
-            psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word, own);
+            psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word);
         return;
     }
     Py_XINCREF(type);
@@ -5491,7 +5471,7 @@ exit_function(PsycoObject *po)
     (void)last;
 
     /* the frame that stood for the call keeps its locals as they end */
-    if (!catcher_flush(po))
+    if (!end_flush(po))
         return NULL;
     if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po))
         return NULL;
@@ -6088,7 +6068,7 @@ resume_state(PsycoObject *po, int nstack, long frame)
        caller's, which goes on compiled once the call returns */
     int nblocks = po->pr.is_inlining ? 0 : po->pr.iblock;
     int i;
-    vinfo_t *st, *word = catcher_word(po);
+    vinfo_t *st, *word = end_word(po);
 
     st = psyco_generic_call(
         po, psyco_resume_begin, CfReturnTypePtr | CfPyErrIfNull,
@@ -6319,7 +6299,7 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
         case STORE_FAST: {
             vinfo_t *value;
             value = NTOP(1);
-            if (!catcher_local_readable(po, value))
+            if (!end_local_readable(po, value))
                 break;
             /* a pending generator a local holds is never fused (more
                than a temporary holds it), and the frame's locals maps
@@ -6356,7 +6336,7 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
 
         case STORE_FAST_LOAD_FAST: {
             vinfo_t *value = NTOP(1);
-            if (!catcher_local_readable(po, value))
+            if (!end_local_readable(po, value))
                 break;
             SETLOCAL(oparg >> 4, value);
             POP(value);
@@ -6370,8 +6350,8 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
 
         case STORE_FAST_STORE_FAST: {
             vinfo_t *top = NTOP(1), *second = NTOP(2);
-            if (!catcher_local_readable(po, top) ||
-                !catcher_local_readable(po, second))
+            if (!end_local_readable(po, top) ||
+                !end_local_readable(po, second))
                 break;
             SETLOCAL(oparg >> 4, top);
             POP(top);
@@ -8898,7 +8878,7 @@ records_held(PsycoObject *po, vinfo_t **stack_a, int nstack)
    locals and the stack items under the value are stored, each a reference
    the frame takes (a local's word is NULL already where the run holds
    NULL). Its caught exception's frame is let go first, given the locals
-   (catcher_flush). */
+   (end_flush). */
 static void
 yield_resumable(PsycoObject *po, int at, bool after_await)
 {
@@ -8918,7 +8898,7 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
 #endif
     if (!records_held(po, stack_a, nstack))
         return;
-    if (!catcher_flush(po))
+    if (!end_flush(po))
         return;
     /* every item real before anything is stored: making one may call */
     for (i = 0; i < nlocals + nstack; i++) {
@@ -9557,21 +9537,17 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                                        w, v);
                     break;
                 case 0:
-                    if (caught_here(po)) {
-                        vinfo_t *own = own_slot();
+                    if (caught_here(po))
                         psyco_generic_call(
-                            po, cimpl_reraise, CfPyErrAlways, "lvllrr",
+                            po, cimpl_reraise, CfPyErrAlways, "lvllr",
                             (long)co, LOC_GLOBALS, (long)po->pr.next_instr,
                             (long)PyCode_Addr2Line(co, po->pr.next_instr),
-                            catcher_word(po), own);
-                        vinfo_decref(own, po);
-                    }
+                            end_word(po));
                     else
                         psyco_generic_call(
-                            po, cimpl_reraise, CfPyErrAlways, "lvllll",
+                            po, cimpl_reraise, CfPyErrAlways, "lvlll",
                             (long)co, LOC_GLOBALS, (long)po->pr.next_instr,
-                            (long)PyCode_Addr2Line(co, po->pr.next_instr), 0L,
-                            0L);
+                            (long)PyCode_Addr2Line(co, po->pr.next_instr), 0L);
                     break;
                 default:
                     PycException_SetString(po, PyExc_SystemError,
@@ -10171,7 +10147,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     saved_rec_limit = Py_GetRecursionLimit();
     Py_SetRecursionLimit(saved_rec_limit + 50);
 
-    /* a frame with handlers has its catcher word (catcher_word); an
+    /* a frame with handlers has its end word (end_word); an
        inlined generator's only handler, PEP 479's, runs as it is left */
     if (!po->pr.is_inlining &&
         (psyco_mp_flags(po->pr.merge_points) &
@@ -10599,23 +10575,19 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 #endif
             if (le_handler_find(po->pr.co, handler_pos, &h)) {
                 int next_instr;
-                vinfo_t *word = catcher_word(po), *own, *v;
+                vinfo_t *word = end_word(po), *v;
                 if (!compute_and_raise_exception(po))
                     break;
                 clear_pseudo_exception(po);
                 while (STACK_LEVEL() > h.depth) POP_DECREF();
                 if (h.lasti)
                     PUSH(offset_int(lasti));
-                if (word != NULL && !raised_again) {
-                    own = own_slot();
+                if (word != NULL && !raised_again)
                     v = psyco_generic_call(po, cimpl_catch,
-                                           CfCommonNewRefPyObject, "rr", word,
-                                           own);
-                    vinfo_decref(own, po);
-                }
+                                           CfCommonNewRefPyObject, "r", word);
                 else
-                    v = psyco_generic_call(
-                        po, cimpl_catch, CfCommonNewRefPyObject, "ll", 0L, 0L);
+                    v = psyco_generic_call(po, cimpl_catch,
+                                           CfCommonNewRefPyObject, "l", 0L);
                 if (v == NULL)
                     break;
                 PUSH(v);
@@ -10682,24 +10654,20 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                    it. */
                 int next_instr, i, handler = b->b_handler;
                 vinfo_array_t *array;
-                vinfo_t *word = catcher_word(po), *own, *ok;
+                vinfo_t *word = end_word(po), *ok;
                 if (!compute_and_raise_exception(po))
                     break;
                 clear_pseudo_exception(po);
                 block_setup(po, EXCEPT_HANDLER, -1,
                             STACK_LEVEL()); /* reuses *b */
                 array = array_new(6);
-                if (word != NULL && !raised_again) {
-                    own = own_slot();
-                    ok = psyco_generic_call(po, cimpl_push_exc_info,
-                                            CfNoReturnValue, "Arr", array,
-                                            word, own);
-                    vinfo_decref(own, po);
-                }
+                if (word != NULL && !raised_again)
+                    ok =
+                        psyco_generic_call(po, cimpl_push_exc_info,
+                                           CfNoReturnValue, "Ar", array, word);
                 else
                     ok = psyco_generic_call(po, cimpl_push_exc_info,
-                                            CfNoReturnValue, "All", array, 0L,
-                                            0L);
+                                            CfNoReturnValue, "Al", array, 0L);
                 if (ok == NULL) {
                     array_release(array);
                     break;

@@ -37,6 +37,12 @@ psyco_activation_returned(long *sp);
    inlined in it, if it is of code 'co' (borrowed), else NULL */
 EXTERNFN PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co);
+/* the kept frame of the innermost compiled frame, a compiled callee or a
+   frameless run's own frame of code 'co' in 'globals', made now if need
+   be and kept until the frame ends, standing for the call in its end
+   word 'word' (a new reference); else NULL */
+EXTERNFN PyFrameObject *
+psyco_innermost_view(PyCodeObject *co, PyObject *globals, PyObject **word);
 /* the function of the innermost compiled frame, if it is of code 'co' and
    LeJIT knows it (borrowed), else NULL */
 EXTERNFN PyFunctionObject *
@@ -84,19 +90,18 @@ psyco_resume_value(struct resume_s *st, long i, PyObject *v);
 EXTERNFN void
 psyco_resume_block(struct resume_s *st, long type, long handler, long level);
 #endif
-/* A compiled frame with handlers has a catcher word, which holds a
-   reference to its traceback frame from when it catches an exception
-   until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
-   'f' in it as the frame catches, the innermost compiled frame, whose own
-   slot is 'own'. As the call ends, _shared lets it go if nothing else
-   holds it, and says whether something does; _end lets it go once given
-   its locals. */
+/* A compiled frame with handlers has an end word, which holds a reference
+   to the frame object standing for its call, so that it gets the locals
+   the call ends with (pycompiler.c:end_word). psyco_frame_catch puts 'f'
+   in it as the frame catches. As the call ends, psyco_end_word_shared
+   lets it go if nothing else holds it, and says whether something does;
+   psyco_end_word_release lets it go once given its locals. */
 EXTERNFN void
-psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own);
+psyco_frame_catch(PyFrameObject *f, PyObject **word);
 EXTERNFN long
-psyco_frame_catcher_shared(PyObject **word);
+psyco_end_word_shared(PyObject **word);
 EXTERNFN void
-psyco_frame_catcher_end(PyObject **word);
+psyco_end_word_release(PyObject **word);
 EXTERNFN void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
 /* A new generator, coroutine or async generator (by the code's flags) of
@@ -125,10 +130,11 @@ le_gen_init_names(PyGenObject *gen, PyFunctionObject *func);
    interpreter frames, one with the function owns its frame, as
    PyFrame_New's does, and is all that is made, as CPython's frame for the
    call holds its function; one without holds a function of its own, which
-   PyFrame_New makes. NULL with an exception. */
+   PyFrame_New makes. It is linked to no frame, at no place (lasti -1),
+   and holds no note. NULL with an exception. */
 EXTERNFN PyFrameObject *
-le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
-               PyFunctionObject *func);
+psyco_build_pyframe(PyCodeObject *co, PyObject *globals,
+                    PyFunctionObject *func);
 /* a frame's place, as CPython gives it, while the instruction at 'pos'
    in its code 'co' calls: the instruction's last unit, past its caches */
 EXTERNFN int
@@ -177,7 +183,7 @@ struct locals_map_s {
     int nvalues;
     long below;
     long ret_below; /* a note's: where the frame keeps its return address */
-    /* the frame's catcher word (pycompiler.c:catcher_word) as an offset
+    /* the frame's end word (pycompiler.c:end_word) as an offset
        from data, or -1 if it has none */
     long word;
     /* whether one more value follows the locals': the function of the
@@ -293,7 +299,7 @@ typedef struct frame_runtime_s {
     int resumed;
     int exposed;                   /* frames.c:expose */
     struct walked_calls_s *walked; /* frames.c:innermost_slot, or NULL */
-    PyObject **word; /* the run's catcher word (frames.c:psyco_frame_stands),
+    PyObject **word; /* the run's end word (frames.c:psyco_frame_stands),
                         or NULL if not found yet */
     struct frame_runtime_s *next; /* the next outer one */
     /* the next run of any thread whose frame hashes alike (frames.c:
