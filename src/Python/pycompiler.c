@@ -1080,37 +1080,27 @@ cimpl_reraise_place(PyCodeObject *code, int pos, int lineno, PyObject **word)
 }
 
 static PyFrameObject *
-cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
-                int lasti, int lineno, PyObject **word)
+cimpl_new_frame(PyCodeObject *code, PyObject *globals, int lasti, int lineno,
+                PyObject **word)
 {
     /* The real frame if the code has one (run by LeCode_Run), the one asked
        for, or the one that stood for the call when it caught an exception
        (its catcher word's, 'word'), so that the call's entries share one
        frame, as CPython's do. Otherwise a new one, holding the frame's
-       function where LeJIT knows it (le_pyframe_new). Its f_back is the
+       function where LeJIT knows it (psyco_build_pyframe). Its f_back is the
        entry's over it (psyco_frame_link_callee), or for the frame that
        catches the exception its caller, when read
        (frames.c:catcher_caller). */
     PyFrameObject *result = existing_frame(code, word);
-    le_frame_t *back = le_frame_current(tstate);
-    PyFunctionObject *func;
     if (result != NULL) {
         Py_INCREF(result);
         set_frame_place(result, lasti, lineno);
         return result;
     }
-    /* frame objects are not created in stack order with Psyco, so it's
-       probably better not to create plain wrong chained lists */
-    func = psyco_innermost_function(code);
-    le_frame_set_current(tstate, NULL);
-    result = le_pyframe_new(tstate, code, globals, func);
-    le_frame_set_current(tstate, back);
-    if (result != NULL) {
-        /* a frame reused from the code's free one may hold a note */
-        if (code->co_stacksize >= 3)
-            le_pyframe_stack(result)[0] = NULL;
+    result =
+        psyco_build_pyframe(code, globals, psyco_innermost_function(code));
+    if (result != NULL)
         set_frame_place(result, lasti, lineno);
-    }
     return result;
 }
 
@@ -1119,8 +1109,7 @@ cimpl_rt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
                    int lineno, PyObject **word)
 {
     PyThreadState *tstate = PyThreadState_GET();
-    PyFrameObject *f =
-        cimpl_new_frame(tstate, code, globals, lasti, lineno, word);
+    PyFrameObject *f = cimpl_new_frame(code, globals, lasti, lineno, word);
     /* an out-of-memory error just replaces the current exception */
     if (f != NULL) {
         /* the exception came out of the frame of the last entry: if that is an
@@ -1158,8 +1147,7 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
     PyObject *oldtb;
     PyObject *newtb;
     PyThreadState *tstate = PyThreadState_GET();
-    PyFrameObject *f =
-        cimpl_new_frame(tstate, code, globals, lasti, lineno, word);
+    PyFrameObject *f = cimpl_new_frame(code, globals, lasti, lineno, word);
     if (f == NULL)
         return NULL;
     if (LE_FAIL(LE_FAIL_TRACEBACK)) {

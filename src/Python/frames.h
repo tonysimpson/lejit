@@ -125,10 +125,11 @@ le_gen_init_names(PyGenObject *gen, PyFunctionObject *func);
    interpreter frames, one with the function owns its frame, as
    PyFrame_New's does, and is all that is made, as CPython's frame for the
    call holds its function; one without holds a function of its own, which
-   PyFrame_New makes. NULL with an exception. */
+   PyFrame_New makes. It is linked to no frame, at no place (lasti -1),
+   and holds no note. NULL with an exception. */
 EXTERNFN PyFrameObject *
-le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
-               PyFunctionObject *func);
+psyco_build_pyframe(PyCodeObject *co, PyObject *globals,
+                    PyFunctionObject *func);
 /* a frame's place, as CPython gives it, while the instruction at 'pos'
    in its code 'co' calls: the instruction's last unit, past its caches */
 EXTERNFN int

@@ -1015,6 +1015,16 @@ locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot, int own)
     PyMem_Free(values);
 }
 
+/* A frame object whose compiled frame runs on keeps a note in its empty
+   value stack: the note's kind (LOCALS_NOTE, ACTIVATION_NOTE or
+   CATCHER_NOTE) and its key, and a catcher's word. A frame whose code's
+   value stack is smaller has no note. */
+#define NOTE_KIND 0
+#define NOTE_KEY 1
+#define NOTE_WORD 2
+#define NOTE_WORDS 2
+#define CATCHER_NOTE_WORDS 3
+
 /* An emulated frame's locals are read from its compiled frame each time
    they are asked for (view_sync), not made with it: most emulated
    frames are walked over for their code and line. Its empty value stack
@@ -1054,7 +1064,7 @@ visit_tag(const visited_frame_t *v, void *f)
 {
     PyFrameObject *frame = (PyFrameObject *)f;
     if (v->frame == NULL && v->code == (PyObject *)le_pyframe_code(frame) &&
-        v->tag == (long)le_pyframe_stack(frame)[1]) {
+        v->tag == (long)le_pyframe_stack(frame)[NOTE_KEY]) {
         Py_INCREF(Py_True);
         return Py_True;
     }
@@ -1085,13 +1095,13 @@ fill_noted_locals(PyFrameObject *f)
     long tag;
     int own;
     if (le_frame_is_executing(f) || !le_frame_stack_empty(f) ||
-        le_pyframe_code(f)->co_stacksize < 2 ||
-        le_pyframe_stack(f)[0] != LOCALS_NOTE)
+        le_pyframe_code(f)->co_stacksize < NOTE_WORDS ||
+        le_pyframe_stack(f)[NOTE_KIND] != LOCALS_NOTE)
         return;
-    tag = (long)le_pyframe_stack(f)[1];
+    tag = (long)le_pyframe_stack(f)[NOTE_KEY];
     found = pvisitframes(visit_tag, f);
     if (found == NULL) {
-        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] = NULL;
+        le_pyframe_stack(f)[NOTE_KIND] = le_pyframe_stack(f)[NOTE_KEY] = NULL;
         return;
     }
     Py_DECREF(found);
@@ -1127,7 +1137,7 @@ frame_object_of_call(PyCodeObject *co, PyFunctionObject *func)
 long le_stat_frame_objects = 0;
 #endif
 
-DEFINEFN PyFrameObject *
+static PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
                PyFunctionObject *func)
 {
@@ -1143,26 +1153,25 @@ le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals,
     return le_pyframe_new_by_cpython(ts, co, globals);
 }
 
-PSY_INLINE PyFrameObject *
-psyco_build_pyframe(PyObject *co, PyObject *globals, PyFunctionObject *func,
-                    PyThreadState *tstate)
+DEFINEFN PyFrameObject *
+psyco_build_pyframe(PyCodeObject *co, PyObject *globals,
+                    PyFunctionObject *func)
 {
-    le_frame_t *back;
+    PyThreadState *tstate = PyThreadState_GET();
+    le_frame_t *back = le_frame_current(tstate);
     PyFrameObject *result;
 
-    /* frame objects are not created in stack order
-       with Psyco, so it's probably better not to
-       create plain wrong chained lists */
-    back = le_frame_current(tstate);
+    /* frame objects are not made in stack order, so none is linked to the
+       thread's current frame */
     le_frame_set_current(tstate, NULL);
-    result = le_pyframe_new(tstate, (PyCodeObject *)co, globals, func);
+    result = le_pyframe_new(tstate, co, globals, func);
+    le_frame_set_current(tstate, back);
     if (result == NULL)
-        OUT_OF_MEMORY();
+        return NULL;
     le_frame_set_lasti(le_frame_of(result), -1);
     /* a frame reused from the code's free one may hold a note */
-    if (((PyCodeObject *)co)->co_stacksize >= 1)
-        le_pyframe_stack(result)[0] = NULL;
-    le_frame_set_current(tstate, back);
+    if (co->co_stacksize > NOTE_KIND)
+        le_pyframe_stack(result)[NOTE_KIND] = NULL;
     return result;
 }
 
@@ -1242,6 +1251,7 @@ act_find(stack_frame_info_t **own)
     return NULL;
 }
 
+/* a new entry for key 'own', its other fields zero */
 static activation_t *
 act_add(stack_frame_info_t **own)
 {
@@ -1265,6 +1275,7 @@ act_add(stack_frame_info_t **own)
     for (i = act_hash(own) & acts_mask; acts[i].own != NULL;
          i = (i + 1) & acts_mask);
     acts_count++;
+    memset(&acts[i], 0, sizeof(activation_t));
     acts[i].own = own;
     return &acts[i];
 }
@@ -1313,11 +1324,11 @@ activation_of(PyFrameObject *f)
     if (acts_count == 0)
         return NULL;
     /* a generator's frame holds its own stack, and no note */
-    if (le_pyframe_code(f)->co_stacksize >= 2 &&
+    if (le_pyframe_code(f)->co_stacksize >= NOTE_WORDS &&
         !le_frame_is_gen(le_frame_of(f))) {
-        if (le_pyframe_stack(f)[0] != ACTIVATION_NOTE)
+        if (le_pyframe_stack(f)[NOTE_KIND] != ACTIVATION_NOTE)
             return NULL;
-        a = act_find((stack_frame_info_t **)le_pyframe_stack(f)[1]);
+        a = act_find((stack_frame_info_t **)le_pyframe_stack(f)[NOTE_KEY]);
         return a != NULL && a->frame == f ? a : NULL;
     }
     for (i = 0; i <= acts_mask; i++)
@@ -1669,14 +1680,7 @@ gen_kept_frame(stack_frame_info_t **slot, int lasti)
     a->slot = slot;
     a->ret = barrier_taken(own, ret);
     a->frame = f; /* the table's reference */
-    a->resumed = 0;
-    a->exposed = 0;
-    a->suspended = 0;
-    a->coro = NULL;
     a->gen = 1;
-    a->keep = NULL;
-    a->nkeep = 0;
-    a->inlined = 0;
     Py_INCREF(f);
     Py_INCREF(f);
     return f;
@@ -1748,9 +1752,9 @@ drop_activation(activation_t *a)
         psyco_inline_frames_kept--;
     le_pyframe_set_executing(f, 0);
     act_remove(a);
-    if (le_pyframe_code(f)->co_stacksize >= 2 &&
-        le_pyframe_stack(f)[0] == ACTIVATION_NOTE)
-        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] = NULL;
+    if (le_pyframe_code(f)->co_stacksize >= NOTE_WORDS &&
+        le_pyframe_stack(f)[NOTE_KIND] == ACTIVATION_NOTE)
+        le_pyframe_stack(f)[NOTE_KIND] = le_pyframe_stack(f)[NOTE_KEY] = NULL;
     PyErr_Fetch(&t, &v, &tb);
     Py_DECREF(f);
     PyErr_Restore(t, v, tb);
@@ -1979,27 +1983,20 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
             : catcher_take(own, (PyCodeObject *)co);
     if (f != NULL)
         Py_INCREF(f);
-    else
-        f = psyco_build_pyframe(co, globals, func, PyThreadState_GET());
+    else if ((f = psyco_build_pyframe((PyCodeObject *)co, globals, func)) ==
+             NULL)
+        OUT_OF_MEMORY();
     le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
     /* running, as CPython's: frame.clear() refuses it */
     le_pyframe_set_executing(f, 1);
-    if (((PyCodeObject *)co)->co_stacksize >= 2) {
-        le_pyframe_stack(f)[0] = ACTIVATION_NOTE;
-        le_pyframe_stack(f)[1] = (PyObject *)own;
+    if (((PyCodeObject *)co)->co_stacksize >= NOTE_WORDS) {
+        le_pyframe_stack(f)[NOTE_KIND] = ACTIVATION_NOTE;
+        le_pyframe_stack(f)[NOTE_KEY] = (PyObject *)own;
     }
     a = act_add(own);
     a->slot = slot;
     a->inlined = inlined == KEEP_INLINED;
-    a->root = NULL;
     a->frame = f; /* the table's reference */
-    a->resumed = 0;
-    a->exposed = 0;
-    a->suspended = 0;
-    a->coro = NULL;
-    a->gen = 0;
-    a->keep = NULL;
-    a->nkeep = 0;
     if (inlined == KEEP_INLINED)
         psyco_inline_frames_kept++;
     else {
@@ -2156,7 +2153,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         /* a frame already kept has its barrier in the return address */
         own = psyco_next_stack_frame(slot);
         return keep_frame(
-            own, slot, 0,
+            own, slot, KEEP_CALLEE,
             act_find(own) != NULL ? NULL : return_address(own, rec), co,
             globals, record_function(slot, 0), lasti);
     }
@@ -2167,7 +2164,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         /* an inlined frame, in the compiled call it makes or in its own
            record: its parent's slot is the one holding them */
         PyFrameObject *f =
-            keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals,
+            keep_frame(INLINE_KEY(slot), slot, KEEP_INLINED, NULL, co, globals,
                        record_function(slot, entry), lasti);
         if (f != NULL && (((PyCodeObject *)co)->co_flags & CO_GENERATOR))
             inline_gen_realise(slot, entry, f);
@@ -2475,9 +2472,9 @@ psyco_activation_returned(long *sp)
         le_pyframe_set_executing(f, 0);
     coro = a->coro;
     act_remove(a);
-    if (!gen && le_pyframe_code(f)->co_stacksize >= 2 &&
-        le_pyframe_stack(f)[0] == ACTIVATION_NOTE)
-        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] = NULL;
+    if (!gen && le_pyframe_code(f)->co_stacksize >= NOTE_WORDS &&
+        le_pyframe_stack(f)[NOTE_KIND] == ACTIVATION_NOTE)
+        le_pyframe_stack(f)[NOTE_KIND] = le_pyframe_stack(f)[NOTE_KEY] = NULL;
     PyErr_Fetch(&t, &v, &tb);
     if (keep != NULL) {
         int i;
@@ -2561,12 +2558,14 @@ emulate_frame(const visited_frame_t *v)
         extra_assert(globals != NULL);
         if ((result = kept_frame(tag, co, globals, lasti)) != NULL)
             return result;
-        result = psyco_build_pyframe(co, globals, tag_function(tag),
-                                     PyThreadState_GET());
+        result = psyco_build_pyframe((PyCodeObject *)co, globals,
+                                     tag_function(tag));
+        if (result == NULL)
+            OUT_OF_MEMORY();
         le_frame_set_lasti(le_frame_of(result), le_lasti_of(lasti));
-        if (((PyCodeObject *)co)->co_stacksize >= 2) {
-            le_pyframe_stack(result)[0] = LOCALS_NOTE;
-            le_pyframe_stack(result)[1] = (PyObject *)tag;
+        if (((PyCodeObject *)co)->co_stacksize >= NOTE_WORDS) {
+            le_pyframe_stack(result)[NOTE_KIND] = LOCALS_NOTE;
+            le_pyframe_stack(result)[NOTE_KEY] = (PyObject *)tag;
         }
         else {
             int own;
@@ -3026,8 +3025,8 @@ static bool
 has_catcher_note(PyFrameObject *f)
 {
     return !le_frame_is_executing(f) && le_frame_stack_empty(f) &&
-           le_pyframe_code(f)->co_stacksize >= 3 &&
-           le_pyframe_stack(f)[0] == CATCHER_NOTE;
+           le_pyframe_code(f)->co_stacksize >= CATCHER_NOTE_WORDS &&
+           le_pyframe_stack(f)[NOTE_KIND] == CATCHER_NOTE;
 }
 
 static void
@@ -3056,8 +3055,8 @@ clear_catcher_note(PyFrameObject *f)
             break;
         }
     if (has_catcher_note(f))
-        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] =
-            le_pyframe_stack(f)[2] = NULL;
+        le_pyframe_stack(f)[NOTE_KIND] = le_pyframe_stack(f)[NOTE_KEY] =
+            le_pyframe_stack(f)[NOTE_WORD] = NULL;
 }
 
 /* the frame of a traceback entry the catching callee of code 'co' with
@@ -3106,8 +3105,9 @@ run_holding(stack_frame_info_t **own)
 static stack_frame_info_t **
 catcher_slot(PyFrameObject *f, FrameRuntime **run)
 {
-    stack_frame_info_t **own = (stack_frame_info_t **)le_pyframe_stack(f)[1];
-    PyObject **word = (PyObject **)le_pyframe_stack(f)[2];
+    stack_frame_info_t **own =
+        (stack_frame_info_t **)le_pyframe_stack(f)[NOTE_KEY];
+    PyObject **word = (PyObject **)le_pyframe_stack(f)[NOTE_WORD];
     if (*word != (PyObject *)f || (*run = run_holding(own)) == NULL)
         return NULL;
     return own;
@@ -3253,8 +3253,9 @@ caller_at(stack_frame_info_t **own, PyCodeObject *co, bool returning)
 static PyFrameObject *
 catcher_caller(PyFrameObject *f)
 {
-    stack_frame_info_t **own = (stack_frame_info_t **)le_pyframe_stack(f)[1];
-    PyObject **word = (PyObject **)le_pyframe_stack(f)[2];
+    stack_frame_info_t **own =
+        (stack_frame_info_t **)le_pyframe_stack(f)[NOTE_KEY];
+    PyObject **word = (PyObject **)le_pyframe_stack(f)[NOTE_WORD];
     if (*word != (PyObject *)f)
         return NULL;
     return caller_at(own, le_pyframe_code(f), false);
@@ -3640,8 +3641,9 @@ stands_for_running(PyFrameObject *f)
         return false; /* CPython's method refuses it itself */
     if (has_catcher_note(f))
         return catcher_slot(f, &fr) != NULL;
-    if (!le_frame_stack_empty(f) || le_pyframe_code(f)->co_stacksize < 2 ||
-        le_pyframe_stack(f)[0] != LOCALS_NOTE)
+    if (!le_frame_stack_empty(f) ||
+        le_pyframe_code(f)->co_stacksize < NOTE_WORDS ||
+        le_pyframe_stack(f)[NOTE_KIND] != LOCALS_NOTE)
         return false;
     found = pvisitframes(visit_tag, f);
     Py_XDECREF(found);
@@ -3833,7 +3835,7 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
        real frame or a kept one, which are running; nor a generator's
        where CPython leaves one that has ended without a caller */
     if (!le_frame_is_executing(f) && le_frame_stack_empty(f) &&
-        le_pyframe_code(f)->co_stacksize >= 3 &&
+        le_pyframe_code(f)->co_stacksize >= CATCHER_NOTE_WORDS &&
         !(LE_HAS_FINISHED_GENERATOR_UNLINKED &&
           (le_pyframe_code(f)->co_flags &
            (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))) {
@@ -3844,9 +3846,9 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
                                   : run != NULL && run_frameless(run) &&
                                         *run->psy_frames_start == own);
 #endif
-        le_pyframe_stack(f)[0] = CATCHER_NOTE;
-        le_pyframe_stack(f)[1] = (PyObject *)own;
-        le_pyframe_stack(f)[2] = (PyObject *)word;
+        le_pyframe_stack(f)[NOTE_KIND] = CATCHER_NOTE;
+        le_pyframe_stack(f)[NOTE_KEY] = (PyObject *)own;
+        le_pyframe_stack(f)[NOTE_WORD] = (PyObject *)word;
     }
     if (!le_frame_is_executing(f) && le_frame_stack_empty(f))
         catcher_add(f, word, own);
@@ -4393,9 +4395,11 @@ root_copy(PyFrameObject *f)
     bool found;
     if (fr->psy_code != le_pyframe_code(f))
         return f;
-    c = psyco_build_pyframe(
-        (PyObject *)le_pyframe_code(f), le_frame_globals(le_frame_of(f)),
-        le_frame_function(le_frame_of(f)), PyThreadState_GET());
+    c = psyco_build_pyframe(le_pyframe_code(f),
+                            le_frame_globals(le_frame_of(f)),
+                            le_frame_function(le_frame_of(f)));
+    if (c == NULL)
+        OUT_OF_MEMORY();
     if (!slot_locals(*fr->psy_frames_start, le_pyframe_code(f),
                      le_frame_args(le_frame_of(c)), 0)) {
         Py_DECREF(c);
@@ -5952,8 +5956,9 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
 #endif
         st->f = a->frame;
         Py_INCREF(st->f);
-        if (co->co_stacksize >= 2)
-            le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
+        if (co->co_stacksize >= NOTE_WORDS)
+            le_pyframe_stack(st->f)[NOTE_KIND] =
+                le_pyframe_stack(st->f)[NOTE_KEY] = NULL;
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else if (st->slot != NULL && gen_frame_at(st->slot) != NULL &&
@@ -6001,8 +6006,9 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
             *word = NULL;
             Py_DECREF(st->f);
         }
-        if (co->co_stacksize >= 2)
-            le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
+        if (co->co_stacksize >= NOTE_WORDS)
+            le_pyframe_stack(st->f)[NOTE_KIND] =
+                le_pyframe_stack(st->f)[NOTE_KEY] = NULL;
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else if (st->slot == NULL && run != NULL && run->frame != NULL &&
@@ -6030,8 +6036,9 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
 #endif
         st->f = a->frame;
         Py_INCREF(st->f);
-        if (co->co_stacksize >= 2)
-            le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
+        if (co->co_stacksize >= NOTE_WORDS)
+            le_pyframe_stack(st->f)[NOTE_KIND] =
+                le_pyframe_stack(st->f)[NOTE_KEY] = NULL;
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else if (c != NULL && !le_frame_is_executing(c) &&
@@ -6053,10 +6060,10 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     }
 #endif
     else {
-        st->f = le_pyframe_new(PyThreadState_GET(), co, globals,
-                               st->slot != NULL && (*st->slot)->co == co
-                                   ? record_function(st->slot, 0)
-                                   : NULL);
+        st->f = psyco_build_pyframe(co, globals,
+                                    st->slot != NULL && (*st->slot)->co == co
+                                        ? record_function(st->slot, 0)
+                                        : NULL);
         if (st->f == NULL) {
             Py_XDECREF(c);
             PyMem_Free(st);
