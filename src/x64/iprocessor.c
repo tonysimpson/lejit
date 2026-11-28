@@ -76,6 +76,9 @@ psyco_processor_run(CodeBufferObject *codebuf, long initial_stack[],
     int regs_saved = 6;
     int finfo_pushed = 1;
     int return_address = 2; /* and its copy */
+#if ALL_CHECKS
+    le_compile_thread_check("run compiled code");
+#endif
     /* we need to work out if the call to psyco code would be made with the
      * stack 16 bytes aligned and adjust accordingly - we assume everything
      * pushed to the stack is 8 bytes wide and the call from C will be aligned

@@ -12,6 +12,7 @@
 #include "mergepoints.h"
 #include "psyco.h"
 #include "psyfunc.h"
+#include <sched.h>
 
 EXTERNVAR int le_set_up; /* lejit.c */
 
@@ -440,6 +441,81 @@ le_allocs_asked(void)
 #endif
 
 #if ALL_CHECKS
+/* For tests: _yield_while_compiling(True) makes the thread whose compile
+   is open let the GIL go, yield and take it back at each object allocation
+   (PyObject_Malloc, _Calloc, _Realloc of NULL), so that other threads run
+   inside compiles, as when a finaliser lets the GIL go part-way. Not at
+   frees or other reallocations: CPython makes those part-way through
+   changing an object (dictresize), where no Python code could run. False
+   puts the allocator back; it stays under any hook put over it since. */
+static PyMemAllocatorEx yields_under;
+static bool yields_on = false;
+
+static void
+yield_gil(void)
+{
+    PyThreadState *ts;
+    if (le_compile_depth == 0 ||
+        le_compile_thread != PyThread_get_thread_ident())
+        return;
+    ts = PyEval_SaveThread();
+    sched_yield();
+    PyEval_RestoreThread(ts);
+}
+
+static void *
+yields_malloc(void *ctx, size_t size)
+{
+    yield_gil();
+    return yields_under.malloc(yields_under.ctx, size);
+}
+
+static void *
+yields_calloc(void *ctx, size_t nelem, size_t elsize)
+{
+    yield_gil();
+    return yields_under.calloc(yields_under.ctx, nelem, elsize);
+}
+
+static void *
+yields_realloc(void *ctx, void *ptr, size_t size)
+{
+    if (ptr == NULL)
+        yield_gil();
+    return yields_under.realloc(yields_under.ctx, ptr, size);
+}
+
+static void
+yields_free(void *ctx, void *ptr)
+{
+    yields_under.free(yields_under.ctx, ptr);
+}
+
+static PyObject *
+le_yield_while_compiling(PyObject *self, PyObject *on)
+{
+    PyMemAllocatorEx hook = {NULL, yields_malloc, yields_calloc,
+                             yields_realloc, yields_free};
+    PyMemAllocatorEx now;
+    int want = PyObject_IsTrue(on);
+    allocs_asked++;
+    if (want < 0)
+        return NULL;
+    if (want && !yields_on) {
+        PyMem_GetAllocator(PYMEM_DOMAIN_OBJ, &yields_under);
+        PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &hook);
+        yields_on = true;
+    }
+    else if (!want && yields_on) {
+        PyMem_GetAllocator(PYMEM_DOMAIN_OBJ, &now);
+        if (now.malloc == yields_malloc) {
+            PyMem_SetAllocator(PYMEM_DOMAIN_OBJ, &yields_under);
+            yields_on = false;
+        }
+    }
+    Py_RETURN_NONE;
+}
+
 /* f(*args) run with no real frame (eval_hook.c:le_run_frameless), for a
    function whose call can be: positional arguments, exactly as many as it
    takes, no cells or free variables, not a generator's */
@@ -482,6 +558,8 @@ DEFINEVAR PyMethodDef le_testing_methods[] = {
     {"_fail_after", le_fail_after, METH_VARARGS,
      "Make the n-th allocation at a site fail."},
     {"_stats", le_stats, METH_NOARGS, "Internal counters."},
+    {"_yield_while_compiling", le_yield_while_compiling, METH_O,
+     "Let the GIL go at each allocation a compile makes."},
     {"_run_frameless", (PyCFunction)(void (*)(void))le_run_frameless_test,
      METH_FASTCALL, "f(*args), run with no real frame."},
     {"_code_info", le_code_info, METH_O,
