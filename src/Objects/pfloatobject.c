@@ -14,6 +14,7 @@
 #include "pfloatobject.h"
 #include "pboolobject.h"
 #include "plongobject.h"
+#include "../initialize.h"
 
 static int
 cimpl_fp_eq_fp(double a, double b)

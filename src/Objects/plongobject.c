@@ -23,6 +23,7 @@
 #include "pfloatobject.h"
 #include "ptupleobject.h"
 #include "../pycodegen.h"
+#include "../initialize.h"
 
 /* MEDIUM_VALUE(v) of an int that is one digit at run time, as a new
    reference in *pval. Returns 1; 0 if it isn't one digit (the caller falls

@@ -15,6 +15,7 @@
  */
 #include "prangeobject.h"
 #include "plongobject.h"
+#include "../initialize.h"
 #if LE_HAS_RANGE_ITER_FREE_LIST
 /* _Py_FREELIST_POP, through the exported _PyThreadState_GetCurrent */
 #define Py_BUILD_CORE

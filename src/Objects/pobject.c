@@ -26,6 +26,7 @@
 #include "pboolobject.h"
 #include "punicodeobject.h"
 #include "../segments.h"
+#include "../initialize.h"
 
 DEFINEFN
 PyTypeObject *

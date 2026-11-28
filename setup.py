@@ -148,6 +148,9 @@ extra_compile_args += ['-Werror=implicit-function-declaration',
 # - deprecated-declarations: compiled code calls the API the version has
 #   (3.9's PyCFunction_Call); another function would be other code emitted
 extra_compile_args += ['-Wno-type-limits', '-Wno-deprecated-declarations']
+# every function defined without static is declared where its callers
+# can see it, so a header and its definition can't disagree
+extra_compile_args += ['-Wmissing-prototypes']
 # any other warning is an error, so the tree stays clean
 extra_compile_args += ['-Werror']
 extra_link_args = []

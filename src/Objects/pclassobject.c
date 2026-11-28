@@ -5,6 +5,7 @@
  */
 #include "pclassobject.h"
 #include "ptupleobject.h"
+#include "../initialize.h"
 
 DEFINEVAR source_virtual_t psyco_computed_method;
 

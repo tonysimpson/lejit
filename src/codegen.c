@@ -18,6 +18,7 @@
 #include "codemanager.h"
 #include "pycodegen.h"
 #include "Objects/plistobject.h"
+#include "initialize.h"
 
 /*** The processor-independent part of the code generator. ***/
 

@@ -19,6 +19,7 @@
 #include "pdictobject.h"
 #include "ptupleobject.h"
 #include "../segments.h"
+#include "../initialize.h"
 
 /***************************************************************/
 /***   Virtual functions                                     ***/

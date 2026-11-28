@@ -13,6 +13,7 @@
 #include "mechanisms/tracing.h"
 #include "mechanisms/recursion.h"
 #include "mechanisms/store_gc.h"
+#include "initialize.h"
 
 #if LE_HAS_TSTATE_EVAL_BREAKER
 /* whether an event is flagged for the thread: its eval_breaker's low byte
