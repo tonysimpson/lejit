@@ -485,7 +485,7 @@ psyco_code_moved(code_t *p);
 #define le_reloc_note(at, kind, end) ((void)0)
 #define le_reloc_jump(end, value) (value)
 #define le_reloc_mark() 0L
-#define le_reloc_forget(mark, start, end) ((void)0)
+#define le_reloc_forget(mark, start, end) ((void)(mark))
 #define psyco_code_moved(p) (p)
 #endif
 #define LE_RELOC_SLOT(p) le_reloc_note((void *)(p), LE_RELOC_WORD, 0)
